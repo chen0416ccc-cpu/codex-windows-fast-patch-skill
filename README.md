@@ -1,9 +1,5 @@
 # Codex Windows Fast Patch Skill
 
-[![LINUX DO](https://img.shields.io/badge/LINUX_DO-community-00aeef?style=flat-square)](https://linux.do/)
-
-Community link: [LINUX DO](https://linux.do/)
-
 Public, sanitized export of the `codex-windows-fast-patch` skill.
 
 This skill documents and automates a Windows Codex Desktop repatch workflow, including:
@@ -32,6 +28,10 @@ Copy-Item -Recurse . "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch"
 ```
 
 Restart Codex after installing or updating the skill so the runtime reloads skill metadata.
+
+## Acknowledgements
+
+Thanks to the [LinuxDo community](https://linux.do/) for the discussions and feedback around this workflow.
 
 ## Sanitization
 
