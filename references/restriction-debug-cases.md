@@ -75,24 +75,28 @@ Checks:
 Action:
 
 - Set `[windows] sandbox = "unelevated"`.
-- Verify with `codex sandbox windows "C:\Windows\System32\cmd.exe" /c echo OK`.
-- Do not use `codex sandbox "C:\Windows\System32\cmd.exe"` on Windows; current CLI builds expect the `windows` subcommand.
+- Check `codex sandbox --help` before verification.
+- If the help lists a `windows` command, verify with `codex sandbox windows "C:\Windows\System32\cmd.exe" /c echo OK`.
+- Only builds whose help accepts a direct command form should use `codex sandbox "C:\Windows\System32\cmd.exe" /c echo OK`.
 
 ## Codex Mobile Entry Opens Then Drops Back
 
 Symptoms:
 
 - The "Codex mobile" / "Codex 移动版" entry appears, but clicking it exits, drops back, or opens nothing.
+- Connections > Control This Computer > Set up routes to login, repeatedly errors, or leaves a modal that is hard to exit.
 
 Checks:
 
 - Inspect Desktop logs under `%LOCALAPPDATA%\Packages\OpenAI.Codex_2p2nqsd0c76g0\LocalCache\Local\Codex\Logs\<year>\<month>\<day>`.
 - Look for `load_remote_control_unauthed` or `refresh_local_remote_control_client_id_failed`.
+- Inspect extracted ASAR files `webview\assets\codex-mobile-setup-flow-*.js` and `.vite\build\main-*.js`.
 
 Action:
 
-- If logs say `Sign in to ChatGPT in Codex Desktop`, the local patch and Computer Use helper are not the blocker.
-- Sign in to ChatGPT in Codex Desktop, not only API-key Codex login, before treating this as a patch failure.
+- Patch `codex-mobile-setup-flow-*.js` so a remote-control auth error does not navigate the settings modal to `/login` and return `null`.
+- Patch the main-process remote-control unauthenticated branch so it publishes a safe empty state instead of an auth-required loop.
+- If logs still say `Sign in to ChatGPT in Codex Desktop`, the local patch can keep the UI usable, but real cross-device remote-control enrollment still requires ChatGPT Desktop sign-in, not only API-key Codex login.
 
 ## Self-Update Fails
 

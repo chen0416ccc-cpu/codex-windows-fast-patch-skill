@@ -12,6 +12,7 @@
 - 修复本地插件市场清单目录结构。
 - 刷新 Windows Computer Use 兼容文件。
 - 解除 Computer Control 页面里 `Any App` / `任意应用` 被组织或地区门控禁用的问题。
+- 修复 Codex 移动版 / 连接页远程控制设置在未授权时跳转、报错或卡住退不出的问题。
 - 在覆盖 `config.toml` 前自动生成一次时间戳备份，降低配置误写风险。
 - 提供类似 ccswitch 的本机 Codex 状态备份管理：可备份、列出和恢复 `config.toml`、MCP 配置、skills 与 marketplaces。
 - 每次正式使用前自动尝试从 GitHub 同步最新版，让本地 skill 尽量保持具备处理新问题的最新工作流；网络不可用时不会强制中断。

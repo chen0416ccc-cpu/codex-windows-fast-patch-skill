@@ -12,6 +12,7 @@ This is the public version of the `codex-windows-fast-patch` skill. It guides ag
 - Repair local plugin marketplace manifest layout.
 - Refresh Windows Computer Use compatibility files.
 - Unlock the Computer Control `Any App` gate when the UI reports organization or region unavailability.
+- Keep the Codex Mobile / Connections remote-control setup flow from redirecting, error-looping, or becoming hard to close when remote-control auth is missing.
 - Create a timestamped backup before overwriting `config.toml`, reducing the risk of accidental config loss.
 - Provide ccswitch-style local Codex state backup management for `config.toml`, MCP configuration, skills, and marketplaces.
 - Before each substantive use, automatically try syncing the latest workflow from GitHub so the local skill stays ready for newly discovered issues; network failures do not block the repair.

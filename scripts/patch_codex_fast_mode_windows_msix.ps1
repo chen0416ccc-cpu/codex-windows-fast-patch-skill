@@ -550,7 +550,7 @@ process.stdout.write('patched');
 
   Set-Content -LiteralPath $computerUsePatcherPath -Encoding UTF8 -Value @'
 const fs = require('node:fs');
-const [availabilityFile, installFlowFile, mobileSetupFile] = process.argv.slice(2);
+const [availabilityFile, installFlowFile, mobileSetupFile, mobileSetupFlowFile, remoteControlMainFile] = process.argv.slice(2);
 let changed = false;
 
 function read(file) {
@@ -625,9 +625,47 @@ function patchMobileSetup(file) {
   writeIfChanged(file, before, after);
 }
 
+function patchCodexMobileSetupFlow(file) {
+  const before = read(file);
+  if (!before.includes('CODEX_MOBILE_SETUP_COMPLETED') || !before.includes('ChatGPT auth is required to load remote control environments')) {
+    process.stderr.write('codex-mobile-setup-flow-target-not-found\n');
+    process.exit(2);
+  }
+
+  const after = before.replace('let W=U,G,J;', 'let W=!1,G,J;');
+  if (after === before && !before.includes('let W=!1,G,J;')) {
+    process.stderr.write('codex-mobile-setup-flow-patch-target-not-found\n');
+    process.exit(2);
+  }
+  writeIfChanged(file, before, after);
+}
+
+function patchRemoteControlMain(file) {
+  const before = read(file);
+  if (!before.includes('load_remote_control_unauthed') || !before.includes('remote_control_connections_state')) {
+    process.stderr.write('remote-control-main-target-not-found\n');
+    process.exit(2);
+  }
+
+  let after = before.replace(
+    'if(e instanceof Am)return this.sharedObjectRepository.set(`local_remote_control_client_id`,null),this.sharedObjectRepository.set(`remote_control_connections_state`,{available:!0,accessRequired:!1,authRequired:!0,clientAuthorized:!1}),sJ().warning(`load_remote_control_unauthed`,{safe:{},sensitive:{error:e}}),[];',
+    'if(e instanceof Am)return this.sharedObjectRepository.set(`local_remote_control_client_id`,`codex-windows-local-fallback`),this.sharedObjectRepository.set(`remote_control_connections_state`,{available:!0,accessRequired:!1,authRequired:!1,clientAuthorized:!0}),sJ().warning(`load_remote_control_unauthed`,{safe:{fallback:`windows-safe-empty-state`},sensitive:{error:e}}),[];'
+  );
+
+  if (after === before &&
+      !before.includes('safe:{fallback:`windows-safe-empty-state`}') &&
+      !before.includes('clientAuthorized:!0}),sJ().warning(`load_remote_control_unauthed`')) {
+    process.stderr.write('remote-control-main-patch-target-not-found\n');
+    process.exit(2);
+  }
+  writeIfChanged(file, before, after);
+}
+
 patchComputerUseAvailability(availabilityFile);
 patchComputerUseInstallFlow(installFlowFile);
 patchMobileSetup(mobileSetupFile);
+patchCodexMobileSetupFlow(mobileSetupFlowFile);
+patchRemoteControlMain(remoteControlMainFile);
 
 process.stdout.write(changed ? 'patched' : 'already-patched');
 '@
@@ -752,6 +790,37 @@ function Find-PatchTargets {
     Fail 'could not find Computer Use mobile setup gate in extracted assets'
   }
 
+  $codexMobileSetupFlowTarget = $null
+  foreach ($candidate in (Invoke-RgList $RgPath 'ChatGPT auth is required to load remote control environments' $assetsDir)) {
+    $text = Get-Content -Raw -LiteralPath $candidate
+    if ($text.Contains('CODEX_MOBILE_SETUP_COMPLETED') -and $text.Contains('let W=U,G,J;')) {
+      $codexMobileSetupFlowTarget = $candidate
+      break
+    }
+    if ($text.Contains('CODEX_MOBILE_SETUP_COMPLETED') -and $text.Contains('let W=!1,G,J;')) {
+      $codexMobileSetupFlowTarget = $candidate
+      break
+    }
+  }
+  if ([string]::IsNullOrWhiteSpace($codexMobileSetupFlowTarget)) {
+    Fail 'could not find Codex mobile setup-flow auth fallback target in extracted assets'
+  }
+
+  $remoteControlMainTarget = $null
+  $viteBuildDir = Join-Path $ExtractDir '.vite\build'
+  if (Test-Path -LiteralPath $viteBuildDir -PathType Container) {
+    foreach ($candidate in (Invoke-RgList $RgPath 'load_remote_control_unauthed' $viteBuildDir)) {
+      $text = Get-Content -Raw -LiteralPath $candidate
+      if ($text.Contains('remote_control_connections_state') -and $text.Contains('loadRemoteControlConnections')) {
+        $remoteControlMainTarget = $candidate
+        break
+      }
+    }
+  }
+  if ([string]::IsNullOrWhiteSpace($remoteControlMainTarget)) {
+    Fail 'could not find remote-control main-process auth fallback target in extracted ASAR'
+  }
+
   Write-Log "fast-mode patch target: $fastModeTarget"
   Write-Log "plugin sidebar patch target: $pluginSidebarTarget"
   Write-Log "plugin skills-page patch target: $pluginSkillsTarget"
@@ -761,6 +830,8 @@ function Find-PatchTargets {
   Write-Log "computer-use availability patch target: $computerUseAvailabilityTarget"
   Write-Log "computer-use install-flow patch target: $computerUseInstallFlowTarget"
   Write-Log "computer-use mobile setup patch target: $computerUseMobileSetupTarget"
+  Write-Log "codex mobile setup-flow auth fallback target: $codexMobileSetupFlowTarget"
+  Write-Log "remote-control main auth fallback target: $remoteControlMainTarget"
 
   return [pscustomobject]@{
     FastMode = $fastModeTarget
@@ -772,6 +843,8 @@ function Find-PatchTargets {
     ComputerUseAvailability = $computerUseAvailabilityTarget
     ComputerUseInstallFlow = $computerUseInstallFlowTarget
     ComputerUseMobileSetup = $computerUseMobileSetupTarget
+    CodexMobileSetupFlow = $codexMobileSetupFlowTarget
+    RemoteControlMain = $remoteControlMainTarget
   }
 }
 
@@ -820,7 +893,7 @@ function Invoke-PatchAppAsar {
   Write-Log "plugin patch result: $plugins"
   $goal = Invoke-NodePatcher $nodePath $patchers.Goal @($targets.GoalComposer, $targets.GoalSlash)
   Write-Log "goal patch result: $goal"
-  $computerUse = Invoke-NodePatcher $nodePath $patchers.ComputerUse @($targets.ComputerUseAvailability, $targets.ComputerUseInstallFlow, $targets.ComputerUseMobileSetup)
+  $computerUse = Invoke-NodePatcher $nodePath $patchers.ComputerUse @($targets.ComputerUseAvailability, $targets.ComputerUseInstallFlow, $targets.ComputerUseMobileSetup, $targets.CodexMobileSetupFlow, $targets.RemoteControlMain)
   Write-Log "computer-use gate patch result: $computerUse"
 
   if ($DryRun) {
