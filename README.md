@@ -2,22 +2,22 @@
 
 语言：中文 | [English](README.en.md)
 
-这是 `codex-windows-fast-patch` skill 的公开版本，用于指导支持 Agent Skills 的智能体在 Windows 上修复 Codex Desktop 升级后失效的本地补丁、能力开关和运行时问题。
+这是 `codex-windows-fast-patch` skill 的公开版本，用于让支持 Agent Skills 的智能体修复 Windows 版 Codex Desktop 更新后常见的功能失效问题。
 
 ## 主要功能
 
-- 在 Codex Desktop 升级后重新应用 Windows MSIX 补丁。
-- 修复 Fast Mode 请求路径和设置页 UI 路径，并验证请求是否真的带上 `service_tier=priority`。
-- 保持 locale/i18n 可用，避免重启后语言设置被包内门控重置。
-- 注册和修复本地插件市场配置。
-- 修复本地插件市场清单目录结构。
-- 解开 in-app browser、browser pane 和外部 Chrome/browser_use 的本地 feature / Statsig 门控。
-- 修复 Windows Computer Use 本地插件、运行时兼容文件和 helper 路径。
-- 解开 Computer Control 页面里 `Any App` / `任意应用` 被组织或地区门控禁用的问题。
-- 修复 Windows 手机远控设置路径，包括连接页显示、二维码配对、隔离远控授权和 native app-server WebSocket 连接，同时保留第三方/API-key 主应用使用方式。
-- 在用户明确要求时，可选安装随 skill 分发的自定义 `model_instructions_file` 提示词配置。
-- 在覆盖 `config.toml` 前自动生成时间戳备份，降低配置误写风险。
-- 每次正式使用前尝试从 GitHub 同步最新版本；网络不可用时不会阻断本地修复。
+如果你的 Windows Codex Desktop 更新后出现下面这些问题，可以让 agent 使用这个 skill：
+
+- 修复 Fast Mode / Priority 模式不显示、不可选、开启后不生效的问题。
+- 修复 Codex 重启后界面语言又变回英文的问题。
+- 修复插件入口、插件安装按钮、插件市场列表不可用的问题。
+- 修复内置浏览器、浏览器面板、Chrome / browser_use 不可用的问题。
+- 修复 Computer Use / 电脑操控 / Any App 不可用的问题。
+- 修复 Computer Use 报 `native pipe unavailable`、`missing-helper-path`、插件缓存或 helper 路径损坏的问题。
+- 修复手机远控入口不显示、二维码一直转圈、跳 ChatGPT 登录、点允许后失败、手机提示 Codex 版本过期等问题。
+- 修复 Goal 入口、部分设置入口、功能按钮在更新后消失或变灰的问题。
+- 修复本地插件市场配置损坏、`codex plugin list` 报错的问题。
+- 可选备份和恢复本机 Codex 配置、技能、插件市场等关键状态。
 
 ## 平台支持
 
@@ -75,12 +75,27 @@ Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'assets') -Destination
 
 ## 使用建议
 
-- Computer Use 提示插件不可用、`missing-helper-path`、重启后又失效，或 Chrome/browser helper 路径、缓存、native-host 坏了：可以让当前 Codex Desktop 会话用这个 skill 修。使用 `scripts/install-computer-use-local.ps1` 或 `scripts/install-computer-use-local.ps1 -VerifyOnly`，修完重启 Codex。
-- 插件市场配置坏了、`codex plugin list` 因 marketplace manifest 报错、本地 marketplace 缺 `.agents\plugins\marketplace.json`：可以使用 `scripts/repatch-codex-windows.ps1 -RegisterMarketplaceOnly` 或本地 marketplace 修复流程。
-- 用户明确要求安装随 skill 分发的自定义提示词配置：使用 `scripts/install-model-instructions-file.ps1`，然后重启 Codex CLI/Desktop 或开启新会话。
-- 手机远控被隐藏、二维码一直转圈、跳 ChatGPT 登录、点允许后失败、手机提示 Codex 环境版本过期：使用 `references/remote-control-debug-cases.md` 和显式手机远控脚本。这是 opt-in 工作流，不属于默认 Fast Mode repatch。
-- 手机远控配对成功后，如果手机创建的对话请求到了错误的模型 API 地址：按 `references/remote-control-debug-cases.md` 作为配对后配置案例处理，先查实际请求 URL 和当前配置，再依据证据修改。
-- Fast Mode 看不到或请求不带 `service_tier=priority`、插件入口/安装按钮灰、Computer Control 的 `Any App` 灰、Browser/Chrome/browser_use 灰、语言重启回英文、Goal 入口消失：这些通常需要修改 Codex Desktop MSIX/ASAR。建议让外部 PowerShell 或另一个 agent 跑完整 repatch，避免当前 Desktop 停止/重装自己导致会话中断。
+有些修复会重装 Codex Desktop。重装时当前 Codex Desktop 会被关闭，所以不要让正在使用的这个 Codex Desktop 会话自己重装自己，否则很容易出现“修到一半会话被卸载/中断”的情况。
+
+可以直接让当前 Codex Desktop 会话修复的问题：
+
+- Computer Use 提示插件不可用、`native pipe unavailable`、`missing-helper-path`、重启后又失效。
+- Chrome / browser_use 的 helper 路径、缓存、native-host 文件损坏。
+- 插件市场配置损坏、`codex plugin list` 报 marketplace manifest 错误。
+- 本地 marketplace 缺 `.agents\plugins\marketplace.json`。
+- 只需要备份/恢复 Codex 配置，或安装可选的自定义提示词配置。
+- 手机远控已经能配对，但手机发来的对话请求到了错误的模型 API 地址。这类属于配对后的配置诊断，先查实际请求 URL 和当前配置，再依据证据修改。
+
+建议使用另一个 agent、外部 PowerShell、VS Code/Antigravity 里的 Codex 扩展，或其它不会被 Codex Desktop 重装影响的环境来修复的问题：
+
+- Fast Mode / Priority 模式不显示、不生效。
+- Codex 重启后语言变回英文。
+- 插件入口、插件安装按钮、Goal 入口、Computer Control 的 `Any App` 变灰或消失。
+- 内置浏览器、浏览器面板、Chrome / browser_use 被桌面端门控隐藏或禁用。
+- 手机远控入口不显示、二维码一直转圈、跳 ChatGPT 登录、点允许后失败、手机提示 Codex 版本过期。
+- 任何需要运行完整 repatch、重新打包 MSIX、安装 Developer 签名包、替换 `app.asar` 或替换 `resources\codex.exe` 的修复。
+
+简单判断规则：如果修复会停止、卸载、重装或重新启动 Codex Desktop，就用另一个 agent 或外部 PowerShell 来跑；如果只是修本地配置、插件缓存、marketplace、备份或验证，一般可以让当前 Codex Desktop 会话直接处理。
 
 一个典型请求是：
 

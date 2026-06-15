@@ -2,22 +2,22 @@
 
 Language: [中文](README.md) | English
 
-This is the public version of the `codex-windows-fast-patch` skill. It guides agents through restoring local Codex Desktop patches and feature gates after Windows Store upgrades.
+This is the public version of the `codex-windows-fast-patch` skill. It helps Agent-Skills-capable agents repair common Windows Codex Desktop features that break after Desktop updates.
 
 ## Features
 
-- Reapply the Windows MSIX patch after Codex Desktop upgrades.
-- Repair unavailable Fast Mode in both request and settings UI paths, then verify that repaired requests really send `service_tier=priority`.
-- Keep locale/i18n enabled so a configured UI language is not forced back to English only because the shipped webview bundle disables `enable_i18n`.
-- Register and repair local plugin marketplace configuration.
-- Repair local plugin marketplace manifest layout.
-- Unlock in-app browser, browser pane, and external Chrome/browser_use availability gates when the Store build disables them through local feature/Statsig checks.
-- Repair Windows Computer Use local plugin files, runtime compatibility files, and helper paths.
-- Unlock the Computer Control `Any App` gate when the UI reports organization or region unavailability.
-- Repair the Windows phone remote-control setup path, including Connections-page visibility, QR pairing, isolated remote-control auth, and native app-server WebSocket connectivity while preserving third-party/API-key main app usage.
-- Optionally install a bundled custom `model_instructions_file` prompt asset when the user explicitly asks for that extra configuration.
-- Create a timestamped backup before overwriting `config.toml`, reducing the risk of accidental config loss.
-- Before each substantive use, automatically try syncing the latest workflow from GitHub so the local skill stays ready for newly discovered issues; network failures do not block the repair.
+Use this skill when Windows Codex Desktop updates cause issues like these:
+
+- Repair Fast Mode / Priority Mode when it is hidden, disabled, or does not actually take effect.
+- Repair the UI language resetting to English after restart.
+- Repair plugin entries, plugin install buttons, and plugin marketplace lists.
+- Repair the in-app browser, browser pane, Chrome, or browser_use when they are unavailable.
+- Repair Computer Use / computer control / Any App when it is unavailable.
+- Repair Computer Use errors such as `native pipe unavailable`, `missing-helper-path`, broken plugin cache, or broken helper paths.
+- Repair phone remote control when the entry is hidden, the QR code keeps spinning, setup redirects to ChatGPT login, Allow fails, or the phone says the Codex version is expired.
+- Repair Goal entries, settings entries, or feature buttons that disappear or become disabled after updates.
+- Repair broken local plugin marketplace config or `codex plugin list` errors.
+- Optionally back up and restore local Codex config, skills, marketplaces, and related state.
 
 ## Platform Support
 
@@ -75,11 +75,27 @@ The scripts are reference implementations and operational templates, not a one-c
 
 ## Which Runner To Use
 
-- If Computer Use says the plugin is unavailable, shows `missing-helper-path`, breaks again after restart, or Chrome/browser helper paths, cache links, or native-host files are wrong: the current Codex Desktop session can use this skill; no other agent is required. Run `scripts/install-computer-use-local.ps1` or `scripts/install-computer-use-local.ps1 -VerifyOnly`, then restart Codex.
-- If plugin marketplace config is broken, `codex plugin list` fails because of marketplace manifests, or a local marketplace is missing `.agents\plugins\marketplace.json`: the current Codex Desktop session can use this skill; no other agent is required. Run `scripts/repatch-codex-windows.ps1 -RegisterMarketplaceOnly` or the local marketplace repair flow.
-- If the user explicitly asks to install the bundled custom model instructions prompt: run `scripts/install-model-instructions-file.ps1`, then restart Codex CLI/Desktop or start a new session.
-- If phone remote control is hidden, spins on QR, redirects to ChatGPT login, fails after Allow, or reports an expired Codex environment: use `references/remote-control-debug-cases.md` and the explicit phone remote-control scripts. This is opt-in and is not part of the default Fast Mode repatch. If pairing works but a phone-created turn hits the wrong model API endpoint, diagnose that as a post-pairing configuration case from the actual request URL and current config.
-- If Fast Mode is missing or does not send `service_tier=priority`, plugin entries or install buttons are greyed out, Computer Control `Any App` is greyed out, Browser/Chrome/browser_use is greyed out, language resets to English after restart, or Goal entries disappear: these require patching Codex Desktop MSIX/ASAR. Prefer another agent or an external PowerShell for the full repatch so the current Desktop session is not interrupted while it stops and reinstalls itself.
+Some repairs reinstall Codex Desktop. During reinstall, the current Codex Desktop process is closed. Do not ask the same Codex Desktop session to reinstall itself unless you are fine with the session being interrupted.
+
+The current Codex Desktop session can usually repair these without another agent:
+
+- Computer Use says the plugin is unavailable, shows `native pipe unavailable` or `missing-helper-path`, or breaks again after restart.
+- Chrome / browser_use helper paths, plugin cache, or native-host files are broken.
+- Plugin marketplace config is broken, or `codex plugin list` fails because of marketplace manifests.
+- A local marketplace is missing `.agents\plugins\marketplace.json`.
+- You only need backup/restore work or the optional custom model instructions setup.
+- Phone remote control already pairs, but phone-created turns hit the wrong model API endpoint. Treat this as a post-pairing configuration diagnosis: inspect the actual request URL and current config before changing anything.
+
+Use another agent, external PowerShell, the Codex extension inside VS Code/Antigravity, or any environment that will not be closed by the Codex Desktop reinstall for these:
+
+- Fast Mode / Priority Mode is hidden or not taking effect.
+- The UI language resets to English after restart.
+- Plugin entries, install buttons, Goal entries, or Computer Control `Any App` are greyed out or missing.
+- The in-app browser, browser pane, Chrome, or browser_use is hidden or disabled by Desktop-side gates.
+- Phone remote control is hidden, the QR keeps spinning, setup redirects to ChatGPT login, Allow fails, or the phone reports an expired Codex version.
+- Any repair that needs a full repatch, MSIX repack, Developer-signed package install, `app.asar` replacement, or `resources\codex.exe` replacement.
+
+Simple rule: if the repair stops, uninstalls, reinstalls, or relaunches Codex Desktop, run it from another agent or external PowerShell. If it only changes local config, plugin cache, marketplace files, backups, or verification, the current Codex Desktop session can usually handle it.
 
 Example request: `Use the codex-windows-fast-patch skill to inspect and repair Codex Desktop Fast Mode, language/locale, Chrome browser_use, plugin marketplace, and Computer Use availability on this Windows machine.`
 
