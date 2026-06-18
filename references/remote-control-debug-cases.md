@@ -40,7 +40,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\ski
 
 6. After dry-run succeeds, rerun with `-Install -Launch -InstallPrerequisites`. Stop only WindowsApps Codex Desktop processes; do not kill Antigravity/extension-host Codex sessions unless the user explicitly asks.
 
-7. After successful repair, delete or let the script delete generated MSIX staging, ASAR extraction, temporary patched `.msix`, script-local `npx` cache, live verification extracts, copied SQLite/log probes, and temporary Windows SDK BuildTools. Keep reusable native build outputs and source checkouts if they avoid a costly rebuild next time. Keep auth/config/sqlite state and explicit backups unless the user asks for backup pruning.
+7. After successful remote-control install, verify that the ordinary patched features survived. At minimum run `install-computer-use-local.ps1 -StrictVerifyOnly`, `codex plugin list`, and a Windows sandbox smoke test. If strict verification reports a stale Chrome native-host manifest or a missing/stale bundled cache link, run `install-computer-use-local.ps1 -VerifyOnly`, then rerun `-StrictVerifyOnly`.
+
+8. After successful repair, delete or let the script delete generated MSIX staging, ASAR extraction, temporary patched `.msix`, script-local `npx` cache, live verification extracts, copied SQLite/log probes, and temporary Windows SDK BuildTools. Keep reusable native build outputs and source checkouts if they avoid a costly rebuild next time. Keep auth/config/sqlite state and explicit backups unless the user asks for backup pruning.
 
 ## ASAR Patch Expectations
 
@@ -56,7 +58,14 @@ The ASAR patch script targets behavior, not fixed filenames. Dry-run and live pa
 - `remote_control_qm_start`
 - `software_device_key_async_fallback`
 
-In 26.611-style bundles, the no-auth 401 redirect can live in `codex-mobile-setup-queries-*`, not only in `codex-mobile-setup-dialog-*` or `codex-mobile-setup-flow-*`. Patch behavior by finding the chunk with `ChatGPT auth is required to load remote control environments.` and the `e.status===401` branch.
+In 26.611-style bundles, the no-auth 401 redirect can live in multiple chunks, including `codex-mobile-setup-queries-*` and `codex-mobile-setup-flow-*`, not only in `codex-mobile-setup-dialog-*`. Patch every matching chunk with `ChatGPT auth is required to load remote control environments.` or the `J&&u('/login')` effect; do not return a single mobile setup file from the patcher when multiple chunks match.
+
+In 26.611.8604, the main bundle shape changed again. Detect the main bundle by behavior markers such as `desktop_fetch_auth_401`, `authorize remote control environments`, `app_EMoamEEZ73f0CkXaXp7hrann`, and `codex.remote_control.enroll`, not by old fixed function names. Known 26.611.8604 anchors are:
+
+- Step-up function `ZZ`, token exchange `rQ`, client id var `VZ`, and scope var `qZ`.
+- Desktop fetch path `pP({desktopOriginator:this.options.desktopOriginator,headers:t,state:e})` with auth attached through `Cg(...)` and surface headers through `wg(...)`.
+- App-server auth function `Sg`, wrapper `zg`, and request function `Rg`.
+- Authorize flow `n_`, device-key creation `F_`, and device-key client factory `EQ`.
 
 The patched mobile setup chunks must not still contain forced redirect shapes:
 

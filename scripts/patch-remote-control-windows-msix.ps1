@@ -390,17 +390,36 @@ try {
 
   Write-Log "checking patched JS syntax"
   $mainFile = [string]$patchInfo.mainFile
-  $mobileFile = [string]$patchInfo.mobileSetupNoAuthRedirectFile
-  if ([string]::IsNullOrWhiteSpace($mobileFile)) {
-    $mobileFile = [string]$patchInfo.mobileSetupFile
+  $mobileFiles = @()
+  if ($patchInfo.PSObject.Properties.Name -contains 'mobileSetupNoAuthRedirectFiles') {
+    foreach ($entry in @($patchInfo.mobileSetupNoAuthRedirectFiles)) {
+      $entryFile = [string]$entry.file
+      if (-not [string]::IsNullOrWhiteSpace($entryFile)) {
+        $mobileFiles += $entryFile
+      }
+    }
+  }
+  if ($mobileFiles.Count -eq 0) {
+    $mobileFile = [string]$patchInfo.mobileSetupNoAuthRedirectFile
+    if ([string]::IsNullOrWhiteSpace($mobileFile)) {
+      $mobileFile = [string]$patchInfo.mobileSetupFile
+    }
+    if (-not [string]::IsNullOrWhiteSpace($mobileFile)) {
+      $mobileFiles += $mobileFile
+    }
   }
   $mobileFlowFile = [string]$patchInfo.mobileSetupFlowFile
   $remoteConnectionsSettingsFile = [string]$patchInfo.remoteConnectionsSettingsFile
   if (-not (Test-Path -LiteralPath $mainFile -PathType Leaf)) {
     Fail "patched main file missing: $mainFile"
   }
-  if (-not (Test-Path -LiteralPath $mobileFile -PathType Leaf)) {
-    Fail "patched mobile setup file missing: $mobileFile"
+  if ($mobileFiles.Count -eq 0) {
+    Fail "patched mobile setup file missing from patcher result"
+  }
+  foreach ($mobileFile in $mobileFiles) {
+    if (-not (Test-Path -LiteralPath $mobileFile -PathType Leaf)) {
+      Fail "patched mobile setup file missing: $mobileFile"
+    }
   }
   if (-not (Test-Path -LiteralPath $mobileFlowFile -PathType Leaf)) {
     Fail "patched mobile setup flow file missing: $mobileFlowFile"
@@ -409,7 +428,13 @@ try {
     Fail "patched remote connections settings file missing: $remoteConnectionsSettingsFile"
   }
   $mainText = Get-Content -LiteralPath $mainFile -Raw
-  $mobileText = Get-Content -LiteralPath $mobileFile -Raw
+  $mobileTexts = @()
+  foreach ($mobileFile in $mobileFiles) {
+    $mobileTexts += [pscustomobject]@{
+      Path = $mobileFile
+      Text = Get-Content -LiteralPath $mobileFile -Raw
+    }
+  }
   $mobileFlowText = Get-Content -LiteralPath $mobileFlowFile -Raw
   $remoteConnectionsSettingsText = Get-Content -LiteralPath $remoteConnectionsSettingsFile -Raw
   if (-not $mainText.Contains('remote_control_desktop_fetch_override_used')) {
@@ -421,8 +446,10 @@ try {
   if (-not $mainText.Contains('remote_control_connection_auth_fallback_used')) {
     Fail 'patched main connection auth fallback helper marker missing'
   }
-  if (-not $mobileText.Contains('remote_control_mobile_setup_no_auth_redirect')) {
-    Fail 'patched mobile setup marker missing'
+  foreach ($mobileItem in $mobileTexts) {
+    if (-not $mobileItem.Text.Contains('remote_control_mobile_setup_no_auth_redirect')) {
+      Fail "patched mobile setup marker missing: $($mobileItem.Path)"
+    }
   }
   if (-not $mobileFlowText.Contains('remote_control_mobile_setup_authorize_before_enable')) {
     Fail 'patched mobile setup flow marker missing'
@@ -437,9 +464,11 @@ try {
   if ($LASTEXITCODE -ne 0) {
     Fail "node --check failed for $mainFile"
   }
-  & node --check $mobileFile
-  if ($LASTEXITCODE -ne 0) {
-    Fail "node --check failed for $mobileFile"
+  foreach ($mobileFile in ($mobileFiles | Select-Object -Unique)) {
+    & node --check $mobileFile
+    if ($LASTEXITCODE -ne 0) {
+      Fail "node --check failed for $mobileFile"
+    }
   }
   & node --check $mobileFlowFile
   if ($LASTEXITCODE -ne 0) {
@@ -450,8 +479,13 @@ try {
     Fail "node --check failed for $remoteConnectionsSettingsFile"
   }
 
-  if ($mobileText.Contains('e.status===401?(J(),new Se(')) {
-    Fail 'mobile setup forced ChatGPT auth redirect still present'
+  foreach ($mobileItem in $mobileTexts) {
+    if (
+      $mobileItem.Text.Contains('e.status===401?(J(),new Se(') -or
+      $mobileItem.Text.Contains('e.status===401?(v(),new C(')
+    ) {
+      Fail "mobile setup forced ChatGPT auth redirect still present: $($mobileItem.Path)"
+    }
   }
 
   Write-Log "packing patched ASAR"
