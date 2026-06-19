@@ -13,6 +13,7 @@ param(
   [string]$LocalPluginMarketplaceSource = (Join-Path $env:USERPROFILE '.codex\.tmp\plugins'),
   [string]$LocalPluginMarketplaceName = 'openai-curated-local',
   [switch]$VerifyFastModeRequest,
+  [switch]$OnlyBundledMarketplaceCopy,
   [switch]$DryRun
 )
 
@@ -349,6 +350,53 @@ function Require-WindowsSdkTool {
   return [string]$tool
 }
 
+function Copy-FileDataOnly {
+  param(
+    [Parameter(Mandatory = $true)][string]$Source,
+    [Parameter(Mandatory = $true)][string]$Destination
+  )
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Destination) | Out-Null
+  $inputStream = [System.IO.File]::Open($Source, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete)
+  try {
+    $outputStream = [System.IO.File]::Open($Destination, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+    try {
+      $inputStream.CopyTo($outputStream)
+    } finally {
+      $outputStream.Dispose()
+    }
+  } finally {
+    $inputStream.Dispose()
+  }
+  try {
+    $sourceItem = Get-Item -LiteralPath $Source -Force
+    [System.IO.File]::SetLastWriteTimeUtc($Destination, $sourceItem.LastWriteTimeUtc)
+  } catch {
+    Write-Log "warning: could not preserve timestamp for $Destination`: $($_.Exception.Message)"
+  }
+}
+
+function Copy-DirectoryDataOnly {
+  param(
+    [Parameter(Mandatory = $true)][string]$Source,
+    [Parameter(Mandatory = $true)][string]$Destination
+  )
+  if (-not (Test-Path -LiteralPath $Source -PathType Container)) {
+    Fail "source directory not found: $Source"
+  }
+  New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+  foreach ($item in Get-ChildItem -LiteralPath $Source -Force) {
+    $target = Join-Path $Destination $item.Name
+    if ($item.PSIsContainer -and (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0)) {
+      Copy-DirectoryDataOnly -Source $item.FullName -Destination $target
+    } elseif ($item.PSIsContainer) {
+      Write-Log "warning: copying reparse directory as an empty directory: $($item.FullName)"
+      New-Item -ItemType Directory -Force -Path $target | Out-Null
+    } else {
+      Copy-FileDataOnly -Source $item.FullName -Destination $target
+    }
+  }
+}
+
 function Copy-PackageLayout {
   param(
     [string]$SourcePackageRoot,
@@ -360,9 +408,22 @@ function Copy-PackageLayout {
   if (-not (Test-Path -LiteralPath $WorkPackageRoot)) {
     New-Item -ItemType Directory -Force -Path $WorkPackageRoot | Out-Null
     Write-Log "copying package layout to: $WorkPackageRoot"
+    $asarPath = Join-Path $WorkPackageRoot 'app\resources\app.asar'
+    $robocopyFailed = $false
     & robocopy.exe $SourcePackageRoot $WorkPackageRoot /MIR /R:2 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
     if ($LASTEXITCODE -gt 7) {
-      Fail "robocopy failed with exit code $LASTEXITCODE"
+      Write-Log "warning: robocopy failed with exit code $LASTEXITCODE; retrying package copy with data-only stream copy"
+      $robocopyFailed = $true
+    }
+    if ($robocopyFailed -or -not (Test-Path -LiteralPath $asarPath -PathType Leaf)) {
+      if (Test-Path -LiteralPath $WorkPackageRoot) {
+        Remove-DirectoryRobust -Path $WorkPackageRoot -RequiredRoot (Split-Path -Parent $WorkPackageRoot)
+      }
+      New-Item -ItemType Directory -Force -Path $WorkPackageRoot | Out-Null
+      Copy-DirectoryDataOnly -Source $SourcePackageRoot -Destination $WorkPackageRoot
+    }
+    if (-not (Test-Path -LiteralPath $asarPath -PathType Leaf)) {
+      Fail "package copy did not produce app.asar: $asarPath"
     }
   } else {
     Write-Log "using existing work package layout: $WorkPackageRoot"
@@ -427,6 +488,7 @@ function Write-PatcherFiles {
   $goalPatcherPath = Join-Path $WorkDir 'PatchGoal.cjs'
   $computerUsePatcherPath = Join-Path $WorkDir 'PatchComputerUseGates.cjs'
   $browserUsePatcherPath = Join-Path $WorkDir 'PatchBrowserUseGates.cjs'
+  $bundledMarketplaceCopyPatcherPath = Join-Path $WorkDir 'PatchBundledMarketplaceCopy.cjs'
 
   Set-Content -LiteralPath $fastPatcherPath -Encoding UTF8 -Value @'
 const fs = require('node:fs');
@@ -953,6 +1015,29 @@ patchDesktopFeatureMain(desktopFeatureMainFile);
 process.stdout.write(changed ? 'patched' : 'already-patched');
 '@
 
+  Set-Content -LiteralPath $bundledMarketplaceCopyPatcherPath -Encoding UTF8 -Value @'
+const fs = require('node:fs');
+const file = process.argv[2];
+const text = fs.readFileSync(file, 'utf8');
+
+const patchedMarker = 'codex_windows_bundled_marketplace_copy_fallback';
+if (text.includes(patchedMarker)) {
+  process.stdout.write('already-patched');
+  process.exit(0);
+}
+
+const original = 'async function Bs(e,t){if(m.default.platform===`darwin`){await Ko(`ditto`,[`--noqtn`,e,t]);return}await f.default.cp(e,t,{recursive:!0,verbatimSymlinks:!0})}';
+const replacement = 'async function Bs(e,t){if(m.default.platform===`darwin`){await Ko(`ditto`,[`--noqtn`,e,t]);return}try{await f.default.cp(e,t,{recursive:!0,verbatimSymlinks:!0});return}catch(n){if(m.default.platform!==`win32`)throw n;L.warning(`codex_windows_bundled_marketplace_copy_fallback`,{safe:{},sensitive:{error:n,source:e,target:t}})}async function n(e,t){let r=await f.default.lstat(e);if(r.isDirectory()){await f.default.mkdir(t,{recursive:!0});for(let r of await f.default.readdir(e))await n((0,s.join)(e,r),(0,s.join)(t,r));return}if(r.isSymbolicLink()){let n=await f.default.readlink(e);try{await f.default.symlink(n,t)}catch(e){if(e?.code!==`EEXIST`)throw e}return}await f.default.mkdir((0,s.dirname)(t),{recursive:!0});let i=await f.default.readFile(e);await f.default.writeFile(t,i);try{await f.default.chmod(t,r.mode)}catch{}}await n(e,t)}';
+
+if (!text.includes(original)) {
+  process.stderr.write('bundled-marketplace-copy-target-not-found\n');
+  process.exit(2);
+}
+
+fs.writeFileSync(file, text.replace(original, replacement));
+process.stdout.write('patched');
+'@
+
   return [pscustomobject]@{
     Fast = $fastPatcherPath
     FastUi = $fastUiPatcherPath
@@ -961,6 +1046,7 @@ process.stdout.write(changed ? 'patched' : 'already-patched');
     Goal = $goalPatcherPath
     ComputerUse = $computerUsePatcherPath
     BrowserUse = $browserUsePatcherPath
+    BundledMarketplaceCopy = $bundledMarketplaceCopyPatcherPath
   }
 }
 
@@ -1217,6 +1303,18 @@ function Find-PatchTargets {
     Fail 'could not find Computer Use setup gate in extracted assets'
   }
 
+  $bundledMarketplaceCopyTarget = $null
+  foreach ($candidate in (Get-ChildItem -LiteralPath $viteBuildDir -Filter '*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
+    $text = Get-Content -Raw -LiteralPath $candidate
+    if (($text.Contains('plugin_marketplace_folder_write_failed') -and $text.Contains('async function Bs(e,t)')) -or $text.Contains('codex_windows_bundled_marketplace_copy_fallback')) {
+      $bundledMarketplaceCopyTarget = $candidate
+      break
+    }
+  }
+  if ([string]::IsNullOrWhiteSpace($bundledMarketplaceCopyTarget)) {
+    Fail 'could not find bundled marketplace copy helper in extracted main bundle'
+  }
+
   Write-Log "fast-mode patch target: $fastModeTarget"
   Write-Log "fast-mode UI patch target: $fastModeUiTarget"
   Write-Log "locale i18n patch target: $localeI18nTarget"
@@ -1233,6 +1331,7 @@ function Find-PatchTargets {
   Write-Log "computer-use availability patch target: $computerUseAvailabilityTarget"
   Write-Log "computer-use install-flow patch target: $computerUseInstallFlowTarget"
   Write-Log "computer-use setup patch target: $computerUseSetupTarget"
+  Write-Log "bundled marketplace copy patch target: $bundledMarketplaceCopyTarget"
 
   return [pscustomobject]@{
     FastMode = $fastModeTarget
@@ -1251,6 +1350,7 @@ function Find-PatchTargets {
     ComputerUseAvailability = $computerUseAvailabilityTarget
     ComputerUseInstallFlow = $computerUseInstallFlowTarget
     ComputerUseSetup = $computerUseSetupTarget
+    BundledMarketplaceCopy = $bundledMarketplaceCopyTarget
   }
 }
 
@@ -1291,6 +1391,41 @@ function Invoke-PatchAppAsar {
   Write-Log 'extracting app.asar'
   Invoke-NpxAsar 'extract' $asarPath $extractDir
   $patchers = Write-PatcherFiles $WorkDir
+
+  if ($OnlyBundledMarketplaceCopy) {
+    $viteBuildDir = Join-Path $extractDir '.vite\build'
+    if (-not (Test-Path -LiteralPath $viteBuildDir -PathType Container)) {
+      Fail "vite build directory not found in extracted asar: $viteBuildDir"
+    }
+    $bundledMarketplaceCopyTarget = $null
+    foreach ($candidate in (Get-ChildItem -LiteralPath $viteBuildDir -Filter '*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
+      $text = Get-Content -Raw -LiteralPath $candidate
+      if (($text.Contains('plugin_marketplace_folder_write_failed') -and $text.Contains('async function Bs(e,t)')) -or $text.Contains('codex_windows_bundled_marketplace_copy_fallback')) {
+        $bundledMarketplaceCopyTarget = $candidate
+        break
+      }
+    }
+    if ([string]::IsNullOrWhiteSpace($bundledMarketplaceCopyTarget)) {
+      Fail 'could not find bundled marketplace copy helper in extracted main bundle'
+    }
+    Write-Log "bundled marketplace copy patch target: $bundledMarketplaceCopyTarget"
+    $bundledMarketplaceCopy = Invoke-NodePatcher $nodePath $patchers.BundledMarketplaceCopy @($bundledMarketplaceCopyTarget)
+    Write-Log "bundled marketplace copy patch result: $bundledMarketplaceCopy"
+
+    if ($DryRun) {
+      Write-Log 'dry run: bundled marketplace copy patch target validation completed; no package was changed'
+      return $false
+    }
+    if ($bundledMarketplaceCopy -eq 'already-patched') {
+      Write-Log 'asar bundled marketplace copy patch already present'
+      return $false
+    }
+    Write-Log 'repacking app.asar'
+    Invoke-NpxAsar 'pack' $extractDir $newAsarPath
+    Copy-Item -LiteralPath $newAsarPath -Destination $asarPath -Force
+    return $true
+  }
+
   $targets = Find-PatchTargets $rgPath $extractDir
 
   $fast = Invoke-NodePatcher $nodePath $patchers.Fast @($targets.FastMode)
@@ -1319,6 +1454,8 @@ function Invoke-PatchAppAsar {
   )
   $computerUse = Invoke-NodePatcher $nodePath $patchers.ComputerUse $computerUseArgs
   Write-Log "computer-use gate patch result: $computerUse"
+  $bundledMarketplaceCopy = Invoke-NodePatcher $nodePath $patchers.BundledMarketplaceCopy @($targets.BundledMarketplaceCopy)
+  Write-Log "bundled marketplace copy patch result: $bundledMarketplaceCopy"
 
   if ($DryRun) {
     Write-Log 'dry run: patch target validation completed; no package was changed'
@@ -1331,7 +1468,8 @@ function Invoke-PatchAppAsar {
       $plugins -eq 'already-patched' -and
       $goal -eq 'already-patched' -and
       $browserUse -eq 'already-patched' -and
-      $computerUse -eq 'already-patched') {
+      $computerUse -eq 'already-patched' -and
+      $bundledMarketplaceCopy -eq 'already-patched') {
     Write-Log 'asar patch already present'
     return $false
   }
@@ -1445,8 +1583,10 @@ function Trust-SigningCertificate {
   param([System.Security.Cryptography.X509Certificates.X509Certificate2]$Cert)
   $tempCert = Join-Path $env:TEMP ('codex-msix-signing-' + $Cert.Thumbprint + '.cer')
   Export-Certificate -Cert $Cert -FilePath $tempCert -Force | Out-Null
+  Import-Certificate -FilePath $tempCert -CertStoreLocation Cert:\CurrentUser\Root | Out-Null
   Import-Certificate -FilePath $tempCert -CertStoreLocation Cert:\CurrentUser\TrustedPeople | Out-Null
   if (Test-IsAdministrator) {
+    Import-Certificate -FilePath $tempCert -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
     Import-Certificate -FilePath $tempCert -CertStoreLocation Cert:\LocalMachine\TrustedPeople | Out-Null
   }
   Remove-Item -LiteralPath $tempCert -Force -ErrorAction SilentlyContinue

@@ -202,6 +202,12 @@ Remove-Item Env:ELECTRON_ENABLE_LOGGING -ErrorAction SilentlyContinue
 - If the Computer Control page says `Computer Use 插件不可用`, check the Desktop log for `computer-use native pipe startup failed` with `missing-helper-path`, then inspect `$env:USERPROFILE\.codex\.tmp\bundled-marketplaces\openai-bundled\.agents\plugins\marketplace.json` and `plugins\computer-use`. If they are missing or partial, stop bundled `extension-host` processes under `$env:USERPROFILE\.codex\plugins\cache\openai-bundled`, rerun `scripts\install-computer-use-local.ps1`, restart Codex Desktop, and confirm the log ends with `computer-use native pipe startup ready`.
 - If `scripts\install-computer-use-local.ps1 -StrictVerifyOnly` fails because `$env:USERPROFILE\.codex\plugins\cache\openai-bundled\computer-use\latest\.codex-plugin\plugin.json` is missing, run the same script with `-VerifyOnly` to repair the marketplace mirror, cached plugin copy, and `latest` link, then rerun `-StrictVerifyOnly`.
 - If the failure reappears after fully quitting and reopening Codex Desktop, inspect `$env:USERPROFILE\.codex\chrome-native-hosts.json` and the real targets of `$env:USERPROFILE\.codex\plugins\cache\openai-bundled\chrome\latest` and `browser\latest`. Stale Chrome native-host entries, or a `chrome\latest` junction that points at `$env:USERPROFILE\.codex\.tmp\bundled-marketplaces\openai-bundled\plugins\chrome`, can let Chrome native messaging lock the mutable marketplace mirror. The symptom is `bundled_plugins_marketplace_resolve_failed` with `EBUSY` on `plugins\chrome\extension-host\windows\x64`, followed by `helper paths changed` and `missing-helper-path`; rerun `scripts\install-computer-use-local.ps1` to stop the lock holder, rebuild stable browser/chrome cache copies, repoint the Chrome native messaging manifest to the stable cache path, and repair Computer Use.
+- If the failure reappears after restart with `plugin_marketplace_folder_write_failed` during `copy_plugins`, `bundled_plugins_marketplace_resolve_failed`, or `not_in_bundled_marketplace_plugin_names` uninstalling `browser@openai-bundled` / `chrome@openai-bundled`, patch only the bundled marketplace copy helper instead of running the full Fast/browser/Computer Use gate repatch:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch_codex_fast_mode_windows_msix.ps1" -OnlyBundledMarketplaceCopy -DryRun -OutputRoot "<large-local-build-root>"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch_codex_fast_mode_windows_msix.ps1" -OnlyBundledMarketplaceCopy -Install -Launch -InstallPrerequisites -OutputRoot "<large-local-build-root>"
+```
 
 ## Useful Wrapper Options
 
@@ -210,6 +216,7 @@ Remove-Item Env:ELECTRON_ENABLE_LOGGING -ErrorAction SilentlyContinue
 - `-SkipFastVerify`: skip the WebSocket `service_tier` capture.
 - `-KeepBuild`: keep `Downloads\codex-msix-repack` for debugging.
 - `-OutputRoot <path>`: optional large local build root; use it when the default output root is short on space, points at a broken junction, or should be kept off the system drive.
+- `-OnlyBundledMarketplaceCopy`: patch only the Desktop bundled marketplace copy helper so Windows falls back to byte-stream copying when `fs.cp()` cannot copy bundled plugin files from WindowsApps-protected package paths. Use this for restart-time bundled marketplace sync failures that uninstall `browser` or `chrome`, not for general Fast Mode or UI gates.
 - `-SkipSdkCleanup`: leave Windows SDK installed.
 - `-RegisterMarketplaceOnly`: only register `openai-curated-local`; do not patch Codex.
 - `-PatchScript <path>`: override the bundled patch script only when testing a newer patcher.

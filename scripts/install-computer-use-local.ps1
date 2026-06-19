@@ -107,6 +107,38 @@ function Remove-ReparsePointOrDirectory {
   Remove-Item -LiteralPath $item.FullName -Recurse -Force
 }
 
+function Copy-DirectoryDataOnly {
+  param(
+    [string]$Source,
+    [string]$Destination
+  )
+
+  if (-not (Test-Path -LiteralPath $Source -PathType Container)) {
+    throw "copy source directory not found: $Source"
+  }
+
+  if (Test-Path -LiteralPath $Destination) {
+    Remove-ReparsePointOrDirectory $Destination
+  }
+
+  $sourceRoot = (Resolve-Path -LiteralPath $Source).ProviderPath
+  Resolve-OrCreateDirectory $Destination | Out-Null
+
+  foreach ($dir in Get-ChildItem -LiteralPath $sourceRoot -Recurse -Directory -Force) {
+    $relative = $dir.FullName.Substring($sourceRoot.Length).TrimStart('\')
+    Resolve-OrCreateDirectory (Join-Path $Destination $relative) | Out-Null
+  }
+
+  foreach ($file in Get-ChildItem -LiteralPath $sourceRoot -Recurse -File -Force) {
+    $relative = $file.FullName.Substring($sourceRoot.Length).TrimStart('\')
+    $target = Join-Path $Destination $relative
+    $targetParent = Split-Path -Parent $target
+    Resolve-OrCreateDirectory $targetParent | Out-Null
+    [System.IO.File]::WriteAllBytes($target, [System.IO.File]::ReadAllBytes($file.FullName))
+    [System.IO.File]::SetLastWriteTime($target, $file.LastWriteTime)
+  }
+}
+
 function Set-TomlTable {
   param(
     [string]$ConfigPath,
@@ -555,15 +587,10 @@ function Patch-ComputerUseClientScript {
     return
   }
 
-  $usesNodeReplRuntimePath = $content.Contains('getWindowsComputerUseClientBasePath()') -and $content.Contains('NODE_REPL_NODE_MODULE_DIRS')
-  if ($usesNodeReplRuntimePath) {
-    Write-Log "Computer Use client already resolves Windows runtime through nodeRepl env: $ClientPath"
-    return
-  }
-
   $oldImport = 'import { WindowsComputerUseClientBase } from "@oai/sky/dist/project/cua/sky_js/src/targets/windows/internal/computer_use_client_base.js";'
   if (-not $content.Contains($oldImport)) {
-    throw "Computer Use client import anchor not found in: $ClientPath"
+    Write-Log "Computer Use client import anchor not found; leaving client script unchanged: $ClientPath"
+    return
   }
 
   $replacement = @'
@@ -628,10 +655,7 @@ function Write-PluginTree {
   if (Test-Path -LiteralPath $distPath) {
     Remove-ReparsePointOrDirectory $distPath
   }
-  & robocopy.exe $runtimeDistPath $distPath /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
-  if ($LASTEXITCODE -gt 7) {
-    throw "robocopy failed while overlaying Computer Use @oai/sky runtime files (exit code $LASTEXITCODE)"
-  }
+  Copy-DirectoryDataOnly $runtimeDistPath $distPath
 
   ConvertTo-JsonFile $packagePath ([ordered]@{
     name = '@oai/sky'
@@ -650,7 +674,7 @@ function Update-BundledMarketplaceManifest {
 
   $manifestPath = Join-Path $MarketplaceRoot '.agents\plugins\marketplace.json'
   if (Test-Path -LiteralPath $manifestPath) {
-    $json = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
+    $json = Get-Content -Raw -Encoding UTF8 -LiteralPath $manifestPath | ConvertFrom-Json
   } else {
     $json = [pscustomobject]@{
       name = 'openai-bundled'
@@ -697,6 +721,12 @@ function Update-CodexConfig {
   Set-TomlTable $configPath '[plugins."computer-use@openai-bundled"]' @{
     enabled = $true
   }
+  Set-TomlTable $configPath '[plugins."browser@openai-bundled"]' @{
+    enabled = $true
+  }
+  Set-TomlTable $configPath '[plugins."chrome@openai-bundled"]' @{
+    enabled = $true
+  }
   Set-TomlTable $configPath '[windows]' @{
     sandbox = 'unelevated'
   }
@@ -737,18 +767,34 @@ tomllib.loads(path.read_text(encoding="utf-8"))
 
 function Get-CuaSkyRuntimeRoot {
   $runtimeRoot = Join-Path $env:LOCALAPPDATA 'OpenAI\Codex\runtimes\cua_node'
-  if (-not (Test-Path -LiteralPath $runtimeRoot -PathType Container)) {
-    throw "Codex CUA runtime root is missing: $runtimeRoot"
+  $candidates = @()
+
+  if (Test-Path -LiteralPath $runtimeRoot -PathType Container) {
+    $candidates += foreach ($runtime in (Get-ChildItem -LiteralPath $runtimeRoot -Directory -ErrorAction SilentlyContinue)) {
+      $skyRoot = Join-Path $runtime.FullName 'bin\node_modules\@oai\sky'
+      $basePath = Join-Path $skyRoot 'dist\project\cua\sky_js\src\targets\windows\internal\computer_use_client_base.js'
+      $packagePath = Join-Path $skyRoot 'package.json'
+      if ((Test-Path -LiteralPath $basePath -PathType Leaf) -and (Test-Path -LiteralPath $packagePath -PathType Leaf)) {
+        $packageItem = Get-Item -LiteralPath $packagePath
+        [pscustomobject]@{
+          Path = $skyRoot
+          LastWriteTime = $packageItem.LastWriteTime
+        }
+      }
+    }
   }
 
-  $candidates = foreach ($runtime in (Get-ChildItem -LiteralPath $runtimeRoot -Directory -ErrorAction SilentlyContinue)) {
-    $skyRoot = Join-Path $runtime.FullName 'bin\node_modules\@oai\sky'
-    $basePath = Join-Path $skyRoot 'dist\project\cua\sky_js\src\targets\windows\internal\computer_use_client_base.js'
-    $packagePath = Join-Path $skyRoot 'package.json'
-    if ((Test-Path -LiteralPath $basePath -PathType Leaf) -and (Test-Path -LiteralPath $packagePath -PathType Leaf)) {
+  $pkg = Get-AppxPackage -Name OpenAI.Codex -ErrorAction SilentlyContinue |
+    Sort-Object Version -Descending |
+    Select-Object -First 1
+  if ($pkg) {
+    $packageSkyRoot = Join-Path $pkg.InstallLocation 'app\resources\cua_node\bin\node_modules\@oai\sky'
+    $packageBasePath = Join-Path $packageSkyRoot 'dist\project\cua\sky_js\src\targets\windows\internal\computer_use_client_base.js'
+    $packagePath = Join-Path $packageSkyRoot 'package.json'
+    if ((Test-Path -LiteralPath $packageBasePath -PathType Leaf) -and (Test-Path -LiteralPath $packagePath -PathType Leaf)) {
       $packageItem = Get-Item -LiteralPath $packagePath
-      [pscustomobject]@{
-        Path = $skyRoot
+      $candidates += [pscustomobject]@{
+        Path = $packageSkyRoot
         LastWriteTime = $packageItem.LastWriteTime
       }
     }
@@ -756,7 +802,7 @@ function Get-CuaSkyRuntimeRoot {
 
   $selected = @($candidates | Sort-Object LastWriteTime -Descending | Select-Object -First 1)
   if ($selected.Count -eq 0) {
-    throw "no usable Codex CUA @oai/sky runtime was found under $runtimeRoot"
+    throw "no usable Codex CUA @oai/sky runtime was found under $runtimeRoot or the installed Codex package"
   }
 
   return $selected[0].Path
@@ -910,10 +956,7 @@ function Sync-OpenAiBundledPluginCache {
   }
 
   Write-Log "syncing bundled plugin cache: $PluginName@$version"
-  & robocopy.exe $sourcePluginRoot $cacheVersionRoot /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
-  if ($LASTEXITCODE -gt 7) {
-    throw "robocopy failed while caching ${PluginName} (exit code $LASTEXITCODE)"
-  }
+  Copy-DirectoryDataOnly $sourcePluginRoot $cacheVersionRoot
 
   if (Test-Path -LiteralPath $latestPath) {
     Remove-ReparsePointOrDirectory $latestPath
@@ -934,7 +977,16 @@ function Update-ChromeNativeMessagingManifest {
 
   $manifestPath = Join-Path $env:LOCALAPPDATA 'OpenAI\extension\com.openai.codexextension.json'
   if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
-    Write-Log "warning: Chrome native messaging manifest not found: $manifestPath"
+    $json = [PSCustomObject]@{
+      allowed_origins = @('chrome-extension://hehggadaopoacecdllhhajmbjkdcmajg/')
+      description = 'Codex chrome native messaging host'
+      name = 'com.openai.codexextension'
+      path = $hostExe
+      type = 'stdio'
+    }
+    ConvertTo-JsonFile $manifestPath $json
+    & reg.exe add 'HKCU\Software\Google\Chrome\NativeMessagingHosts\com.openai.codexextension' /ve /t REG_SZ /d $manifestPath /f | Out-Null
+    Write-Log "created Chrome native messaging manifest: $manifestPath"
     return
   }
 
@@ -953,6 +1005,7 @@ function Update-ChromeNativeMessagingManifest {
   Copy-Item -LiteralPath $manifestPath -Destination $backupPath -Force
   $json.path = $hostExe
   ConvertTo-JsonFile $manifestPath $json
+  & reg.exe add 'HKCU\Software\Google\Chrome\NativeMessagingHosts\com.openai.codexextension' /ve /t REG_SZ /d $manifestPath /f | Out-Null
   Write-Log "updated Chrome native messaging manifest: $manifestPath"
   Write-Log "Chrome native messaging manifest backup: $backupPath"
 }
@@ -970,10 +1023,7 @@ function Sync-BundledMarketplaceFromInstalledApp {
   )
 
   Write-Log "syncing installed openai-bundled marketplace: $sourceRoot -> $MarketplaceRoot"
-  & robocopy.exe $sourceRoot $MarketplaceRoot /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
-  if ($LASTEXITCODE -gt 7) {
-    throw "robocopy failed while syncing openai-bundled marketplace (exit code $LASTEXITCODE)"
-  }
+  Copy-DirectoryDataOnly $sourceRoot $MarketplaceRoot
 }
 
 function Test-BundledMarketplaceMirror {
@@ -1029,6 +1079,12 @@ function Test-CodexConfig {
     if ($content -notmatch '(?ms)^\[plugins\."computer-use@openai-bundled"\]\s*\r?\n(?:(?!^\[).)*enabled\s*=\s*true') {
       throw 'config.toml is missing plugins."computer-use@openai-bundled".enabled=true'
     }
+    if ($content -notmatch '(?ms)^\[plugins\."browser@openai-bundled"\]\s*\r?\n(?:(?!^\[).)*enabled\s*=\s*true') {
+      throw 'config.toml is missing plugins."browser@openai-bundled".enabled=true'
+    }
+    if ($content -notmatch '(?ms)^\[plugins\."chrome@openai-bundled"\]\s*\r?\n(?:(?!^\[).)*enabled\s*=\s*true') {
+      throw 'config.toml is missing plugins."chrome@openai-bundled".enabled=true'
+    }
     if ($content -notmatch '(?ms)^\[windows\]\s*\r?\n(?:(?!^\[).)*sandbox\s*=\s*[''"]unelevated[''"]') {
       throw 'config.toml is missing windows.sandbox=unelevated'
     }
@@ -1058,11 +1114,19 @@ else:
     if marketplace.get("source") != expected_source:
         errors.append("marketplaces.openai-bundled.source does not point at the local bundled marketplace")
 
-plugin = data.get("plugins", {}).get("computer-use@openai-bundled")
+plugins = data.get("plugins", {})
+plugin = plugins.get("computer-use@openai-bundled")
 if not isinstance(plugin, dict):
     errors.append('missing [plugins."computer-use@openai-bundled"]')
 elif plugin.get("enabled") is not True:
     errors.append('plugins."computer-use@openai-bundled".enabled must be true')
+
+for plugin_id in ("browser@openai-bundled", "chrome@openai-bundled"):
+    plugin = plugins.get(plugin_id)
+    if not isinstance(plugin, dict):
+        errors.append(f'missing [plugins."{plugin_id}"]')
+    elif plugin.get("enabled") is not True:
+        errors.append(f'plugins."{plugin_id}".enabled must be true')
 
 windows = data.get("windows", {})
 if not isinstance(windows, dict):
@@ -1152,10 +1216,14 @@ function Test-ComputerUseClientImport {
     throw 'node.exe not found; cannot verify Computer Use client import'
   }
 
-  $runtimeSkyRoot = Get-CuaSkyRuntimeRoot
-  $runtimeNodeModules = Split-Path -Parent (Split-Path -Parent $runtimeSkyRoot)
+  $clientRoot = Split-Path -Parent (Split-Path -Parent $ClientPath)
+  $runtimeNodeModules = Join-Path $clientRoot 'node_modules'
   if (-not (Test-Path -LiteralPath $runtimeNodeModules -PathType Container)) {
-    throw "Unable to locate CUA runtime node_modules for import verification: $runtimeNodeModules"
+    $runtimeSkyRoot = Get-CuaSkyRuntimeRoot
+    $runtimeNodeModules = Split-Path -Parent (Split-Path -Parent $runtimeSkyRoot)
+    if (-not (Test-Path -LiteralPath $runtimeNodeModules -PathType Container)) {
+      throw "Unable to locate CUA runtime node_modules for import verification: $runtimeNodeModules"
+    }
   }
 
   $script = @'
@@ -1163,10 +1231,11 @@ import { pathToFileURL } from "node:url";
 
 globalThis.nodeRepl = {
   config: {},
-  env: {
-    NODE_REPL_NODE_MODULE_DIRS: process.argv[3],
-  },
   nativePipe: {},
+  env: {
+    NODE_REPL_NODE_MODULE_DIRS:
+      process.env.NODE_REPL_NODE_MODULE_DIRS ?? process.env.NODE_PATH ?? "",
+  },
 };
 
 const mod = await import(pathToFileURL(process.argv[2]).href);
@@ -1178,6 +1247,7 @@ console.log(JSON.stringify({ ok: true, exports: Object.keys(mod).sort() }));
   $temp = Join-Path $env:TEMP ('codex-computer-use-client-import-' + [guid]::NewGuid().ToString('N') + '.mjs')
   $tempClient = Join-Path $env:TEMP ('codex-computer-use-client-copy-' + [guid]::NewGuid().ToString('N') + '.mjs')
   $oldNodePath = [Environment]::GetEnvironmentVariable('NODE_PATH', 'Process')
+  $oldNodeReplNodeModuleDirs = [Environment]::GetEnvironmentVariable('NODE_REPL_NODE_MODULE_DIRS', 'Process')
   try {
     Write-Utf8NoBom $temp $script
     Copy-Item -LiteralPath $ClientPath -Destination $tempClient -Force
@@ -1185,7 +1255,8 @@ console.log(JSON.stringify({ ok: true, exports: Object.keys(mod).sort() }));
     # The Codex Node REPL resolves bare packages from runtime search roots, not
     # from the imported plugin file's local node_modules. Verify that shape.
     [Environment]::SetEnvironmentVariable('NODE_PATH', $runtimeNodeModules, 'Process')
-    $output = & $node.Source $temp $tempClient $runtimeNodeModules
+    [Environment]::SetEnvironmentVariable('NODE_REPL_NODE_MODULE_DIRS', $runtimeNodeModules, 'Process')
+    $output = & $node.Source $temp $tempClient
     if ($LASTEXITCODE -ne 0) {
       throw "Computer Use client import verification failed for $ClientPath"
     }
@@ -1197,6 +1268,11 @@ console.log(JSON.stringify({ ok: true, exports: Object.keys(mod).sort() }));
       Remove-Item Env:\NODE_PATH -ErrorAction SilentlyContinue
     } else {
       [Environment]::SetEnvironmentVariable('NODE_PATH', $oldNodePath, 'Process')
+    }
+    if ($null -eq $oldNodeReplNodeModuleDirs) {
+      Remove-Item Env:\NODE_REPL_NODE_MODULE_DIRS -ErrorAction SilentlyContinue
+    } else {
+      [Environment]::SetEnvironmentVariable('NODE_REPL_NODE_MODULE_DIRS', $oldNodeReplNodeModuleDirs, 'Process')
     }
     Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $tempClient -Force -ErrorAction SilentlyContinue
@@ -1295,7 +1371,7 @@ function Test-ComputerUse {
   }
 
   if (Test-Path -LiteralPath $chromeNativeManifest -PathType Leaf) {
-    $nativeManifest = Get-Content -Raw -LiteralPath $chromeNativeManifest | ConvertFrom-Json
+    $nativeManifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $chromeNativeManifest | ConvertFrom-Json
     if ([string]$nativeManifest.path -ne $chromeHostPath) {
       throw "Chrome native messaging manifest does not point at stable cache path: $chromeNativeManifest"
     }
