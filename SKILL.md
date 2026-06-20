@@ -1,11 +1,11 @@
 ---
 name: codex-windows-fast-patch
-description: Reapply and repair Windows Codex Desktop after Store upgrades, including Fast Mode request/UI gates, locale i18n, plugin UI gates, Chrome/browser_use gates, Goal command gates, Windows Computer Use availability gates and plugin/runtime repair, phone remote-control pairing under third-party/API-key main app usage, Desktop dynamicTools/inputSchema thread-start schema drift, ASAR integrity repair, signing/installing patched MSIX packages, SDK cleanup, Fast Mode wire verification, local plugin marketplace registration, and optional custom model_instructions_file setup.
+description: Reapply and repair Windows Codex Desktop after Store upgrades, including Fast Mode request/UI gates, locale i18n, plugin UI gates, Chrome/browser_use gates, Goal command gates, Windows Computer Use availability gates and plugin/runtime repair, phone remote-control pairing under third-party/API-key main app usage, Desktop dynamicTools/inputSchema thread-start schema drift, local conversation visibility recovery after model_provider switches, ASAR integrity repair, signing/installing patched MSIX packages, SDK cleanup, Fast Mode wire verification, local plugin marketplace registration, and optional custom model_instructions_file setup.
 ---
 
 # Codex Windows Fast Patch
 
-Use this skill when the user says Codex Desktop was upgraded and the Fast Mode / Plugins / Goal patch disappeared, asks to repatch Codex on Windows, asks to verify whether Fast Mode is really being sent, asks to restore/register the local plugin marketplace, asks to enable Chrome browser use or Windows Computer Use in Codex Desktop, or asks to enable/repair phone remote control while keeping third-party/API-key model access. Also use it when the language/locale setting reverts after restart, browser or plugin entries are hidden by availability gates, the Computer Control settings page shows "Any App" / "任意应用" as disabled by organization or unavailable in the current region, a Computer Use task reports native pipe, bundled plugin cache, helper path, package import, or runtime initialization errors, phone remote-control QR pairing spins/fails, post-pairing phone-created turns hit the wrong model API endpoint, Desktop new-chat/thread start fails with `missing field inputSchema`, or the user explicitly asks to configure the bundled custom `model_instructions_file` prompt asset.
+Use this skill when the user says Codex Desktop was upgraded and the Fast Mode / Plugins / Goal patch disappeared, asks to repatch Codex on Windows, asks to verify whether Fast Mode is really being sent, asks to restore/register the local plugin marketplace, asks to enable Chrome browser use or Windows Computer Use in Codex Desktop, or asks to enable/repair phone remote control while keeping third-party/API-key model access. Also use it when the language/locale setting reverts after restart, browser or plugin entries are hidden by availability gates, the Computer Control settings page shows "Any App" / "任意应用" as disabled by organization or unavailable in the current region, a Computer Use task reports native pipe, bundled plugin cache, helper path, package import, or runtime initialization errors, phone remote-control QR pairing spins/fails, post-pairing phone-created turns hit the wrong model API endpoint, Desktop new-chat/thread start fails with `missing field inputSchema`, local conversations disappear after switching `model_provider` / API account, or the user explicitly asks to configure the bundled custom `model_instructions_file` prompt asset.
 
 ## Platform Compatibility
 
@@ -53,6 +53,7 @@ Before choosing the full MSIX repack path, identify whether the current failure 
 - Use the Computer Use Only workflow first when evidence points to a local plugin/runtime problem: `codex plugin list` marketplace errors, missing `.agents\plugins\marketplace.json`, missing or partial `openai-bundled` plugin files, `bundled_plugins_marketplace_resolve_failed`, `EBUSY` on bundled plugin files, native pipe unavailable, `missing-helper-path`, stale Chrome native messaging host paths, bundled plugin cache drift, Chrome/browser cache link drift, stale `SKY_CUA_NATIVE_PIPE` config, `@oai/sky` import errors, or `setupComputerUseRuntime` import failure. This class does not require an MSIX uninstall/reinstall unless a later check also proves a Desktop gate is still closed.
 - Use the Phone Remote Control workflow when the user needs mobile pairing/control, the Connections page hides the phone setup card, the QR dialog spins, remote-control setup jumps to ChatGPT auth, the Allow dialog fails, the phone says the Codex environment version expired, or phone-created turns reach Desktop but send model requests to the wrong API endpoint.
 - Use the Missing inputSchema decision workflow when Codex Desktop cannot create a new conversation or local task and the newest Desktop log reports `method=thread/start` with the phrase `missing field inputSchema`. Do not assume this is always MCP. First compare CLI/app-server smoke tests against Desktop logs and inspect whether Desktop is sending non-null app dynamic tools. If the failure follows a suspect MCP server, isolate MCP. If CLI thread start succeeds while Desktop UI fails and extracted ASAR has `webview\assets\app-server-dynamic-tools-*.js` returning a namespace-wrapped `dynamicTools` object, use the Dynamic Tools Schema workflow. Do not run Phone Remote Control or Computer Use repair for this symptom unless separate evidence points there.
+- Use the Provider History Sync workflow when old conversations disappear from the official Desktop sidebar after the user changes `model_provider`, API account, or provider config, but local `sessions`, `archived_sessions`, or `state_5.sqlite` data still exists. This workflow is data-layer repair; it does not require Codex++, does not patch ASAR, and must not modify `config.toml`.
 - If the user asks for Phone Remote Control and ordinary Desktop features in the same repair, patch Phone Remote Control first, then verify Fast Mode/browser/Chrome/Computer Use. If the remote-control MSIX install disturbs Computer Use or Chrome native-host state, immediately run the Computer Use Only workflow and re-run `-StrictVerifyOnly`.
 - Do not infer that a new `resources\codex.exe` PE file means `app.asar` is gone or that Computer Use needs binary patching. Inspect the current package resources first. If `app.asar` still exists and the symptom is a plugin/runtime import or cache failure, run `scripts\install-computer-use-local.ps1` before considering MSIX or binary changes.
 - After a Computer Use-only repair, always run `scripts\install-computer-use-local.ps1 -StrictVerifyOnly`. Treat `client import ok` plus `helper transport ok` as the local repair success signal.
@@ -188,6 +189,48 @@ After installation, verify with the actual Desktop UI or newest Desktop logs. A 
 
 Cleanup policy: successful dynamic-tools script runs delete generated MSIX staging directories, ASAR extracts, script-local `npx` cache, temporary SDK cache under `-OutputRoot`, and installed patched `.msix` artifacts. Use `-KeepWorkDir` only for failed or actively debugged runs.
 
+## Provider History Sync
+
+Use this targeted workflow when Codex Desktop local conversations disappear after switching `model_provider`, API account, or provider config, while the actual local history files still exist. The root cause is usually that Codex filters the official sidebar by the active provider bucket; older thread rows and rollout metadata remain under a previous provider.
+
+This workflow is based on the same proven mechanism used by reference projects such as `codex-provider-sync` and `codex-threadripper`, but it does not install or require those tools. It reads the current provider from `config.toml`, then aligns provider metadata in local history stores:
+
+- `sessions` and `archived_sessions` rollout JSONL first line: `session_meta.payload.model_provider`
+- App SQLite store: `$env:USERPROFILE\.codex\sqlite\state_5.sqlite`
+- Legacy CLI SQLite store: `$env:USERPROFILE\.codex\state_5.sqlite`
+- Missing thread rows from the legacy CLI store into the newer App store when the App store is missing rows that still exist in the legacy store.
+
+Before changing anything, run a dry run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\sync-codex-provider-history.ps1" -DryRun
+```
+
+If the dry run shows mismatched provider buckets, close or stop Codex Desktop and run the sync:
+
+```powershell
+Get-Process Codex -ErrorAction SilentlyContinue | Where-Object { $_.Path -like 'C:\Program Files\WindowsApps\OpenAI.Codex_*\app\Codex.exe' } | Stop-Process -Force
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\sync-codex-provider-history.ps1"
+```
+
+Guardrails:
+
+- Do not modify `config.toml`; the script checks the file hash before and after each run and fails if it changes.
+- Do not install or launch Codex++, codex-provider-sync, or codex-threadripper for this workflow. They are references only.
+- Do not patch ASAR or inject a floating session list for this symptom. A Codex++-style floating panel can show sessions but is not the official sidebar recovery mechanism and can introduce UI/encoding bugs.
+- Do not sync `.codex-global-state.json` workspace/project roots by default. Doing so can expose many historical `cwd` values as empty project groups in the Desktop sidebar.
+- Backups are written under `$env:USERPROFILE\.codex\backups_state\provider-sync-agent\<timestamp>` before SQLite or rollout writes.
+- One unreadable or empty rollout first line may be skipped; treat that as a residual data issue, not a failure if SQLite and readable rollout counts align and the official sidebar shows the expected conversations.
+
+Success criteria:
+
+- The script logs the target provider from the current config.
+- Both App and legacy SQLite stores, when present, report active and archived thread rows under that target provider.
+- Rollout first-line provider counts under `sessions` and `archived_sessions` match the target provider for readable rollouts.
+- `config.toml sha256 unchanged` is logged.
+- Codex Desktop's official sidebar shows the recovered historical conversations after restart.
+- The Projects/workspace area does not gain new empty project groups as a side effect.
+
 ## Important Guardrails
 
 - The full MSIX install path removes the existing `OpenAI.Codex` package and installs a patched package. If run from inside Codex Desktop, the app can disappear or exit while the script continues. Use that path only when package-gated Desktop code must be patched; for local Chrome/Computer Use marketplace/cache/native-host/runtime failures, use the Computer Use Only workflow instead.
@@ -214,7 +257,6 @@ Remove-Item Env:ELECTRON_ENABLE_LOGGING -ErrorAction SilentlyContinue
 - If `codex plugin list` fails with `failed to load configured marketplace snapshot(s)` and a local marketplace root contains only `marketplace.json`, copy that manifest to `.agents\plugins\marketplace.json` and re-run `codex plugin list` before diagnosing individual plugins.
 - Do not depend on `Downloads\patch_codex_fast_mode_windows_msix.ps1`; the skill is intended to be self-contained. Use `scripts\patch_codex_fast_mode_windows_msix.ps1` unless the user explicitly passes `-PatchScript`.
 - Do not enable the bundled custom `model_instructions_file` prompt unless the user explicitly asks for it. Treat `assets\system-prompt.md` as an opaque asset; copy/configure it, but do not inspect or summarize its content unless the user separately asks to review the prompt.
-- If the user's upstream is CPA, verify CPA override rules as part of Fast Mode validation: for the Codex-facing models, force `service_tier` as a string parameter with value `priority`. Local wire capture only proves Codex Desktop sent the field; CPA can still strip, ignore, or fail to apply it unless the override rule is configured.
 - In Codex 26.601.2237+, Fast Mode may be gated in `webview\assets\read-service-tier-for-request-*.js` as an async helper shaped like `return authMethod===\`chatgpt\` ? featureRequirements?.fast_mode !== false : false`. The patch should remove the `chatgpt`-only branch while still reading the model/host feature requirement, then verify with the wire capture.
 - In Codex 26.601.2237+, Fast Mode may also stay invisible or disabled in the settings UI through `webview\assets\use-service-tier-settings-*.js`. The patch should connect the Fast UI patcher and log `fast-mode UI patch result`, not only patch the request helper.
 - If the language selection reverts to English after restart, inspect the extracted webview assets for `enable_i18n`, `locale_source`, and `localeOverride`. The locale patch should log `locale i18n patch result`; do not treat a config-only language write as sufficient.
@@ -340,7 +382,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\ski
 - The patch log includes `fast-mode UI patch result` and `locale i18n patch result`, each either `patched` or `already-patched`.
 - The patch log includes `browser-use gate patch result`, either `patched` or `already-patched`.
 - Desktop logs show `browser_use_availability_resolved` with `available=true` and `reason=local-patched` after the patched app starts.
-- If upstream is CPA, CPA has an override rule for the Codex-facing models that sets `service_tier` to string value `priority`.
 - `$env:USERPROFILE\.codex\config.toml` contains `[marketplaces.openai-curated-local]`.
 - `$env:USERPROFILE\.codex\config.toml` contains `[marketplaces.openai-bundled]` pointing at `$env:USERPROFILE\.codex\.tmp\bundled-marketplaces\openai-bundled`, and that local mirror contains the installed bundled plugins plus `computer-use`.
 - Any configured local marketplace used for personal plugins has a supported `.agents\plugins\marketplace.json`; root-level `marketplace.json` alone is not enough for the current plugin CLI.
@@ -358,4 +399,5 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\ski
 - For phone remote-control repair with a native replacement, live `app\resources\codex.exe` contains `remote_control_app_server_isolated_oauth_used`, `remote_control_native_remote_json_first`, `remote_control_websocket_proxy_attempt`, `remote_control_websocket_proxy_connected`, `remote-control-oauth.json`, `remote.json`, and `codex.remote_control.enroll`.
 - For phone remote-control repair, `Settings -> Connections` shows the mobile/phone setup path, the QR code appears, phone scan no longer reports an expired Codex environment, native logs show remote-control WebSocket ping/pong/ack instead of repeated Windows `os error 10060`, and phone-sent turns reach Desktop. If a phone-sent turn then targets the wrong model API endpoint, handle it as the post-pairing configuration case.
 - For Dynamic Tools Schema repair, the patched ASAR has `webview\assets\app-server-dynamic-tools-*.js` returning flat entries containing `namespace`, `name`, `description`, and `inputSchema` instead of a namespace wrapper object, `node --check` passes for that asset, and actual Desktop new-chat/thread creation no longer logs `missing field inputSchema`.
+- For Provider History Sync, both App and legacy SQLite stores report thread rows under the current provider, readable rollout first lines use the current provider, `config.toml sha256 unchanged` is logged, official Desktop conversations reappear, and no new empty project groups are introduced.
 - `makeappx.exe` and `signtool.exe` are missing again if SDK cleanup was enabled.

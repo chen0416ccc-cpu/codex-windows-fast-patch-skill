@@ -17,6 +17,7 @@ Use this skill when Windows Codex Desktop updates cause issues like these:
 - Repair native phone remote control under a third-party API login state when the entry is hidden, the QR code keeps spinning, setup redirects to ChatGPT login, Allow fails, or the phone says the Codex version is expired.
 - Repair Goal entries, settings entries, or feature buttons that disappear or become disabled after updates.
 - Repair Desktop new-chat/thread-start failures caused by `dynamicTools` schema drift, including `missing field inputSchema` when the CLI smoke path still works.
+- Restore local conversations in the official sidebar after switching `model_provider` / API config when the local history data still exists.
 - Repair broken local plugin marketplace config or `codex plugin list` errors.
 - Optionally back up and restore local Codex config, skills, marketplaces, and related state.
 - Automatically update this skill to the latest version before each repair attempt.
@@ -40,11 +41,12 @@ Do not run it on macOS. A macOS version needs a separate workflow for the Codex 
 - `scripts/patch-remote-control-windows-msix.ps1`: Phone remote-control MSIX / ASAR patch and marker verification reference implementation.
 - `scripts/patch-remote-control-asar.cjs`: Phone remote-control Electron bundle patcher used by the MSIX script.
 - `scripts/install-computer-use-local.ps1`: Windows Computer Use local compatibility reference implementation.
+- `scripts/sync-codex-provider-history.ps1`: Sync local conversation provider metadata so conversations hidden after a `model_provider` switch reappear in the official list; it does not modify `config.toml` or workspace/project roots by default.
 - `scripts/install-model-instructions-file.ps1`: Optional installer for the bundled `model_instructions_file` prompt asset.
 - `scripts/manage-codex-backups.ps1`: Backup manager for local Codex config, MCP, skills, and marketplaces.
 - `scripts/update-skill-from-github.ps1`: Best-effort self-update script that syncs the latest GitHub version before use.
 - `assets/system-prompt.md`: Bundled prompt asset used only when optional model instructions setup is requested.
-- `references/restriction-debug-cases.md`: On-demand cases for restriction gates, Chrome/browser_use, Computer Use, and CPA Fast Mode.
+- `references/restriction-debug-cases.md`: On-demand cases for restriction gates, Chrome/browser_use, Computer Use, and Fast Mode.
 - `references/remote-control-debug-cases.md`: On-demand cases for phone remote-control pairing, isolated auth, native app-server networking, version-expired state, and post-pairing API endpoint diagnosis.
 
 ## Install
@@ -87,6 +89,7 @@ The current Codex Desktop session can usually repair these without another agent
 - Chrome / browser_use helper paths, plugin cache, or native-host files are broken.
 - Plugin marketplace config is broken, or `codex plugin list` fails because of marketplace manifests.
 - A local marketplace is missing `.agents\plugins\marketplace.json`.
+- Old local conversations disappear after switching `model_provider` / API config, but `sessions`, `archived_sessions`, or `state_5.sqlite` still contain the data. Use provider history sync first; this does not require an MSIX reinstall.
 - You only need backup/restore work or the optional custom model instructions setup.
 - Phone remote control already pairs, but phone-created turns hit the wrong model API endpoint. Treat this as a post-pairing configuration diagnosis: inspect the actual request URL and current config before changing anything.
 
@@ -112,6 +115,7 @@ Expected verification after a full run:
 - Desktop logs show `browser_use_availability_resolved` with `available=true` and `reason=local-patched` when browser use is part of the repair.
 - If Chrome control is required, `codex plugin list` shows `chrome@openai-bundled` as `installed, enabled`, the native messaging host manifest points to existing files, and a smoke test can read a controlled tab title such as `Example Domain`.
 - If phone remote control is repaired, Connections shows the phone setup path, QR appears, phone scan does not report an expired Codex environment, native logs show remote-control WebSocket ping/pong/ack, and phone-created turns reach Desktop.
+- If conversation visibility is repaired, `sync-codex-provider-history.ps1` shows App/legacy SQLite stores and readable rollouts aligned to the current `model_provider`, logs `config.toml sha256 unchanged`, official Desktop conversations reappear, and no empty project groups are introduced.
 
 ## Backup Management
 
@@ -134,14 +138,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\ski
 ```
 
 By default, the backup includes custom skills, marketplaces, `config.toml`, extracted `mcp_servers.json`, and `chrome-native-hosts.json`, while excluding easy-to-grow directories such as `.git`, `node_modules`, build outputs, and virtual environments. Use `-IncludeDependencyDirs` only when an exact offline dependency copy is needed; plugin cache and `.tmp\bundled-marketplaces` can also be large, so include them only when needed with `-IncludePluginCache` or `-IncludeTmpBundledMarketplaces`.
-
-## CPA Upstream Configuration
-
-If Codex requests go through CPA upstream, changing the local request to `service_tier=priority` is not enough by itself. Add a CPA override rule for the models that handle Codex requests and force the parameter `service_tier` to string value `priority`, so the upstream actually uses the Fast / Priority path.
-
-The model names in the image are examples. Use the real Codex-facing model names configured in CPA.
-
-![CPA override rule example](assets/cpa-override-rule.svg)
 
 ## Acknowledgements
 
