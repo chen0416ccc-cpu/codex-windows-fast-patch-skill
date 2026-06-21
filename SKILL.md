@@ -132,6 +132,14 @@ Before repairing phone remote control, read `references/remote-control-debug-cas
 - Remote-control OAuth is isolated: use `.codex\remote-control-oauth.json` and `.codex\remote.json`; never use `.codex\auth.json` for the remote-control bearer injection path.
 - An alternate build root is only an optional `-OutputRoot` choice for machines with low system-drive space. Do not hard-code a drive letter into the workflow.
 
+If `Settings -> Connections -> Control this computer` is visible but the device list says to sign in to ChatGPT again, verify the normal remote-control bearer before repatching MSIX again:
+
+```powershell
+python "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\refresh-remote-control-auth.py" --verify-only
+```
+
+If that reports `remote_json_disabled`, `access_token_expired`, `endpoint_http_error`, HTTP 401/403, or a token-refresh diagnosis such as `refresh_token_reused`, regenerate only `.codex\remote.json` with the same script. It uses the official Codex OAuth client, requests `openid profile email offline_access api.connectors.read api.connectors.invoke`, backs up the old `remote.json` under `.codex\backups\remote-control-auth`, defaults to proxy `http://127.0.0.1:10808`, and must not write `.codex\auth.json` or `config.toml`.
+
 Run a dry run first. Do not pass `-KeepWorkDir` unless you need to inspect failed patch artifacts; successful dry-runs should clean generated package and ASAR extraction output:
 
 ```powershell
@@ -430,6 +438,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\ski
 - The patched ASAR has `webview\assets\use-service-tier-settings-*.js` with the Fast Mode UI gate unblocked, the locale chunk with `enable_i18n` forced enabled, and browser_use feature chunks/main feature dispatch patched to report in-app and external browser availability locally.
 - For phone remote-control repair, the patched ASAR contains `remote_control_desktop_fetch_override_used`, `remote_control_mobile_setup_no_auth_redirect`, `remote_control_mobile_setup_authorize_before_enable`, `remote_control_settings_force_control_this_pc_visible`, `remote_control_settings_force_remote_control_section_visible`, and `remote_control_qm_start`.
 - For phone remote-control repair with a native replacement, live `app\resources\codex.exe` contains `remote_control_app_server_isolated_oauth_used`, `remote_control_native_remote_json_first`, `remote_control_websocket_proxy_attempt`, `remote_control_websocket_proxy_connected`, `remote-control-oauth.json`, `remote.json`, and `codex.remote_control.enroll`.
+- For phone remote-control device-list login errors, `scripts\refresh-remote-control-auth.py --verify-only` reports `ok: true` against `/backend-api/wham/remote/control/clients`; if the script regenerated auth, the previous `.codex\remote.json` was backed up and `.codex\auth.json` plus `config.toml` were not modified.
 - For phone remote-control repair, `Settings -> Connections` shows the mobile/phone setup path, the QR code appears, phone scan no longer reports an expired Codex environment, native logs show remote-control WebSocket ping/pong/ack instead of repeated Windows `os error 10060`, and phone-sent turns reach Desktop. If a phone-sent turn then targets the wrong model API endpoint, handle it as the post-pairing configuration case.
 - For Dynamic Tools Schema repair, the patched ASAR has `webview\assets\app-server-dynamic-tools-*.js` returning flat entries containing `namespace`, `name`, `description`, and `inputSchema` instead of a namespace wrapper object, `node --check` passes for that asset, and actual Desktop new-chat/thread creation no longer logs `missing field inputSchema`.
 - For Provider History Sync, both App and legacy SQLite stores report thread rows under the current provider, readable rollout first lines use the current provider, `config.toml sha256 unchanged` is logged, official Desktop conversations reappear, and no new empty project groups are introduced.

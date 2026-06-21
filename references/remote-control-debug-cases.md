@@ -150,6 +150,16 @@ Action:
 - In 26.616-style bundles, patch the new desktop fetch auth path around `async function KF({appServerClient:e,...})`, not only the older `PN/eP/pP` fetch anchors.
 - For `/wham/remote/control/clients` and environment-list read endpoints, prefer isolated `remote.json` before `remote-control-oauth.json`; the step-up/enroll token may have only `codex.remote_control.enroll` and can trigger the device-list login error.
 - Keep `remote-control-oauth.json` for MFA/step-up/enroll flows and keep `remote.json` for normal connection/read authorization. Never fall back to global `auth.json`.
+- A fully patched ASAR/native binary can still fail here when `.codex\remote-control-oauth.json` is valid for enroll but `.codex\remote.json` is disabled, expired, or has a reused refresh token. The normal read token needs `api.connectors.read` and `api.connectors.invoke`; the enroll-only token is not enough for `/backend-api/wham/remote/control/clients`.
+- Verify the normal bearer without modifying files:
+
+```powershell
+python "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\refresh-remote-control-auth.py" --verify-only
+```
+
+- If verify-only reports disabled/expired/401/403, or manual refresh failed with `refresh_token_reused`, run the same script without `--verify-only` and finish the browser PKCE flow. The script writes only `$env:USERPROFILE\.codex\remote.json`, backs up the old file under `.codex\backups\remote-control-auth`, and must not write `.codex\auth.json` or `config.toml`.
+- Direct token exchange can fail with `unsupported_country_region_territory`; keep the default `http://127.0.0.1:10808` proxy unless there is evidence another route works. Use `--proxy ""` only when intentionally testing the direct path.
+- After `--verify-only` returns `ok: true`, refresh the Connections page or restart only WindowsApps Codex Desktop/app-server, then scan the QR code again.
 
 ### Allow Dialog Fails After MFA
 
