@@ -7,6 +7,9 @@ param(
   [switch]$InstallPrerequisites,
   [string]$BuildToolsProxy = $env:CODEX_WINDOWS_SDK_BUILDTOOLS_PROXY,
   [string]$ReplacementResourceCodexExe,
+  [string]$SourceRoot,
+  [string]$SourcePackageFullName,
+  [string]$SourcePackageVersion,
   [string]$OutputRoot = (Join-Path $env:TEMP 'codex-remote-control-msix-patch')
 )
 
@@ -335,14 +338,43 @@ if (-not (Test-Path -LiteralPath $patcher -PathType Leaf)) {
   Fail "patcher not found: $patcher"
 }
 
-$pkg = Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction Stop |
-  Sort-Object Version -Descending |
-  Select-Object -First 1
-if (-not $pkg -or -not $pkg.InstallLocation) {
-  Fail 'OpenAI.Codex package not found'
+$pkg = $null
+if ([string]::IsNullOrWhiteSpace($SourceRoot)) {
+  $pkg = Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction Stop |
+    Sort-Object Version -Descending |
+    Select-Object -First 1
+  if (-not $pkg -or -not $pkg.InstallLocation) {
+    Fail 'OpenAI.Codex package not found'
+  }
+  $SourceRoot = $pkg.InstallLocation
+  $SourcePackageFullName = $pkg.PackageFullName
+  $SourcePackageVersion = $pkg.Version.ToString()
+} else {
+  $SourceRoot = (Resolve-Path -LiteralPath $SourceRoot -ErrorAction Stop).ProviderPath
+  $manifestPath = Join-Path $SourceRoot 'AppxManifest.xml'
+  if (Test-Path -LiteralPath $manifestPath -PathType Leaf) {
+    [xml]$manifest = Get-Content -Raw -LiteralPath $manifestPath
+    if ([string]::IsNullOrWhiteSpace($SourcePackageVersion)) {
+      $SourcePackageVersion = [string]$manifest.Package.Identity.Version
+    }
+    if ([string]::IsNullOrWhiteSpace($SourcePackageFullName)) {
+      $SourcePackageFullName = Split-Path -Leaf $SourceRoot
+    }
+  }
+  if ([string]::IsNullOrWhiteSpace($SourcePackageVersion)) {
+    $SourcePackageVersion = Split-Path -Leaf $SourceRoot
+  }
+  if ([string]::IsNullOrWhiteSpace($SourcePackageFullName)) {
+    $SourcePackageFullName = Split-Path -Leaf $SourceRoot
+  }
+  $pkg = [pscustomobject]@{
+    PackageFullName = $SourcePackageFullName
+    Version = $SourcePackageVersion
+    InstallLocation = $SourceRoot
+  }
 }
 
-$sourceRoot = $pkg.InstallLocation
+$sourceRoot = $SourceRoot
 $sourceAsar = Join-Path $sourceRoot 'app\resources\app.asar'
 $sourceCodexExe = Join-Path $sourceRoot 'app\Codex.exe'
 $sourceResourceCodexExe = Join-Path $sourceRoot 'app\resources\codex.exe'
@@ -358,11 +390,11 @@ if ($ReplacementResourceCodexExe -and -not (Test-Path -LiteralPath $sourceResour
 
 New-Item -ItemType Directory -Force -Path $OutputRoot | Out-Null
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$workRoot = Join-Path $OutputRoot ("work-" + $pkg.Version + "-" + $stamp)
+$workRoot = Join-Path $OutputRoot ("work-" + $SourcePackageVersion + "-" + $stamp)
 $workPackageRoot = Join-Path $workRoot 'package'
 $asarDir = Join-Path $workRoot 'app-asar'
 $npxCache = Join-Path $workRoot 'npm-cache'
-$msixPath = Join-Path $OutputRoot ("OpenAI.Codex_" + $pkg.Version + "_remote-control-patched.msix")
+$msixPath = Join-Path $OutputRoot ("OpenAI.Codex_" + $SourcePackageVersion + "_remote-control-patched.msix")
 $scriptSucceeded = $false
 $installedSuccessfully = $false
 
@@ -373,6 +405,7 @@ New-Item -ItemType Directory -Force -Path $workRoot | Out-Null
 
 try {
   Write-Log "package: $($pkg.PackageFullName)"
+  Write-Log "source root: $sourceRoot"
   Write-Log "copying package layout to: $workPackageRoot"
   & robocopy.exe $sourceRoot $workPackageRoot /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
   if ($LASTEXITCODE -gt 7) {

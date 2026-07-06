@@ -19,7 +19,7 @@ Use this skill when Windows Codex Desktop updates cause issues like these:
 - Repair Desktop new-chat/thread-start failures caused by `dynamicTools` schema drift, including `missing field inputSchema` when the CLI smoke path still works.
 - Restore local conversations in the official sidebar after switching `model_provider` / API config when the local history data still exists; if a restored conversation is visible but cannot continue because its working directory is missing, recreate the missing empty directory from the rollout `cwd`.
 - Repair broken local plugin marketplace config or `codex plugin list` errors.
-- Provide a Windows-only Codex Desktop Guard workflow that watches for Desktop package/resource changes, prepares version-matched patch staging when safe, and tells the user to apply it from an external executor.
+- Provide a Windows-only Codex Desktop Guard workflow that notices silent Desktop update/download activity, discovers a new update payload when it becomes available, prepares a patched update staging package when safe, writes an explicit waiting state when no payload is available yet, and tells the user to apply it from an external executor.
 - Optionally back up and restore local Codex config, skills, marketplaces, and related state.
 - Automatically update this skill to the latest version before each repair attempt.
 
@@ -47,6 +47,8 @@ Do not run it on macOS. A macOS version needs a separate workflow for the Codex 
 - `scripts/install-model-instructions-file.ps1`: Optional installer for the bundled `model_instructions_file` prompt asset.
 - `scripts/manage-codex-backups.ps1`: Backup manager for local Codex config, MCP, skills, and marketplaces.
 - `scripts/watch-codex-desktop.ps1`: Codex Desktop Guard read-only watcher for the AppX package, `resources\codex.exe`, `resources\app.asar`, the local copied CLI, and Desktop `config.toml` hash.
+- `scripts/discover-codex-update-payload.ps1`: Codex Desktop Guard update-payload discovery script for usable new `OpenAI.Codex_*` unpacked packages.
+- `scripts/prepare-patched-update.ps1`: Codex Desktop Guard patched-update preparer; it only patches a new payload when one is found, otherwise it writes a waiting state.
 - `scripts/prepare-fast-patch.ps1`: Codex Desktop Guard staging preparer; builds a prepared replacement only when the version mapping is known safe.
 - `scripts/apply-prepared-fast-patch.ps1`: External-executor apply script for prepared staging; by default it refuses to run from a Codex Desktop-launched process or while Desktop is still open.
 - `scripts/install-codex-desktop-guard-task.ps1` / `scripts/uninstall-codex-desktop-guard-task.ps1`: Install/uninstall the Windows Task Scheduler guard task.
@@ -96,7 +98,7 @@ The default state directory is `$env:USERPROFILE\.codex-fast-patch`:
 - `baselines`: latest read-only baseline and event de-duplication state.
 - `staging`: prepared replacement files, manifests, hashes, verification logs, and apply command files.
 - `logs`: watch / prepare / apply / task logs plus event JSONL.
-- `notifications`: file notifications such as `UPDATE_ACTIVITY.txt`, `CURRENT_VERSION_READY.txt`, `CHANGE.txt`, `READY.txt`, and `NEEDS_ACTION.txt`.
+- `notifications`: file notifications such as `UPDATE_ACTIVITY.txt`, `WAITING_FOR_UPDATE_PAYLOAD.txt`, `PATCHED_UPDATE_READY.txt`, `CURRENT_VERSION_READY.txt`, `CHANGE.txt`, `READY.txt`, and `NEEDS_ACTION.txt`.
 
 Install the 30-minute watch task:
 
@@ -118,11 +120,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\uninstall-codex-d
 
 The watcher tracks the current `OpenAI.Codex` AppX package, `InstallLocation`, `app\resources\codex.exe`, `app\resources\app.asar`, the local copied CLI, and the hash of `$env:USERPROFILE\.codex\config.toml`. It also performs read-only checks of Codex-related WindowsApps directories, recent AppX deployment logs, BITS jobs, and the `codex doctor --json` update diagnosis to notice download/deployment/runtime-update activity. For `config.toml`, it records only hash, length, and timestamp, never the file contents.
 
-When an installed package or key resource changes, watch writes an event and notification, then triggers normal prepare. If it only sees download/deployment/runtime-update activity, such as Desktop staying in a "downloading" state while the package and resources have not changed, watch writes `UPDATE_ACTIVITY.txt` and, when the current version is still a known safe mapping, triggers `prepare-fast-patch.ps1 -Mode UpdateActivity -NoBuild`. That mode snapshots the current live `resources\codex.exe` into staging and writes a `CURRENT_VERSION_READY` current-version protection package. It protects the already rebuilt/repaired `codex.exe` from later same-version overwrite; it is not a new-version patch and is not installed automatically.
+When watch sees download/deployment/runtime-update activity, such as Desktop staying in a "downloading" state while the package and resources have not changed, it writes `UPDATE_ACTIVITY.txt` and first triggers `prepare-patched-update.ps1`. This V2 path calls `discover-codex-update-payload.ps1` to find a new update payload, such as an `OpenAI.Codex_*` unpacked package that differs from the current live package. If a new payload is found, the guard reruns the fast-patch / remote-control repair flow against that payload and writes `PATCHED_UPDATE_READY`. If no usable payload is available yet, it writes `WAITING_FOR_UPDATE_PAYLOAD`; it does not pretend the update was patched, and it does not reuse an old `codex.exe` for an unknown new version.
+
+When an installed package or key resource changes, watch still writes an event and notification, then triggers normal prepare. `prepare-fast-patch.ps1 -Mode UpdateActivity` can still create `CURRENT_VERSION_READY`, but that is only a current known-good version protection package. It is a fallback protection artifact, not the patched-update path.
 
 Prepare never stops, uninstalls, reinstalls, or modifies the live Desktop install. V1 only has one known safe mapping: `OpenAI.Codex_26.623.9142.0` / `codex-cli 0.142.4` / `rust-v0.142.4` / `AppServerVersion 0.142.4`. Unknown versions, unreadable native versions, or hash mismatches produce `NEEDS_ACTION` / `needs_manual_version_mapping`; the guard does not reuse old binaries by guesswork.
 
-`CURRENT_VERSION_READY.txt` means the current known-good version protection package is ready. `READY.txt` means an installed package/key resource change was detected and matching installed-change staging was prepared. Both staging modes write `manifest.json`, `hashes.json`, `verification.log`, and `apply-command.ps1.txt`. Close Codex Desktop first, then run that command from external PowerShell, VS Code Codex, or another executor that will survive a Desktop restart. `apply-prepared-fast-patch.ps1` refuses by default to run from a Codex Desktop-launched process and refuses to continue while Desktop is still open; only explicit `-AllowStopCodexDesktop` permits stopping Desktop. `current_version_ready` can only be applied to the same package version; if a truly new unknown package is installed, apply refuses and requires a new mapping.
+`WAITING_FOR_UPDATE_PAYLOAD.txt` means update/download activity exists but no usable new payload is available yet. `PATCHED_UPDATE_READY.txt` means a new payload has been patched and packaged by the guard and is ready for external installation. `CURRENT_VERSION_READY.txt` means the current known-good version protection package is ready. `READY.txt` means an installed package/key resource change was detected and matching installed-change staging was prepared. Staging writes `manifest.json`, `hashes.json`, `verification.log`, and `apply-command.ps1.txt`. Close Codex Desktop first, then run that command from external PowerShell, VS Code Codex, or another executor that will survive a Desktop restart. `apply-prepared-fast-patch.ps1` refuses by default to run from a Codex Desktop-launched process and refuses to continue while Desktop is still open; only explicit `-AllowStopCodexDesktop` permits stopping Desktop. `current_version_ready` can only be applied to the same package version; `patched_update_ready` only installs a prepared and signed patched MSIX.
 
 The guard does not disable Microsoft Store updates, does not automatically close Desktop, does not automatically install patches, does not set a global `CODEX_HOME`, and does not store secrets, `auth.json`, OAuth tokens, API keys, MCP credentials, `remote.json` contents, or browser profiles.
 

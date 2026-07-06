@@ -55,7 +55,7 @@ function New-GuardUpdateActivityText {
     "Doctor update error: $errorText",
     "",
     "The guard did not apply any patch.",
-    "If this update/download activity is new, the guard prepares a CURRENT_VERSION_READY protection staging package for the current known-good Desktop version."
+    "If this update/download activity is new, the guard now runs update payload discovery. It writes WAITING_FOR_UPDATE_PAYLOAD when no usable payload is available, or PATCHED_UPDATE_READY when a patched update package is staged."
   ) -join "`r`n"
 }
 
@@ -65,7 +65,7 @@ function Invoke-GuardPrepareUpdateActivity {
     [string]$EventPath,
     [Parameter(Mandatory = $true)]$Snapshot
   )
-  $lastPreparedPath = Join-Path $state.Paths.Baselines 'last-prepared-update-activity-event-id.txt'
+  $lastPreparedPath = Join-Path $state.Paths.Baselines 'last-prepared-patched-update-event-id.txt'
   $lastPreparedEventId = if (Test-Path -LiteralPath $lastPreparedPath -PathType Leaf) { (Get-Content -Raw -LiteralPath $lastPreparedPath).Trim() } else { '' }
 
   if ([string]::IsNullOrWhiteSpace($EventPath)) {
@@ -95,25 +95,25 @@ function Invoke-GuardPrepareUpdateActivity {
   }
 
   if ($NoPrepare) {
-    Write-GuardLog -State $state -LogName 'watch.log' -Message "NoPrepare set; update-activity current-version prepare skipped for event: $EventId"
+    Write-GuardLog -State $state -LogName 'watch.log' -Message "NoPrepare set; patched-update prepare skipped for event: $EventId"
     return
   }
   if ($lastPreparedEventId -eq $EventId) {
-    Write-GuardLog -State $state -LogName 'watch.log' -Message "update-activity current-version prepare already handled: $EventId"
+    Write-GuardLog -State $state -LogName 'watch.log' -Message "patched-update prepare already handled: $EventId"
     return
   }
 
-  $prepareScript = Join-Path $ScriptRoot 'prepare-fast-patch.ps1'
+  $prepareScript = Join-Path $ScriptRoot 'prepare-patched-update.ps1'
   if (-not (Test-Path -LiteralPath $prepareScript -PathType Leaf)) {
-    throw "prepare script not found: $prepareScript"
+    throw "patched-update prepare script not found: $prepareScript"
   }
-  Write-GuardLog -State $state -LogName 'watch.log' -Message "starting update-activity current-version prepare for event: $EventId"
-  & powershell -NoProfile -ExecutionPolicy Bypass -File $prepareScript -StateRoot $state.Paths.Root -EventPath $EventPath -Mode UpdateActivity -NoBuild
+  Write-GuardLog -State $state -LogName 'watch.log' -Message "starting patched-update prepare for event: $EventId"
+  & powershell -NoProfile -ExecutionPolicy Bypass -File $prepareScript -StateRoot $state.Paths.Root -EventPath $EventPath | Out-Null
   if ($LASTEXITCODE -ne 0) {
-    throw "update-activity prepare failed with exit code $LASTEXITCODE"
+    throw "patched-update prepare failed with exit code $LASTEXITCODE"
   }
   Write-GuardUtf8NoBom -Path $lastPreparedPath -Content $EventId
-  Write-GuardLog -State $state -LogName 'watch.log' -Message "update-activity current-version prepare complete for event: $EventId"
+  Write-GuardLog -State $state -LogName 'watch.log' -Message "patched-update prepare complete for event: $EventId"
 }
 
 Write-GuardLog -State $state -LogName 'watch.log' -Message "watch started; state root: $($state.Paths.Root)"

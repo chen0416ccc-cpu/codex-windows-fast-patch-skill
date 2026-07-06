@@ -48,14 +48,14 @@ if (-not $manifest) {
   throw "could not read staging manifest: $StagingManifest"
 }
 $manifestStatus = [string]$manifest.Status
-if ($manifestStatus -notin @('ready', 'current_version_ready')) {
+if ($manifestStatus -notin @('ready', 'current_version_ready', 'patched_update_ready')) {
   throw "staging manifest is not ready for apply; status=$manifestStatus"
 }
-if ([string]::IsNullOrWhiteSpace($manifest.ReplacementResourceCodexExe)) {
+if ($manifestStatus -ne 'patched_update_ready' -and [string]::IsNullOrWhiteSpace($manifest.ReplacementResourceCodexExe)) {
   throw 'staging manifest does not contain a replacement resources\codex.exe path'
 }
-$replacementExe = Resolve-GuardFullPath ([string]$manifest.ReplacementResourceCodexExe)
-if (-not (Test-Path -LiteralPath $replacementExe -PathType Leaf)) {
+$replacementExe = if ([string]::IsNullOrWhiteSpace($manifest.ReplacementResourceCodexExe)) { $null } else { Resolve-GuardFullPath ([string]$manifest.ReplacementResourceCodexExe) }
+if ($replacementExe -and -not (Test-Path -LiteralPath $replacementExe -PathType Leaf)) {
   throw "replacement resources\codex.exe not found: $replacementExe"
 }
 
@@ -80,6 +80,58 @@ if ($manifestStatus -eq 'current_version_ready') {
   if (-not [string]::IsNullOrWhiteSpace($manifestPackageFullName) -and $installedBeforeApply.PackageFullName -ne $manifestPackageFullName) {
     throw "current_version_ready staging is only valid for package '$manifestPackageFullName'; installed package is '$($installedBeforeApply.PackageFullName)'. Prepare a new mapping for the installed package instead."
   }
+}
+
+if ($manifestStatus -eq 'patched_update_ready') {
+  if ([string]::IsNullOrWhiteSpace($manifest.PatchedMsixPath)) {
+    throw 'patched_update_ready manifest does not contain PatchedMsixPath'
+  }
+  $patchedMsixPath = Resolve-GuardFullPath ([string]$manifest.PatchedMsixPath)
+  if (-not (Test-Path -LiteralPath $patchedMsixPath -PathType Leaf)) {
+    throw "patched MSIX not found: $patchedMsixPath"
+  }
+  Write-ApplyLog 'creating Desktop state backup before patched update apply'
+  & powershell -NoProfile -ExecutionPolicy Bypass -File $backupScript -Action Backup
+  if ($LASTEXITCODE -ne 0) {
+    throw "backup failed with exit code $LASTEXITCODE"
+  }
+
+  if ($installedBeforeApply) {
+    Write-ApplyLog "removing existing package before patched update install: $($installedBeforeApply.PackageFullName)"
+    try {
+      Remove-AppxPackage -Package $installedBeforeApply.PackageFullName -PreserveApplicationData -ErrorAction Stop
+    } catch {
+      Remove-AppxPackage -Package $installedBeforeApply.PackageFullName -ErrorAction Stop
+    }
+  }
+  Write-ApplyLog "installing patched update MSIX: $patchedMsixPath"
+  Add-AppxPackage -Path $patchedMsixPath -ErrorAction Stop
+
+  $installed = Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction Stop |
+    Sort-Object Version -Descending |
+    Select-Object -First 1
+  $expectedVersion = Resolve-GuardPropertyPath -Object $manifest -Path 'Payload.PackageVersion'
+  if (-not [string]::IsNullOrWhiteSpace($expectedVersion) -and [string]$installed.Version -ne [string]$expectedVersion) {
+    throw "installed patched update version does not match manifest payload; installed=$($installed.Version) payload=$expectedVersion"
+  }
+  if ($replacementExe) {
+    $liveExe = Join-Path $installed.InstallLocation 'app\resources\codex.exe'
+    $liveHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $liveExe).Hash.ToUpperInvariant()
+    $replacementHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $replacementExe).Hash.ToUpperInvariant()
+    if ($liveHash -ne $replacementHash) {
+      throw "live resources\codex.exe hash does not match patched update replacement; live=$liveHash replacement=$replacementHash"
+    }
+  }
+
+  Write-ApplyLog 'running Computer Use strict verify after patched update install'
+  & powershell -NoProfile -ExecutionPolicy Bypass -File $verifyScript -StrictVerifyOnly
+  if ($LASTEXITCODE -ne 0) {
+    throw "post-apply strict verification failed with exit code $LASTEXITCODE"
+  }
+
+  Write-GuardNotification -State $state -Name 'APPLIED.txt' -Content "Codex Desktop Guard applied patched update manifest:`r`n$StagingManifest`r`nInstalled package: $($installed.PackageFullName)`r`n" | Out-Null
+  Write-ApplyLog "patched update apply complete; installed package: $($installed.PackageFullName)"
+  return
 }
 
 Write-ApplyLog 'creating Desktop state backup before apply'
