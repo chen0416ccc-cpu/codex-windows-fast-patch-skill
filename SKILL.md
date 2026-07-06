@@ -1,11 +1,13 @@
 ---
 name: codex-windows-fast-patch
-description: Reapply and repair Windows Codex Desktop after Store upgrades, including Fast Mode request/UI gates, locale i18n, plugin UI gates, Chrome/browser_use gates, Goal command gates, Windows Computer Use availability gates and plugin/runtime repair, phone remote-control pairing under third-party/API-key main app usage, Desktop dynamicTools/inputSchema thread-start schema drift, local conversation visibility recovery after model_provider switches, restored-conversation missing-cwd continuation repair, ASAR integrity repair, signing/installing patched MSIX packages, SDK cleanup, Fast Mode wire verification, local plugin marketplace registration, and optional custom model_instructions_file setup.
+description: Reapply and repair Windows Codex Desktop after Store upgrades, including Codex Desktop Guard watch/prepare staging, Fast Mode request/UI gates, locale i18n, plugin UI gates, Chrome/browser_use gates, Goal command gates, Windows Computer Use availability gates and plugin/runtime repair, phone remote-control pairing under third-party/API-key main app usage, Desktop dynamicTools/inputSchema thread-start schema drift, local conversation visibility recovery after model_provider switches, restored-conversation missing-cwd continuation repair, ASAR integrity repair, signing/installing patched MSIX packages, SDK cleanup, Fast Mode wire verification, local plugin marketplace registration, and optional custom model_instructions_file setup.
 ---
 
 # Codex Windows Fast Patch
 
 Use this skill when the user says Codex Desktop was upgraded and the Fast Mode / Plugins / Goal patch disappeared, asks to repatch Codex on Windows, asks to verify whether Fast Mode is really being sent, asks to restore/register the local plugin marketplace, asks to enable Chrome browser use or Windows Computer Use in Codex Desktop, or asks to enable/repair phone remote control while keeping third-party/API-key model access. Also use it when the language/locale setting reverts after restart, browser or plugin entries are hidden by availability gates, the Computer Control settings page shows "Any App" / "任意应用" as disabled by organization or unavailable in the current region, a Computer Use task reports native pipe, bundled plugin cache, helper path, package import, or runtime initialization errors, phone remote-control QR pairing spins/fails, post-pairing phone-created turns hit the wrong model API endpoint, Desktop new-chat/thread start fails with `missing field inputSchema`, local conversations disappear after switching `model_provider` / API account, restored conversations are visible but cannot continue because the current working directory is missing, or the user explicitly asks to configure the bundled custom `model_instructions_file` prompt asset.
+
+Also use it when the user asks for "小守卫", "Codex Desktop Guard", a monitor that notices silent Codex Desktop updates, or a workflow that prepares but does not apply a new fast-patch after Desktop changes.
 
 ## Platform Compatibility
 
@@ -67,6 +69,25 @@ If a repair can stop, uninstall, reinstall, repackage, or relaunch Codex Desktop
 The target state is the Desktop Codex home: normally `$env:USERPROFILE\.codex`. Do not use an isolated CLI entrypoint for Desktop repair decisions; if that wrapper sets `CODEX_HOME` to `$env:USERPROFILE\.codex-cli` or another isolated directory, it is not the Desktop plugin, marketplace, MCP, remote-control, or login state.
 
 Before starting from VS Code Codex or external PowerShell, confirm no User-level or Machine-level `CODEX_HOME` is set. Do not set global `CODEX_HOME`, do not copy `.codex` into `.codex-cli`, and do not expose or commit `auth.json`, API keys, OAuth tokens, MCP credentials, browser profiles, or local credential stores. Start with a Desktop-state backup, run read-only package/config/log checks, then run the relevant `-DryRun`. Only use `-Install`, full `repatch-codex-windows.ps1`, or targeted `*-windows-msix.ps1 -Install -Launch -InstallPrerequisites` after the dry run finds and validates the intended targets.
+
+## Codex Desktop Guard
+
+Use the guard when the user wants update monitoring and prebuilt staging, not an immediate repair. The guard is intentionally split into read-only watch, non-live prepare, and manual external apply:
+
+- `scripts\watch-codex-desktop.ps1` creates or compares the baseline under `$env:USERPROFILE\.codex-fast-patch`, records events, writes file notifications, and triggers prepare only after installed package/resource changes. It reads only package metadata, file hashes, local copied CLI version/hash, Desktop `config.toml` hash/length/timestamp, Codex-related WindowsApps directory names, recent Codex AppX deployment event excerpts, Codex-related BITS job metadata, and `codex doctor --json` update diagnosis. Download/deployment/runtime-update-only activity should write `UPDATE_ACTIVITY.txt`, not apply or build early.
+- `scripts\prepare-fast-patch.ps1` never stops or modifies the live Desktop install. It builds a prepared native replacement only when the mapping is known safe. V1 safe mapping is `OpenAI.Codex_26.623.9142.0` / `codex-cli 0.142.4` / `rust-v0.142.4` / `AppServerVersion 0.142.4`. Unknown versions or hash mismatches must end in `NEEDS_ACTION` / `needs_manual_version_mapping`.
+- `scripts\apply-prepared-fast-patch.ps1` is for external PowerShell or VS Code Codex only. By default it refuses Codex Desktop-launched processes and refuses to continue while Desktop is still running. It must not be called by the scheduled task.
+- `scripts\install-codex-desktop-guard-task.ps1` installs a Task Scheduler task named `Codex Desktop Guard`, defaulting to a 30-minute interval, current logged-in user, and limited run level.
+
+Common commands:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\install-codex-desktop-guard-task.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\watch-codex-desktop.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\uninstall-codex-desktop-guard-task.ps1"
+```
+
+When `notifications\READY.txt` appears, tell the user to close Codex Desktop and run the generated `apply-command.ps1.txt` command from an external executor. Do not run apply automatically from this skill flow. The guard must not disable Microsoft Store updates, stop Desktop automatically, install patches automatically, set global `CODEX_HOME`, or save secrets, auth files, tokens, MCP credentials, `remote.json` contents, or browser profiles.
 
 ## Default Workflow
 

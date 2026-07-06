@@ -19,6 +19,7 @@
 - 修复 Desktop `dynamicTools` schema 漂移导致新建对话 / thread start 报 `missing field inputSchema`，但 CLI smoke 路径仍然可用的问题。
 - 修复切换 `model_provider` / API 配置后，旧会话仍在本地但官方侧边栏不显示的问题；如果恢复后的会话能显示但继续时报“当前工作目录缺失”，可按 rollout 原始 `cwd` 创建缺失空目录。
 - 修复本地插件市场配置损坏、`codex plugin list` 报错的问题。
+- 提供 Windows-only “小守卫 / Codex Desktop Guard”：周期检测 Codex Desktop 包和关键文件变化，安全准备匹配版本的补丁 staging，并提醒用户用外部执行器手动应用。
 - 可选备份和恢复本机 Codex 配置、技能、插件市场等关键状态。
 - 支持每次开始修复前自动将skills更新到最新版本
 - 破限只需：帮我配置破限相关文件和config.toml中的相关配置
@@ -46,6 +47,11 @@
 - `scripts/sync-codex-provider-history.ps1`：同步本地会话 provider 元数据，让切换 `model_provider` 后消失的会话重新出现在官方列表中；也可用 `-RepairMissingCwdDirs` 修复恢复后会话无法继续的缺失 `cwd` 目录。默认不改 `config.toml`，也不改 workspace/project roots。
 - `scripts/install-model-instructions-file.ps1`：可选安装内置 `model_instructions_file` 提示词资源。
 - `scripts/manage-codex-backups.ps1`：本地 Codex 配置、MCP、skills 和 marketplaces 的备份管理脚本。
+- `scripts/watch-codex-desktop.ps1`：Codex Desktop Guard 只读 watch 脚本，检测 AppX 包、`resources\codex.exe`、`resources\app.asar`、本地复制 CLI 和 Desktop `config.toml` hash。
+- `scripts/prepare-fast-patch.ps1`：Codex Desktop Guard staging 准备脚本，只在安全确认版本映射时构建 prepared replacement。
+- `scripts/apply-prepared-fast-patch.ps1`：外部执行器使用的 prepared patch 应用脚本；默认拒绝在 Codex Desktop 会话或 Desktop 未关闭时运行。
+- `scripts/install-codex-desktop-guard-task.ps1` / `scripts/uninstall-codex-desktop-guard-task.ps1`：安装/卸载 Windows Task Scheduler 小守卫任务。
+- `scripts/codex-desktop-guard-common.ps1`：小守卫共享 helper。
 - `scripts/update-skill-from-github.ps1`：使用前尽力同步 GitHub 最新版本的自更新脚本。
 - `assets/system-prompt.md`：仅在用户明确要求可选提示词配置时使用的内置提示词资源。
 - `references/restriction-debug-cases.md`：限制解除、Chrome/browser_use、Computer Use 和 Fast Mode 的按需诊断案例。
@@ -81,6 +87,43 @@ Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'assets') -Destination
 这个 skill 支持自更新：智能体每次正式使用前会先尝试从 GitHub 检查并同步最新版本。网络不可用、GitHub 访问失败或下载失败时，更新步骤会被跳过，智能体应继续使用当前本地版本处理问题。
 
 这些脚本是参考实现和操作模板，不是跨所有机器都能直接运行的一键方案。实际处理时应先读取 `SKILL.md`，检查当前机器的 Codex 安装方式、MSIX 包路径、ASAR 内容、签名工具、插件目录、Computer Use 文件状态和远控相关日志，再决定执行、改写或只借鉴其中步骤。
+
+## 小守卫 / Codex Desktop Guard
+
+小守卫用于降低 Windows Store / Codex Desktop 静默更新后补丁被覆盖的风险。它的职责是“发现变化、记录证据、准备 staging、提醒用户”，不是自动应用补丁。
+
+默认状态目录是 `$env:USERPROFILE\.codex-fast-patch`，包含：
+
+- `baselines`：最近一次只读基线和事件去重信息。
+- `staging`：准备好的 replacement、manifest、hashes、验证日志和 apply 命令文件。
+- `logs`：watch / prepare / apply / task 日志和事件 JSONL。
+- `notifications`：`CHANGE.txt`、`READY.txt`、`NEEDS_ACTION.txt` 等文件通知。
+
+安装 30 分钟周期 watch 任务：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\install-codex-desktop-guard-task.ps1"
+```
+
+手动只读检查一次：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\watch-codex-desktop.ps1"
+```
+
+卸载任务：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\uninstall-codex-desktop-guard-task.ps1"
+```
+
+小守卫 watch 会检测当前 `OpenAI.Codex` AppX 包、`InstallLocation`、`app\resources\codex.exe`、`app\resources\app.asar`、本地复制 CLI、以及 `$env:USERPROFILE\.codex\config.toml` 的 hash。它也会只读检查 Codex 相关 WindowsApps 目录、最近 AppX 部署日志、BITS 任务和 `codex doctor --json` 的更新诊断，用于发现下载/部署/运行时更新迹象。`config.toml` 只记录 hash、长度和时间戳，不保存正文。
+
+当发现已安装包或关键资源变化时，watch 会写事件和通知，并触发 prepare。若只发现下载/部署迹象，会写 `UPDATE_ACTIVITY.txt`，但不会提前构建或安装。prepare 不停止、不卸载、不重装、不修改 live Desktop install。V1 只内置已验证映射：`OpenAI.Codex_26.623.9142.0` / `codex-cli 0.142.4` / `rust-v0.142.4` / `AppServerVersion 0.142.4`。未知版本、native version 读取失败或 hash 不匹配时，会写 `NEEDS_ACTION` / `needs_manual_version_mapping`，不会复用旧二进制。
+
+准备成功后，`notifications\READY.txt` 和 staging 目录里的 `apply-command.ps1.txt` 会给出外部执行命令。请先关闭 Codex Desktop，再从外部 PowerShell、VS Code Codex 或其它不会被 Desktop 重启影响的执行器运行 apply。`apply-prepared-fast-patch.ps1` 默认会拒绝从 Codex Desktop 自身会话运行，也会拒绝在 Desktop 仍运行时继续；只有显式传 `-AllowStopCodexDesktop` 才允许 stop。
+
+小守卫不会禁用 Microsoft Store 更新，不会自动关闭 Desktop，不会自动安装补丁，不会设置全局 `CODEX_HOME`，也不会保存 secrets、`auth.json`、OAuth token、API key、MCP 凭据、`remote.json` 内容或 browser profile。
 
 ## 使用建议
 
