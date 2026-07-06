@@ -4,8 +4,11 @@ param(
   [string]$EventPath,
   [string]$DiscoveryPath,
   [string]$PayloadRoot,
+  [string]$WingetProxy = $env:CODEX_GUARD_WINGET_PROXY,
   [switch]$DryRun,
   [switch]$NoBuild,
+  [switch]$NoAcquire,
+  [switch]$NoDownload,
   [string]$WorkRoot
 )
 
@@ -76,6 +79,7 @@ function Write-PatchedUpdateTerminalManifest {
   $marker = switch ($Status) {
     'waiting_for_update_payload' { 'WAITING_FOR_UPDATE_PAYLOAD' }
     'needs_update_payload' { 'NEEDS_UPDATE_PAYLOAD' }
+    'needs_update_source' { 'NEEDS_UPDATE_SOURCE' }
     'needs_action' { 'NEEDS_ACTION' }
     default { $Status.ToUpperInvariant() }
   }
@@ -154,6 +158,15 @@ if ([string]::IsNullOrWhiteSpace($DiscoveryPath)) {
   if (-not [string]::IsNullOrWhiteSpace($PayloadRoot)) {
     $discoverArgs += @('-PayloadRoot', $PayloadRoot)
   }
+  if (-not [string]::IsNullOrWhiteSpace($WingetProxy)) {
+    $discoverArgs += @('-WingetProxy', $WingetProxy)
+  }
+  if ($NoAcquire) {
+    $discoverArgs += '-NoAcquire'
+  }
+  if ($NoDownload) {
+    $discoverArgs += '-NoDownload'
+  }
   Write-PatchedUpdateLog 'discovering update payload'
   & powershell @discoverArgs | Out-Null
   if ($LASTEXITCODE -ne 0) {
@@ -174,6 +187,20 @@ if ($discovery.Status -eq 'waiting_for_update_payload' -or $discovery.Status -eq
   $terminalManifest | ConvertTo-Json -Depth 12
   return
 }
+if ($discovery.Status -eq 'needs_update_source') {
+  $acquireReason = if ($discovery.Acquire) { [string]$discovery.Acquire.Reason } else { 'update_source_acquire_failed' }
+  $acquireCommand = if ($discovery.Acquire) { [string]$discovery.Acquire.Command } else { '' }
+  $terminalManifest = Write-PatchedUpdateTerminalManifest -Status 'needs_update_source' -Reason $acquireReason -Details @(
+    "Codex update/download activity exists, so the guard tried to acquire the Store update package itself.",
+    "No usable OpenAI.Codex payload was downloaded or unpacked.",
+    "Last acquire command:",
+    $acquireCommand,
+    "If this machine needs a proxy for Microsoft Store offline packages, set CODEX_GUARD_WINGET_PROXY or rerun with winget --proxy.",
+    "You can also place an unpacked OpenAI.Codex payload under $($state.Paths.Incoming)."
+  ) -Discovery $discovery
+  $terminalManifest | ConvertTo-Json -Depth 12
+  return
+}
 if ($discovery.Status -eq 'needs_update_payload' -or -not $discovery.SelectedPayload) {
   $terminalManifest = Write-PatchedUpdateTerminalManifest -Status 'needs_update_payload' -Reason 'needs_update_payload' -Details @(
     "No usable unpacked update payload was found.",
@@ -185,7 +212,7 @@ if ($discovery.Status -eq 'needs_update_payload' -or -not $discovery.SelectedPay
 
 $payload = $discovery.SelectedPayload
 $payloadSnapshot = Convert-DiscoveryPayloadToSnapshot -Payload $payload
-$mappingResult = Resolve-GuardKnownVersionMapping -Snapshot $payloadSnapshot
+$mappingResult = Resolve-GuardPayloadVersionMapping -Snapshot $payloadSnapshot -AllowInferred
 if (-not $mappingResult.Safe) {
   $terminalManifest = Write-PatchedUpdateTerminalManifest -Status 'needs_action' -Reason 'needs_manual_version_mapping' -Details @($mappingResult.Reasons) -Discovery $discovery
   $terminalManifest | ConvertTo-Json -Depth 12

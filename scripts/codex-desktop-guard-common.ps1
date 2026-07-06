@@ -38,13 +38,15 @@ function New-GuardDirectorySet {
     Staging = Join-Path $root 'staging'
     Logs = Join-Path $root 'logs'
     Notifications = Join-Path $root 'notifications'
+    Downloads = Join-Path $root 'downloads'
+    Incoming = Join-Path $root 'incoming'
   }
 }
 
 function Initialize-GuardState {
   param([string]$StateRoot)
   $paths = New-GuardDirectorySet -StateRoot $StateRoot
-  New-Item -ItemType Directory -Force -Path $paths.Root, $paths.Baselines, $paths.Staging, $paths.Logs, $paths.Notifications | Out-Null
+  New-Item -ItemType Directory -Force -Path $paths.Root, $paths.Baselines, $paths.Staging, $paths.Logs, $paths.Notifications, $paths.Downloads, $paths.Incoming | Out-Null
   return [pscustomobject]@{
     Paths = $paths
     CreatedAt = (Get-Date).ToString('o')
@@ -720,6 +722,76 @@ function Resolve-GuardKnownVersionMapping {
     NativeCliVersion = $nativeVersion
     LiveNativeSha256 = $liveNativeSha
     LocalNativeSha256 = $localNativeSha
+  }
+}
+
+function Resolve-GuardPayloadVersionMapping {
+  param(
+    [Parameter(Mandatory = $true)][object]$Snapshot,
+    [switch]$AllowInferred
+  )
+  $known = Resolve-GuardKnownVersionMapping -Snapshot $Snapshot
+  if ($known.Safe -or -not $AllowInferred) {
+    return $known
+  }
+
+  $reasons = New-Object System.Collections.Generic.List[string]
+  $packageVersion = Resolve-GuardPropertyPath -Object $Snapshot -Path 'Package.Version'
+  $packageFullName = Resolve-GuardPropertyPath -Object $Snapshot -Path 'Package.PackageFullName'
+  $nativeVersion = Resolve-GuardPropertyPath -Object $Snapshot -Path 'LocalCli.Version'
+  $nativeVersionError = Resolve-GuardPropertyPath -Object $Snapshot -Path 'LocalCli.VersionError'
+  $liveNativeSha = Resolve-GuardPropertyPath -Object $Snapshot -Path 'Resources.CodexExe.Sha256'
+  $localNativeSha = Resolve-GuardPropertyPath -Object $Snapshot -Path 'LocalCli.Sha256'
+
+  if ([string]::IsNullOrWhiteSpace($packageVersion) -or [string]::IsNullOrWhiteSpace($packageFullName)) {
+    $reasons.Add('OpenAI.Codex payload package identity was not found.')
+  }
+  if ([string]::IsNullOrWhiteSpace($nativeVersion)) {
+    if ([string]::IsNullOrWhiteSpace($nativeVersionError)) {
+      $reasons.Add('Could not determine payload codex-cli version.')
+    } else {
+      $reasons.Add("Could not determine payload codex-cli version: $nativeVersionError")
+    }
+  } elseif ($nativeVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
+    $reasons.Add("Payload codex-cli version '$nativeVersion' is not a simple semantic version.")
+  }
+  if ([string]::IsNullOrWhiteSpace($liveNativeSha)) {
+    $reasons.Add('Payload resources\codex.exe hash is unavailable.')
+  }
+  if ([string]::IsNullOrWhiteSpace($localNativeSha)) {
+    $reasons.Add('Payload local codex.exe hash is unavailable.')
+  } elseif (-not [string]::IsNullOrWhiteSpace($liveNativeSha) -and $localNativeSha.ToUpperInvariant() -ne $liveNativeSha.ToUpperInvariant()) {
+    $reasons.Add("Payload local codex.exe hash '$localNativeSha' does not match payload resources\codex.exe hash '$liveNativeSha'.")
+  }
+
+  $mapping = $null
+  if ($reasons.Count -eq 0) {
+    $mapping = [pscustomobject]@{
+      PackageVersion = [string]$packageVersion
+      NativeCliVersion = [string]$nativeVersion
+      CodexSourceRef = "rust-v$nativeVersion"
+      AppServerVersion = [string]$nativeVersion
+      NativeSha256 = [string]$liveNativeSha
+      MappingSource = 'inferred_from_payload_codex_cli_version'
+    }
+  } else {
+    foreach ($reason in @($known.Reasons)) {
+      if (-not [string]::IsNullOrWhiteSpace($reason)) {
+        $reasons.Add($reason)
+      }
+    }
+  }
+
+  return [pscustomobject]@{
+    Safe = ($reasons.Count -eq 0)
+    Mapping = $mapping
+    Reasons = @($reasons)
+    PackageVersion = $packageVersion
+    PackageFullName = $packageFullName
+    NativeCliVersion = $nativeVersion
+    LiveNativeSha256 = $liveNativeSha
+    LocalNativeSha256 = $localNativeSha
+    Inferred = ($null -ne $mapping)
   }
 }
 

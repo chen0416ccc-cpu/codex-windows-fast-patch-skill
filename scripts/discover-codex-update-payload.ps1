@@ -4,6 +4,10 @@ param(
   [string]$EventPath,
   [string]$PayloadRoot,
   [string]$OutputPath,
+  [string]$AcquirePath,
+  [string]$WingetProxy = $env:CODEX_GUARD_WINGET_PROXY,
+  [switch]$NoAcquire,
+  [switch]$NoDownload,
   [switch]$NoNotifications
 )
 
@@ -30,19 +34,40 @@ function Get-PackageIdentityFromRoot {
   $name = Split-Path -Leaf $Root
   $manifestPath = Join-Path $Root 'AppxManifest.xml'
   $version = $null
+  $identityName = $null
+  $publisher = $null
+  $architecture = $null
+  $packageFullName = $name
   if (Test-Path -LiteralPath $manifestPath -PathType Leaf) {
     try {
       [xml]$manifest = Get-Content -Raw -LiteralPath $manifestPath
+      $identityName = [string]$manifest.Package.Identity.Name
       $version = [string]$manifest.Package.Identity.Version
+      $publisher = [string]$manifest.Package.Identity.Publisher
+      $architecture = [string]$manifest.Package.Identity.ProcessorArchitecture
     } catch {
     }
   }
   if ([string]::IsNullOrWhiteSpace($version) -and $name -match '^OpenAI\.Codex_([^_]+)_') {
     $version = $Matches[1]
   }
+  if (
+    -not [string]::IsNullOrWhiteSpace($identityName) -and
+    -not [string]::IsNullOrWhiteSpace($version) -and
+    -not [string]::IsNullOrWhiteSpace($architecture) -and
+    $name -notmatch '^OpenAI\.Codex_[^_]+_[^_]+__'
+  ) {
+    $publisherId = if ($identityName -eq 'OpenAI.Codex') { '2p2nqsd0c76g0' } else { $null }
+    if ($publisherId) {
+      $packageFullName = "$identityName" + "_$version" + "_$architecture" + "__$publisherId"
+    }
+  }
   return [pscustomobject]@{
-    PackageFullName = $name
+    IdentityName = $identityName
+    PackageFullName = $packageFullName
     Version = $version
+    Publisher = $publisher
+    ProcessorArchitecture = $architecture
     ManifestPath = if (Test-Path -LiteralPath $manifestPath -PathType Leaf) { $manifestPath } else { $null }
   }
 }
@@ -106,10 +131,23 @@ function New-DirectoryCandidate {
   $shellInfo = Get-GuardFileFingerprint -Path $shellExe
   $currentPackageFullName = Resolve-GuardPropertyPath -Object $snapshot -Path 'Package.PackageFullName'
   $currentPackageVersion = Resolve-GuardPropertyPath -Object $snapshot -Path 'Package.Version'
-  $hasRequiredResources = [bool]($resourceInfo.Exists -and $appAsarInfo.Exists -and $shellInfo.Exists)
-  $isCurrentInstalled = (-not [string]::IsNullOrWhiteSpace($currentPackageFullName) -and $identity.PackageFullName -eq $currentPackageFullName)
+  $currentInstallLocation = Resolve-GuardPropertyPath -Object $snapshot -Path 'Package.InstallLocation'
+  $currentCodexSha = Resolve-GuardPropertyPath -Object $snapshot -Path 'Resources.CodexExe.Sha256'
+  $currentAsarSha = Resolve-GuardPropertyPath -Object $snapshot -Path 'Resources.AppAsar.Sha256'
+  $isCodexPackage = ($identity.IdentityName -eq 'OpenAI.Codex') -or ($identity.PackageFullName -like 'OpenAI.Codex_*') -or ((Split-Path -Leaf $fullRoot) -like 'OpenAI.Codex_*')
+  $hasRequiredResources = [bool]($isCodexPackage -and $resourceInfo.Exists -and $appAsarInfo.Exists -and $shellInfo.Exists)
+  $isCurrentInstalled = (
+    (-not [string]::IsNullOrWhiteSpace($currentPackageFullName) -and $identity.PackageFullName -eq $currentPackageFullName) -or
+    (-not [string]::IsNullOrWhiteSpace($currentInstallLocation) -and $fullRoot -eq (Resolve-GuardFullPath $currentInstallLocation))
+  )
   $isSameVersion = (-not [string]::IsNullOrWhiteSpace($currentPackageVersion) -and $identity.Version -eq $currentPackageVersion)
-  $usable = [bool]($hasRequiredResources -and -not $isCurrentInstalled -and -not $isSameVersion)
+  $isSameContent = (
+    -not [string]::IsNullOrWhiteSpace($currentCodexSha) -and
+    -not [string]::IsNullOrWhiteSpace($currentAsarSha) -and
+    $resourceInfo.Sha256 -eq $currentCodexSha -and
+    $appAsarInfo.Sha256 -eq $currentAsarSha
+  )
+  $usable = [bool]($hasRequiredResources -and -not $isCurrentInstalled -and (-not $isSameVersion -or -not $isSameContent))
   $versionInfo = if ($usable) {
     Get-CodexExeVersionFromPath -Path $resourceCodexExe
   } else {
@@ -120,11 +158,15 @@ function New-DirectoryCandidate {
     }
   }
   $reason = if ($usable) {
-    'usable_update_payload'
+    if ($isSameVersion) { 'usable_update_payload_same_version_different_hashes' } else { 'usable_update_payload' }
+  } elseif (-not $isCodexPackage) {
+    'not_openai_codex_package'
   } elseif (-not $hasRequiredResources) {
     'missing_required_resources'
   } elseif ($isCurrentInstalled) {
     'current_installed_package'
+  } elseif ($isSameVersion -and $isSameContent) {
+    'same_package_version_and_hashes_as_current'
   } elseif ($isSameVersion) {
     'same_package_version_as_current'
   } else {
@@ -134,12 +176,16 @@ function New-DirectoryCandidate {
     Source = $Source
     Kind = 'unpacked_directory'
     Path = $fullRoot
+    IdentityName = $identity.IdentityName
     PackageFullName = $identity.PackageFullName
     PackageVersion = $identity.Version
+    Publisher = $identity.Publisher
+    ProcessorArchitecture = $identity.ProcessorArchitecture
     ManifestPath = $identity.ManifestPath
     HasRequiredResources = $hasRequiredResources
     IsCurrentInstalled = $isCurrentInstalled
     IsSameVersionAsCurrent = $isSameVersion
+    IsSameContentAsCurrent = $isSameContent
     Usable = $usable
     Reason = $reason
     ResourceCodexExe = $resourceInfo
@@ -153,6 +199,7 @@ function New-DirectoryCandidate {
 
 $candidates = New-Object System.Collections.Generic.List[object]
 $errors = New-Object System.Collections.Generic.List[object]
+$acquire = $null
 
 if (-not [string]::IsNullOrWhiteSpace($PayloadRoot)) {
   try {
@@ -161,6 +208,31 @@ if (-not [string]::IsNullOrWhiteSpace($PayloadRoot)) {
     $errors.Add([pscustomobject]@{
       Source = 'explicit_payload_root'
       Path = $PayloadRoot
+      Error = $_.Exception.Message
+    })
+  }
+}
+
+$incomingRoot = $state.Paths.Incoming
+if (Test-Path -LiteralPath $incomingRoot -PathType Container) {
+  try {
+    Get-ChildItem -LiteralPath $incomingRoot -Directory -Recurse -ErrorAction SilentlyContinue |
+      Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'AppxManifest.xml') -PathType Leaf } |
+      ForEach-Object {
+        try {
+          $candidates.Add((New-DirectoryCandidate -Root $_.FullName -Source 'incoming_directory'))
+        } catch {
+          $errors.Add([pscustomobject]@{
+            Source = 'incoming_directory'
+            Path = $_.FullName
+            Error = $_.Exception.Message
+          })
+        }
+      }
+  } catch {
+    $errors.Add([pscustomobject]@{
+      Source = 'incoming_directory_scan'
+      Path = $incomingRoot
       Error = $_.Exception.Message
     })
   }
@@ -191,8 +263,91 @@ if (Test-Path -LiteralPath $windowsApps -PathType Container) {
 }
 
 $usableCandidates = @($candidates | Where-Object { $_.Usable } | Sort-Object PackageVersion -Descending)
+if (
+  $usableCandidates.Count -eq 0 -and
+  [string]::IsNullOrWhiteSpace($PayloadRoot) -and
+  -not $NoAcquire -and
+  $snapshot.UpdateSignals -and
+  $snapshot.UpdateSignals.HasCodexUpdateActivity
+) {
+  $acquireScript = Join-Path $ScriptRoot 'acquire-codex-update-package.ps1'
+  if (Test-Path -LiteralPath $acquireScript -PathType Leaf) {
+    if ([string]::IsNullOrWhiteSpace($AcquirePath)) {
+      $AcquirePath = Join-Path (Split-Path -Parent $OutputPath) 'update-source-acquire.json'
+    }
+    $acquireArgs = @(
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      $acquireScript,
+      '-StateRoot',
+      $state.Paths.Root,
+      '-EventId',
+      $eventId,
+      '-OutputPath',
+      $AcquirePath
+    )
+    if (-not [string]::IsNullOrWhiteSpace($EventPath)) {
+      $acquireArgs += @('-EventPath', $EventPath)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($WingetProxy)) {
+      $acquireArgs += @('-Proxy', $WingetProxy)
+    }
+    if ($NoDownload) {
+      $acquireArgs += '-NoDownload'
+    }
+    if ($NoNotifications) {
+      $acquireArgs += '-NoNotifications'
+    }
+    try {
+      & powershell @acquireArgs | Out-Null
+      if ($LASTEXITCODE -ne 0) {
+        $errors.Add([pscustomobject]@{
+          Source = 'acquire_update_package'
+          Path = $acquireScript
+          Error = "acquire exited with code $LASTEXITCODE"
+        })
+      }
+    } catch {
+      $errors.Add([pscustomobject]@{
+        Source = 'acquire_update_package'
+        Path = $acquireScript
+        Error = $_.Exception.Message
+      })
+    }
+    $acquire = Read-GuardJsonFile -Path $AcquirePath
+    if ($acquire -and $acquire.UnpackedPayloadRoots) {
+      foreach ($payloadRoot in @($acquire.UnpackedPayloadRoots)) {
+        $rootPath = [string]$payloadRoot.Path
+        if ([string]::IsNullOrWhiteSpace($rootPath)) {
+          continue
+        }
+        try {
+          $candidates.Add((New-DirectoryCandidate -Root $rootPath -Source 'winget_download_payload'))
+        } catch {
+          $errors.Add([pscustomobject]@{
+            Source = 'winget_download_payload'
+            Path = $rootPath
+            Error = $_.Exception.Message
+          })
+        }
+      }
+    }
+  } else {
+    $errors.Add([pscustomobject]@{
+      Source = 'acquire_update_package'
+      Path = $acquireScript
+      Error = 'acquire script not found'
+    })
+  }
+}
+
+$usableCandidates = @($candidates | Where-Object { $_.Usable } | Sort-Object PackageVersion -Descending)
 $status = if ($usableCandidates.Count -gt 0) {
   'update_payload_ready'
+} elseif ($acquire -and $acquire.Status -eq 'needs_update_source') {
+  'needs_update_source'
 } elseif (-not [string]::IsNullOrWhiteSpace($PayloadRoot)) {
   'needs_update_payload'
 } elseif ($snapshot.UpdateSignals -and $snapshot.UpdateSignals.HasCodexUpdateActivity) {
@@ -212,6 +367,7 @@ $discovery = [pscustomobject]@{
   CurrentPackageFullName = (Resolve-GuardPropertyPath -Object $snapshot -Path 'Package.PackageFullName')
   CurrentPackageVersion = (Resolve-GuardPropertyPath -Object $snapshot -Path 'Package.Version')
   UpdateSignals = (Resolve-GuardPropertyPath -Object $snapshot -Path 'UpdateSignals')
+  Acquire = $acquire
   SelectedPayload = $selected
   CandidateCount = $candidates.Count
   UsableCandidateCount = $usableCandidates.Count
@@ -247,6 +403,27 @@ if (-not $NoNotifications) {
     ) -join "`r`n"
     Write-GuardNotification -State $state -Name "WAITING_FOR_UPDATE_PAYLOAD-$eventId.txt" -Content $text | Out-Null
     Write-GuardNotification -State $state -Name 'WAITING_FOR_UPDATE_PAYLOAD.txt' -Content $text | Out-Null
+  } elseif ($status -eq 'needs_update_source') {
+    $command = if ($acquire) { [string]$acquire.Command } else { '' }
+    $reason = if ($acquire) { [string]$acquire.Reason } else { 'acquire_failed' }
+    $text = @(
+      "Codex Desktop Guard detected update/download activity and tried to acquire the Store update package, but no usable payload was produced.",
+      "Event: $eventId",
+      "Reason: $reason",
+      "Current package: $(Resolve-GuardPropertyPath -Object $snapshot -Path 'Package.PackageFullName')",
+      "Candidate directories checked: $($candidates.Count)",
+      "Usable update payloads: 0",
+      "",
+      "Last acquire command:",
+      $command,
+      "",
+      "If this machine needs a proxy for Store downloads, set CODEX_GUARD_WINGET_PROXY or rerun with winget --proxy. You can also place an unpacked OpenAI.Codex payload under:",
+      $state.Paths.Incoming,
+      "",
+      "No patch was applied and no Desktop process was stopped."
+    ) -join "`r`n"
+    Write-GuardNotification -State $state -Name "NEEDS_UPDATE_SOURCE-$eventId.txt" -Content $text | Out-Null
+    Write-GuardNotification -State $state -Name 'NEEDS_UPDATE_SOURCE.txt' -Content $text | Out-Null
   } elseif ($status -eq 'needs_update_payload') {
     $text = @(
       "Codex Desktop Guard could not use the supplied update payload.",

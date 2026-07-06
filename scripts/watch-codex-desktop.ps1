@@ -55,7 +55,7 @@ function New-GuardUpdateActivityText {
     "Doctor update error: $errorText",
     "",
     "The guard did not apply any patch.",
-    "If this update/download activity is new, the guard now runs update payload discovery. It writes WAITING_FOR_UPDATE_PAYLOAD when no usable payload is available, or PATCHED_UPDATE_READY when a patched update package is staged."
+    "If this update/download activity is new, the guard now runs update payload acquisition and discovery. It writes PATCHED_UPDATE_READY when a patched update package is staged, or NEEDS_UPDATE_SOURCE when Store/package acquisition needs user action."
   ) -join "`r`n"
 }
 
@@ -117,8 +117,8 @@ function Invoke-GuardPrepareUpdateActivity {
   if ($lastPreparedEventId -eq $EventId) {
     $previousManifest = Get-LatestPatchedUpdateManifestForEvent -Id $EventId
     $previousStatus = if ($previousManifest) { [string]$previousManifest.Status } else { '' }
-    if ($previousStatus -eq 'waiting_for_update_payload' -or [string]::IsNullOrWhiteSpace($previousStatus)) {
-      Write-GuardLog -State $state -LogName 'watch.log' -Message "patched-update payload still waiting; rediscovering for event: $EventId"
+    if ($previousStatus -in @('waiting_for_update_payload', 'needs_update_source') -or [string]::IsNullOrWhiteSpace($previousStatus)) {
+      Write-GuardLog -State $state -LogName 'watch.log' -Message "patched-update source/payload still not ready; retrying acquisition and discovery for event: $EventId"
     } else {
       Write-GuardLog -State $state -LogName 'watch.log' -Message "patched-update prepare already reached terminal status '$previousStatus' for event: $EventId"
       return
@@ -136,9 +136,9 @@ function Invoke-GuardPrepareUpdateActivity {
   }
   $latestManifest = Get-LatestPatchedUpdateManifestForEvent -Id $EventId
   $latestStatus = if ($latestManifest) { [string]$latestManifest.Status } else { '' }
-  if ($latestStatus -eq 'waiting_for_update_payload') {
+  if ($latestStatus -in @('waiting_for_update_payload', 'needs_update_source')) {
     Remove-Item -LiteralPath $lastPreparedPath -Force -ErrorAction SilentlyContinue
-    Write-GuardLog -State $state -LogName 'watch.log' -Message "patched-update prepare is waiting for payload; future watches will rediscover event: $EventId"
+    Write-GuardLog -State $state -LogName 'watch.log' -Message "patched-update prepare still needs source/payload; future watches will retry event: $EventId"
   } else {
     Write-GuardUtf8NoBom -Path $lastPreparedPath -Content $EventId
     Write-GuardLog -State $state -LogName 'watch.log' -Message "patched-update prepare complete for event: $EventId; status: $latestStatus"
