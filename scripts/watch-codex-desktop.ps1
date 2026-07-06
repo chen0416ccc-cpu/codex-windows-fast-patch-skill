@@ -68,6 +68,22 @@ function Invoke-GuardPrepareUpdateActivity {
   $lastPreparedPath = Join-Path $state.Paths.Baselines 'last-prepared-patched-update-event-id.txt'
   $lastPreparedEventId = if (Test-Path -LiteralPath $lastPreparedPath -PathType Leaf) { (Get-Content -Raw -LiteralPath $lastPreparedPath).Trim() } else { '' }
 
+  function Get-LatestPatchedUpdateManifestForEvent {
+    param([Parameter(Mandatory = $true)][string]$Id)
+    $pattern = "*-$Id-patched-update"
+    $dir = Get-ChildItem -LiteralPath $state.Paths.Staging -Directory -Filter $pattern -ErrorAction SilentlyContinue |
+      Sort-Object LastWriteTimeUtc -Descending |
+      Select-Object -First 1
+    if (-not $dir) {
+      return $null
+    }
+    $manifestPath = Join-Path $dir.FullName 'manifest.json'
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+      return $null
+    }
+    return Read-GuardJsonFile -Path $manifestPath
+  }
+
   if ([string]::IsNullOrWhiteSpace($EventPath)) {
     $EventPath = Join-Path $state.Paths.Logs ("event-$EventId.json")
   }
@@ -99,8 +115,14 @@ function Invoke-GuardPrepareUpdateActivity {
     return
   }
   if ($lastPreparedEventId -eq $EventId) {
-    Write-GuardLog -State $state -LogName 'watch.log' -Message "patched-update prepare already handled: $EventId"
-    return
+    $previousManifest = Get-LatestPatchedUpdateManifestForEvent -Id $EventId
+    $previousStatus = if ($previousManifest) { [string]$previousManifest.Status } else { '' }
+    if ($previousStatus -eq 'waiting_for_update_payload' -or [string]::IsNullOrWhiteSpace($previousStatus)) {
+      Write-GuardLog -State $state -LogName 'watch.log' -Message "patched-update payload still waiting; rediscovering for event: $EventId"
+    } else {
+      Write-GuardLog -State $state -LogName 'watch.log' -Message "patched-update prepare already reached terminal status '$previousStatus' for event: $EventId"
+      return
+    }
   }
 
   $prepareScript = Join-Path $ScriptRoot 'prepare-patched-update.ps1'
@@ -112,8 +134,15 @@ function Invoke-GuardPrepareUpdateActivity {
   if ($LASTEXITCODE -ne 0) {
     throw "patched-update prepare failed with exit code $LASTEXITCODE"
   }
-  Write-GuardUtf8NoBom -Path $lastPreparedPath -Content $EventId
-  Write-GuardLog -State $state -LogName 'watch.log' -Message "patched-update prepare complete for event: $EventId"
+  $latestManifest = Get-LatestPatchedUpdateManifestForEvent -Id $EventId
+  $latestStatus = if ($latestManifest) { [string]$latestManifest.Status } else { '' }
+  if ($latestStatus -eq 'waiting_for_update_payload') {
+    Remove-Item -LiteralPath $lastPreparedPath -Force -ErrorAction SilentlyContinue
+    Write-GuardLog -State $state -LogName 'watch.log' -Message "patched-update prepare is waiting for payload; future watches will rediscover event: $EventId"
+  } else {
+    Write-GuardUtf8NoBom -Path $lastPreparedPath -Content $EventId
+    Write-GuardLog -State $state -LogName 'watch.log' -Message "patched-update prepare complete for event: $EventId; status: $latestStatus"
+  }
 }
 
 Write-GuardLog -State $state -LogName 'watch.log' -Message "watch started; state root: $($state.Paths.Root)"
