@@ -97,7 +97,7 @@ Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'assets') -Destination
 - `baselines`：最近一次只读基线和事件去重信息。
 - `staging`：准备好的 replacement、manifest、hashes、验证日志和 apply 命令文件。
 - `logs`：watch / prepare / apply / task 日志和事件 JSONL。
-- `notifications`：`CHANGE.txt`、`READY.txt`、`NEEDS_ACTION.txt` 等文件通知。
+- `notifications`：`UPDATE_ACTIVITY.txt`、`CURRENT_VERSION_READY.txt`、`CHANGE.txt`、`READY.txt`、`NEEDS_ACTION.txt` 等文件通知。
 
 安装 30 分钟周期 watch 任务：
 
@@ -119,9 +119,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\uninstall-codex-d
 
 小守卫 watch 会检测当前 `OpenAI.Codex` AppX 包、`InstallLocation`、`app\resources\codex.exe`、`app\resources\app.asar`、本地复制 CLI、以及 `$env:USERPROFILE\.codex\config.toml` 的 hash。它也会只读检查 Codex 相关 WindowsApps 目录、最近 AppX 部署日志、BITS 任务和 `codex doctor --json` 的更新诊断，用于发现下载/部署/运行时更新迹象。`config.toml` 只记录 hash、长度和时间戳，不保存正文。
 
-当发现已安装包或关键资源变化时，watch 会写事件和通知，并触发 prepare。若只发现下载/部署迹象，会写 `UPDATE_ACTIVITY.txt`，但不会提前构建或安装。prepare 不停止、不卸载、不重装、不修改 live Desktop install。V1 只内置已验证映射：`OpenAI.Codex_26.623.9142.0` / `codex-cli 0.142.4` / `rust-v0.142.4` / `AppServerVersion 0.142.4`。未知版本、native version 读取失败或 hash 不匹配时，会写 `NEEDS_ACTION` / `needs_manual_version_mapping`，不会复用旧二进制。
+当发现已安装包或关键资源变化时，watch 会写事件和通知，并触发普通 prepare。若只发现下载/部署/运行时更新迹象，例如 Desktop 一直显示“正在下载”但包和资源还没变，watch 会写 `UPDATE_ACTIVITY.txt`，并在当前版本仍是已知安全映射时触发 `prepare-fast-patch.ps1 -Mode UpdateActivity -NoBuild`。这个模式会把当前 live 的 `resources\codex.exe` 快照到 staging，生成 `CURRENT_VERSION_READY` 当前版本保护包，用于防止这个已重构/已修复的 `codex.exe` 后续被同版本覆盖。它不是新版本补丁，也不会自动安装。
 
-准备成功后，`notifications\READY.txt` 和 staging 目录里的 `apply-command.ps1.txt` 会给出外部执行命令。请先关闭 Codex Desktop，再从外部 PowerShell、VS Code Codex 或其它不会被 Desktop 重启影响的执行器运行 apply。`apply-prepared-fast-patch.ps1` 默认会拒绝从 Codex Desktop 自身会话运行，也会拒绝在 Desktop 仍运行时继续；只有显式传 `-AllowStopCodexDesktop` 才允许 stop。
+prepare 不停止、不卸载、不重装、不修改 live Desktop install。V1 只内置已验证映射：`OpenAI.Codex_26.623.9142.0` / `codex-cli 0.142.4` / `rust-v0.142.4` / `AppServerVersion 0.142.4`。未知版本、native version 读取失败或 hash 不匹配时，会写 `NEEDS_ACTION` / `needs_manual_version_mapping`，不会复用旧二进制。
+
+`CURRENT_VERSION_READY.txt` 表示“当前 known-good 版本保护包已准备好”。`READY.txt` 表示“已看到安装包/关键资源变化，并准备了匹配该 installed-change 的补丁 staging”。两者都会在 staging 目录写 `manifest.json`、`hashes.json`、`verification.log` 和 `apply-command.ps1.txt`。请先关闭 Codex Desktop，再从外部 PowerShell、VS Code Codex 或其它不会被 Desktop 重启影响的执行器运行 apply。`apply-prepared-fast-patch.ps1` 默认会拒绝从 Codex Desktop 自身会话运行，也会拒绝在 Desktop 仍运行时继续；只有显式传 `-AllowStopCodexDesktop` 才允许 stop。`current_version_ready` 只允许应用到同一个 package version；如果未来真的安装了未知新包，apply 会拒绝并要求重新映射。
 
 小守卫不会禁用 Microsoft Store 更新，不会自动关闭 Desktop，不会自动安装补丁，不会设置全局 `CODEX_HOME`，也不会保存 secrets、`auth.json`、OAuth token、API key、MCP 凭据、`remote.json` 内容或 browser profile。
 

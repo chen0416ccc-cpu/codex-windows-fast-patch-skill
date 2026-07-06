@@ -54,8 +54,66 @@ function New-GuardUpdateActivityText {
     "Doctor version cache: $versionCache",
     "Doctor update error: $errorText",
     "",
-    "The guard did not apply any patch. It will prepare staging only after the installed package or watched resources change."
+    "The guard did not apply any patch.",
+    "If this update/download activity is new, the guard prepares a CURRENT_VERSION_READY protection staging package for the current known-good Desktop version."
   ) -join "`r`n"
+}
+
+function Invoke-GuardPrepareUpdateActivity {
+  param(
+    [Parameter(Mandatory = $true)][string]$EventId,
+    [string]$EventPath,
+    [Parameter(Mandatory = $true)]$Snapshot
+  )
+  $lastPreparedPath = Join-Path $state.Paths.Baselines 'last-prepared-update-activity-event-id.txt'
+  $lastPreparedEventId = if (Test-Path -LiteralPath $lastPreparedPath -PathType Leaf) { (Get-Content -Raw -LiteralPath $lastPreparedPath).Trim() } else { '' }
+
+  if ([string]::IsNullOrWhiteSpace($EventPath)) {
+    $EventPath = Join-Path $state.Paths.Logs ("event-$EventId.json")
+  }
+  if (-not (Test-Path -LiteralPath $EventPath -PathType Leaf)) {
+    $activityEvent = [pscustomobject]@{
+      SchemaVersion = 1
+      Kind = 'update_activity'
+      EventId = $EventId
+      CreatedAt = (Get-Date).ToString('o')
+      StateRoot = $state.Paths.Root
+      ChangeCount = 0
+      Changes = @()
+      BaselineSnapshot = $baseline
+      CurrentSnapshot = $Snapshot
+    }
+    Write-GuardJsonFile -Path $EventPath -Value $activityEvent
+    Add-GuardJsonLine -Path $eventLogPath -Value ([pscustomobject]@{
+      EventId = $EventId
+      CreatedAt = $activityEvent.CreatedAt
+      Kind = 'update_activity'
+      ChangeCount = 0
+      ChangedFields = @()
+      EventPath = $EventPath
+    })
+  }
+
+  if ($NoPrepare) {
+    Write-GuardLog -State $state -LogName 'watch.log' -Message "NoPrepare set; update-activity current-version prepare skipped for event: $EventId"
+    return
+  }
+  if ($lastPreparedEventId -eq $EventId) {
+    Write-GuardLog -State $state -LogName 'watch.log' -Message "update-activity current-version prepare already handled: $EventId"
+    return
+  }
+
+  $prepareScript = Join-Path $ScriptRoot 'prepare-fast-patch.ps1'
+  if (-not (Test-Path -LiteralPath $prepareScript -PathType Leaf)) {
+    throw "prepare script not found: $prepareScript"
+  }
+  Write-GuardLog -State $state -LogName 'watch.log' -Message "starting update-activity current-version prepare for event: $EventId"
+  & powershell -NoProfile -ExecutionPolicy Bypass -File $prepareScript -StateRoot $state.Paths.Root -EventPath $EventPath -Mode UpdateActivity -NoBuild
+  if ($LASTEXITCODE -ne 0) {
+    throw "update-activity prepare failed with exit code $LASTEXITCODE"
+  }
+  Write-GuardUtf8NoBom -Path $lastPreparedPath -Content $EventId
+  Write-GuardLog -State $state -LogName 'watch.log' -Message "update-activity current-version prepare complete for event: $EventId"
 }
 
 Write-GuardLog -State $state -LogName 'watch.log' -Message "watch started; state root: $($state.Paths.Root)"
@@ -72,9 +130,26 @@ if (-not $baseline) {
 $changes = @(Compare-GuardSnapshots -Baseline $baseline -Current $snapshot)
 if ($changes.Count -eq 0) {
   if ($snapshot.UpdateSignals -and $snapshot.UpdateSignals.HasCodexUpdateActivity) {
+    $updateActivityEventId = New-GuardUpdateActivityEventId -Snapshot $snapshot
     $activityText = New-GuardUpdateActivityText -Snapshot $snapshot
     Write-GuardNotification -State $state -Name 'UPDATE_ACTIVITY.txt' -Content $activityText | Out-Null
-    Write-GuardLog -State $state -LogName 'watch.log' -Message 'no watched Codex Desktop changes detected; active update marker refreshed'
+    try {
+      Invoke-GuardPrepareUpdateActivity -EventId $updateActivityEventId -Snapshot $snapshot
+    } catch {
+      $failureText = @(
+        "Codex Desktop Guard update-activity prepare failed.",
+        "Event: $updateActivityEventId",
+        "Error: $($_.Exception.Message)",
+        "",
+        "The guard did not apply any patch. Inspect logs under:",
+        $state.Paths.Logs
+      ) -join "`r`n"
+      Write-GuardNotification -State $state -Name "PREPARE_FAILED-$updateActivityEventId.txt" -Content $failureText | Out-Null
+      Write-GuardNotification -State $state -Name 'PREPARE_FAILED.txt' -Content $failureText | Out-Null
+      Write-GuardLog -State $state -LogName 'watch.log' -Message "update-activity prepare failed for event ${updateActivityEventId}: $($_.Exception.Message)"
+      throw
+    }
+    Write-GuardLog -State $state -LogName 'watch.log' -Message "no watched Codex Desktop changes detected; active update marker refreshed for event: $updateActivityEventId"
   } else {
     Write-GuardLog -State $state -LogName 'watch.log' -Message 'no watched Codex Desktop changes detected'
   }
@@ -120,6 +195,7 @@ try {
       Write-GuardNotification -State $state -Name "UPDATE_ACTIVITY-$eventId.txt" -Content $activityText -NotifyMsg:$NotifyMsg | Out-Null
       Write-GuardNotification -State $state -Name 'UPDATE_ACTIVITY.txt' -Content $activityText | Out-Null
       Write-GuardLog -State $state -LogName 'watch.log' -Message "Codex-related update activity detected for event: $eventId"
+      Invoke-GuardPrepareUpdateActivity -EventId $eventId -EventPath $eventPath -Snapshot $snapshot
     } else {
       Write-GuardLog -State $state -LogName 'watch.log' -Message "update-signal baseline refreshed without Codex update activity: $eventId"
     }

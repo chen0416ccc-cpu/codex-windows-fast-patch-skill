@@ -650,6 +650,23 @@ function New-GuardEventId {
   return (Get-GuardSha256Text -Text $json).Substring(0, 16)
 }
 
+function New-GuardUpdateActivityEventId {
+  param([Parameter(Mandatory = $true)][object]$Snapshot)
+  $payload = [pscustomobject]@{
+    Kind = 'update_activity'
+    PackageFullName = Resolve-GuardPropertyPath -Object $Snapshot -Path 'Package.PackageFullName'
+    PackageVersion = Resolve-GuardPropertyPath -Object $Snapshot -Path 'Package.Version'
+    CodexExeSha256 = Resolve-GuardPropertyPath -Object $Snapshot -Path 'Resources.CodexExe.Sha256'
+    AppAsarSha256 = Resolve-GuardPropertyPath -Object $Snapshot -Path 'Resources.AppAsar.Sha256'
+    LocalCliSha256 = Resolve-GuardPropertyPath -Object $Snapshot -Path 'LocalCli.Sha256'
+    LocalCliVersion = Resolve-GuardPropertyPath -Object $Snapshot -Path 'LocalCli.Version'
+    DoctorUpdateSignature = Resolve-GuardPropertyPath -Object $Snapshot -Path 'UpdateSignals.DoctorUpdateSignature'
+    HasCodexUpdateActivity = Resolve-GuardPropertyPath -Object $Snapshot -Path 'UpdateSignals.HasCodexUpdateActivity'
+  }
+  $json = $payload | ConvertTo-Json -Depth 12 -Compress
+  return (Get-GuardSha256Text -Text $json).Substring(0, 16)
+}
+
 function Resolve-GuardKnownVersionMapping {
   param([Parameter(Mandatory = $true)][object]$Snapshot)
   $reasons = New-Object System.Collections.Generic.List[string]

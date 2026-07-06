@@ -47,8 +47,9 @@ $manifest = Read-GuardJsonFile -Path $StagingManifest
 if (-not $manifest) {
   throw "could not read staging manifest: $StagingManifest"
 }
-if ($manifest.Status -ne 'ready') {
-  throw "staging manifest is not ready for apply; status=$($manifest.Status)"
+$manifestStatus = [string]$manifest.Status
+if ($manifestStatus -notin @('ready', 'current_version_ready')) {
+  throw "staging manifest is not ready for apply; status=$manifestStatus"
 }
 if ([string]::IsNullOrWhiteSpace($manifest.ReplacementResourceCodexExe)) {
   throw 'staging manifest does not contain a replacement resources\codex.exe path'
@@ -64,6 +65,20 @@ $verifyScript = Join-Path $ScriptRoot 'install-computer-use-local.ps1'
 foreach ($script in @($backupScript, $patchScript, $verifyScript)) {
   if (-not (Test-Path -LiteralPath $script -PathType Leaf)) {
     throw "required script not found: $script"
+  }
+}
+
+$installedBeforeApply = Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction Stop |
+  Sort-Object Version -Descending |
+  Select-Object -First 1
+if ($manifestStatus -eq 'current_version_ready') {
+  $manifestPackageVersion = Resolve-GuardPropertyPath -Object $manifest -Path 'Snapshot.Package.Version'
+  $manifestPackageFullName = Resolve-GuardPropertyPath -Object $manifest -Path 'Snapshot.Package.PackageFullName'
+  if ([string]::IsNullOrWhiteSpace($manifestPackageVersion) -or [string]$installedBeforeApply.Version -ne [string]$manifestPackageVersion) {
+    throw "current_version_ready staging is only valid for package version '$manifestPackageVersion'; installed version is '$($installedBeforeApply.Version)'. Prepare a new mapping for the installed version instead."
+  }
+  if (-not [string]::IsNullOrWhiteSpace($manifestPackageFullName) -and $installedBeforeApply.PackageFullName -ne $manifestPackageFullName) {
+    throw "current_version_ready staging is only valid for package '$manifestPackageFullName'; installed package is '$($installedBeforeApply.PackageFullName)'. Prepare a new mapping for the installed package instead."
   }
 }
 
