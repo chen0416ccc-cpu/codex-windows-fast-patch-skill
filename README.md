@@ -19,7 +19,7 @@
 - 修复 Desktop `dynamicTools` schema 漂移导致新建对话 / thread start 报 `missing field inputSchema`，但 CLI smoke 路径仍然可用的问题。
 - 修复切换 `model_provider` / API 配置后，旧会话仍在本地但官方侧边栏不显示的问题；如果恢复后的会话能显示但继续时报“当前工作目录缺失”，可按 rollout 原始 `cwd` 创建缺失空目录。
 - 修复本地插件市场配置损坏、`codex plugin list` 报错的问题。
-- 提供 Windows-only “小守卫 / Codex Desktop Guard”：发现 Codex Desktop 静默更新/下载活动后接管更新准备流程，先查找本地新版本 payload，找不到时尝试用 Microsoft Store ID `9PLM9XGG6VKS` 获取离线包；能拿到新 payload 时准备 patched update staging，拿不到时写 `NEEDS_UPDATE_SOURCE` 并提醒用户补充下载源或代理，最后只提醒用户用外部执行器手动应用。
+- 提供 Windows-only “小守卫 / Codex Desktop Guard”：发现 Codex Desktop 静默更新/下载活动后接管更新准备流程，先查找本地新版本 payload，找不到时尝试用 Microsoft Store ID `9PLM9XGG6VKS` 获取离线包；如果当前 patched Desktop 卡住下载，也可以从干净 Windows / VM 导出官方 payload 再导入当前机器。能拿到新 payload 时准备 patched update staging，拿不到时写 `NEEDS_UPDATE_SOURCE` 并提醒用户补充下载源或代理，最后只提醒用户用外部执行器手动应用。
 - 可选备份和恢复本机 Codex 配置、技能、插件市场等关键状态。
 - 支持每次开始修复前自动将skills更新到最新版本
 - 破限只需：帮我配置破限相关文件和config.toml中的相关配置
@@ -49,6 +49,8 @@
 - `scripts/manage-codex-backups.ps1`：本地 Codex 配置、MCP、skills 和 marketplaces 的备份管理脚本。
 - `scripts/watch-codex-desktop.ps1`：Codex Desktop Guard 只读 watch 脚本，检测 AppX 包、`resources\codex.exe`、`resources\app.asar`、本地复制 CLI 和 Desktop `config.toml` hash。
 - `scripts/acquire-codex-update-package.ps1`：Codex Desktop Guard 主动 update source 获取脚本，默认用 Store ID `9PLM9XGG6VKS` / `winget download` 下载并解包 Codex 离线包；只下载/解包，不安装。
+- `scripts/export-installed-codex-payload.ps1`：在干净 Windows / VM / 另一个用户环境导出已安装官方 Codex Desktop package payload 为 sidecar zip；只打包 package layout，不包含 `.codex`、auth、token 或 browser profile。
+- `scripts/import-codex-update-payload.ps1`：在当前 patched 机器导入 sidecar zip 或 unpacked payload 到小守卫 `incoming`，默认随后触发 patched-update prepare；不安装、不关闭 Desktop。
 - `scripts/discover-codex-update-payload.ps1`：Codex Desktop Guard update payload 发现脚本，查找可修复的新 `OpenAI.Codex_*` unpacked package。
 - `scripts/prepare-patched-update.ps1`：Codex Desktop Guard patched update 准备脚本；有新 payload 时构建修复后的更新包，找不到或拿不到 update source 时写明确 action 状态。
 - `scripts/prepare-fast-patch.ps1`：Codex Desktop Guard staging 准备脚本，只在安全确认版本映射时构建 prepared replacement。
@@ -122,9 +124,29 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\watch-codex-deskt
 powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\uninstall-codex-desktop-guard-task.ps1"
 ```
 
+如果当前 patched Desktop 自己下载卡住，而小守卫也拿不到 Store offline package，可以用 sidecar source 打破鸡生蛋问题。先在干净 Windows / VM / 另一个用户环境安装官方 Codex Desktop，例如通过 Microsoft Store 或：
+
+```powershell
+winget install Codex -s msstore
+```
+
+然后在那台干净机器的仓库目录运行导出：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\export-installed-codex-payload.ps1" -OutputZip "C:\Temp\codex-payload.zip"
+```
+
+把 zip 拷回当前 patched 机器后导入：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\import-codex-update-payload.ps1" -PayloadZip "C:\Temp\codex-payload.zip"
+```
+
+导入会把 payload 放到 `$env:USERPROFILE\.codex-fast-patch\incoming\<timestamp>-<version>-<hash>\`，并默认触发 `prepare-patched-update.ps1 -PayloadRoot <incomingPayloadRoot>`。如果构建成功，查看 `notifications\PATCHED_UPDATE_READY.txt`，关闭 Codex Desktop，再从外部 PowerShell / VS Code Codex 执行 staging 目录里的 `apply-command.ps1.txt`。如果只是想导入后手动分步检查，可以加 `-NoPrepare`。
+
 小守卫 watch 会检测当前 `OpenAI.Codex` AppX 包、`InstallLocation`、`app\resources\codex.exe`、`app\resources\app.asar`、本地复制 CLI、以及 `$env:USERPROFILE\.codex\config.toml` 的 hash。它也会只读检查 Codex 相关 WindowsApps 目录、最近 AppX 部署日志、BITS 任务和 `codex doctor --json` 的更新诊断，用于发现下载/部署/运行时更新迹象。`config.toml` 只记录 hash、长度和时间戳，不保存正文。
 
-当发现下载/部署/运行时更新迹象，例如 Desktop 一直显示“正在下载”但包和资源还没变，watch 会写 `UPDATE_ACTIVITY.txt`，然后优先触发 `prepare-patched-update.ps1`。这条 V2 主线会调用 `discover-codex-update-payload.ps1` 查找新版本 update payload，例如不同于当前 live package 的 `OpenAI.Codex_*` unpacked package、`incoming` 里的 unpacked payload，或由 `acquire-codex-update-package.ps1` 主动下载并解包的 Store 离线包。主动获取默认使用 Microsoft Store ID `9PLM9XGG6VKS` 和 `winget download`，可通过 `CODEX_GUARD_WINGET_PROXY` 传代理。能找到新 payload 时，它会对新 payload 重新跑 fast-patch / remote-control 修复，生成 `PATCHED_UPDATE_READY`。如果 Store 离线包下载需要 Microsoft Entra ID 授权、代理、网络或手动下载源，它会写 `NEEDS_UPDATE_SOURCE`；如果只是在等待 Store 部署露出本地 payload，则写 `WAITING_FOR_UPDATE_PAYLOAD`。它不会假装已经修好，也不会拿旧 `codex.exe` 硬套新版本。
+当发现下载/部署/运行时更新迹象，例如 Desktop 一直显示“正在下载”但包和资源还没变，watch 会写 `UPDATE_ACTIVITY.txt`，然后优先触发 `prepare-patched-update.ps1`。这条 V2 主线会调用 `discover-codex-update-payload.ps1` 查找新版本 update payload，例如不同于当前 live package 的 `OpenAI.Codex_*` unpacked package、`incoming` 里的 sidecar/imported unpacked payload，或由 `acquire-codex-update-package.ps1` 主动下载并解包的 Store 离线包。主动获取默认使用 Microsoft Store ID `9PLM9XGG6VKS` 和 `winget download`，可通过 `CODEX_GUARD_WINGET_PROXY` 传代理。能找到新 payload 时，它会对新 payload 重新跑 fast-patch / remote-control 修复，生成 `PATCHED_UPDATE_READY`。如果 Store 离线包下载需要 Microsoft Entra ID 授权、代理、网络或手动下载源，它会写 `NEEDS_UPDATE_SOURCE`；如果只是在等待 Store 部署露出本地 payload，则写 `WAITING_FOR_UPDATE_PAYLOAD`。它不会假装已经修好，也不会拿旧 `codex.exe` 硬套新版本。
 
 当发现已安装包或关键资源变化时，watch 仍会写事件和通知，并触发普通 prepare。`prepare-fast-patch.ps1 -Mode UpdateActivity` 生成的 `CURRENT_VERSION_READY` 只是当前 known-good 版本保护包，是 V2 的备用保护能力，不是“经过小守卫处理过的新更新”。
 
@@ -132,7 +154,7 @@ prepare 不停止、不卸载、不重装、不修改 live Desktop install。ins
 
 `NEEDS_UPDATE_SOURCE.txt` 表示“小守卫已经尝试主动拿 Store 更新包，但本机没有得到可解包 payload”，文件里会写最后一次 `winget download` 命令和可用的 `incoming` 目录。`WAITING_FOR_UPDATE_PAYLOAD.txt` 表示“看到更新/下载活动，但还没有拿到可修复的新版本 payload”。`PATCHED_UPDATE_READY.txt` 表示“新版本 payload 已经过小守卫修复并打包，等待外部执行器安装”。`CURRENT_VERSION_READY.txt` 表示“当前 known-good 版本保护包已准备好”。`READY.txt` 表示“已看到安装包/关键资源变化，并准备了匹配该 installed-change 的补丁 staging”。准备产物会在 staging 目录写 `manifest.json`、`hashes.json`、`verification.log` 和 `apply-command.ps1.txt`。请先关闭 Codex Desktop，再从外部 PowerShell、VS Code Codex 或其它不会被 Desktop 重启影响的执行器运行 apply。`apply-prepared-fast-patch.ps1` 默认会拒绝从 Codex Desktop 自身会话运行，也会拒绝在 Desktop 仍运行时继续；只有显式传 `-AllowStopCodexDesktop` 才允许 stop。`current_version_ready` 只允许应用到同一个 package version；`patched_update_ready` 只安装已经生成并签名的 patched MSIX。
 
-小守卫不会禁用 Microsoft Store 更新，不会自动关闭 Desktop，不会自动安装补丁，不会设置全局 `CODEX_HOME`，也不会保存 secrets、`auth.json`、OAuth token、API key、MCP 凭据、`remote.json` 内容或 browser profile。
+sidecar zip 只包含官方 package payload、`codex-payload-manifest.json` 和 `hashes.json`；不会导出或导入 `.codex`、`auth.json`、OAuth token、API key、MCP 凭据、`remote.json` 内容、运行时/用户日志或 browser profile。小守卫不会禁用 Microsoft Store 更新，不会自动关闭 Desktop，不会自动安装补丁，不会设置全局 `CODEX_HOME`，也不会保存 secrets、`auth.json`、OAuth token、API key、MCP 凭据、`remote.json` 内容或 browser profile。
 
 ## 使用建议
 

@@ -126,6 +126,10 @@ function New-DirectoryCandidate {
   $resourceCodexExe = Join-Path $fullRoot 'app\resources\codex.exe'
   $appAsar = Join-Path $fullRoot 'app\resources\app.asar'
   $shellExe = Join-Path $fullRoot 'app\Codex.exe'
+  $sidecarManifestPath = Join-Path $fullRoot 'codex-payload-manifest.json'
+  $sidecarHashesPath = Join-Path $fullRoot 'hashes.json'
+  $sidecarManifest = if (Test-Path -LiteralPath $sidecarManifestPath -PathType Leaf) { Read-GuardJsonFile -Path $sidecarManifestPath } else { $null }
+  $sidecarHashes = if (Test-Path -LiteralPath $sidecarHashesPath -PathType Leaf) { Read-GuardJsonFile -Path $sidecarHashesPath } else { $null }
   $resourceInfo = Get-GuardFileFingerprint -Path $resourceCodexExe
   $appAsarInfo = Get-GuardFileFingerprint -Path $appAsar
   $shellInfo = Get-GuardFileFingerprint -Path $shellExe
@@ -194,6 +198,10 @@ function New-DirectoryCandidate {
     CodexCliVersion = $versionInfo.Version
     CodexCliVersionOutput = $versionInfo.VersionOutput
     CodexCliVersionError = $versionInfo.Error
+    SidecarManifestPath = if ($sidecarManifest) { $sidecarManifestPath } else { $null }
+    SidecarManifest = $sidecarManifest
+    SidecarHashesPath = if ($sidecarHashes) { $sidecarHashesPath } else { $null }
+    SidecarHashes = $sidecarHashes
   }
 }
 

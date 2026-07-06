@@ -19,7 +19,7 @@ Use this skill when Windows Codex Desktop updates cause issues like these:
 - Repair Desktop new-chat/thread-start failures caused by `dynamicTools` schema drift, including `missing field inputSchema` when the CLI smoke path still works.
 - Restore local conversations in the official sidebar after switching `model_provider` / API config when the local history data still exists; if a restored conversation is visible but cannot continue because its working directory is missing, recreate the missing empty directory from the rollout `cwd`.
 - Repair broken local plugin marketplace config or `codex plugin list` errors.
-- Provide a Windows-only Codex Desktop Guard workflow that notices silent Desktop update/download activity and takes over update preparation: it first discovers local payloads, then tries to acquire the Store offline package with Microsoft Store ID `9PLM9XGG6VKS`; when a payload is available it prepares a patched update staging package, and when acquisition needs user help it writes `NEEDS_UPDATE_SOURCE` with the next command/source to provide.
+- Provide a Windows-only Codex Desktop Guard workflow that notices silent Desktop update/download activity and takes over update preparation: it first discovers local payloads, then tries to acquire the Store offline package with Microsoft Store ID `9PLM9XGG6VKS`; when the current patched Desktop is stuck downloading, it can also import an official payload exported from a clean Windows / VM sidecar. When a payload is available it prepares a patched update staging package, and when acquisition needs user help it writes `NEEDS_UPDATE_SOURCE` with the next command/source to provide.
 - Optionally back up and restore local Codex config, skills, marketplaces, and related state.
 - Automatically update this skill to the latest version before each repair attempt.
 
@@ -48,6 +48,8 @@ Do not run it on macOS. A macOS version needs a separate workflow for the Codex 
 - `scripts/manage-codex-backups.ps1`: Backup manager for local Codex config, MCP, skills, and marketplaces.
 - `scripts/watch-codex-desktop.ps1`: Codex Desktop Guard read-only watcher for the AppX package, `resources\codex.exe`, `resources\app.asar`, the local copied CLI, and Desktop `config.toml` hash.
 - `scripts/acquire-codex-update-package.ps1`: Codex Desktop Guard active update-source acquisition script. It defaults to Store ID `9PLM9XGG6VKS` / `winget download`, downloads and unpacks the Codex offline package, and never installs it.
+- `scripts/export-installed-codex-payload.ps1`: Exports the installed official Codex Desktop package payload from a clean Windows / VM / another user environment into a sidecar zip; it packages only the app package layout, not `.codex`, auth, tokens, or browser profiles.
+- `scripts/import-codex-update-payload.ps1`: Imports a sidecar zip or unpacked payload into the current patched machine's guard `incoming` directory, then triggers patched-update prepare by default; it never installs or closes Desktop.
 - `scripts/discover-codex-update-payload.ps1`: Codex Desktop Guard update-payload discovery script for usable new `OpenAI.Codex_*` unpacked packages.
 - `scripts/prepare-patched-update.ps1`: Codex Desktop Guard patched-update preparer; it patches a new payload when one is found and writes an explicit action state when no update source can be acquired.
 - `scripts/prepare-fast-patch.ps1`: Codex Desktop Guard staging preparer; builds a prepared replacement only when the version mapping is known safe.
@@ -121,9 +123,29 @@ Uninstall the task:
 powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\uninstall-codex-desktop-guard-task.ps1"
 ```
 
+If the current patched Desktop is stuck downloading and the guard cannot acquire the Store offline package on this machine, use a sidecar source to break the dependency loop. First install official Codex Desktop on a clean Windows machine, VM, or separate user environment, for example from Microsoft Store or with:
+
+```powershell
+winget install Codex -s msstore
+```
+
+Then export the installed package payload from that clean machine:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\export-installed-codex-payload.ps1" -OutputZip "C:\Temp\codex-payload.zip"
+```
+
+Copy the zip back to the current patched machine and import it:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\import-codex-update-payload.ps1" -PayloadZip "C:\Temp\codex-payload.zip"
+```
+
+Import places the payload under `$env:USERPROFILE\.codex-fast-patch\incoming\<timestamp>-<version>-<hash>\` and by default runs `prepare-patched-update.ps1 -PayloadRoot <incomingPayloadRoot>`. If the build succeeds, read `notifications\PATCHED_UPDATE_READY.txt`, close Codex Desktop, then run the generated `apply-command.ps1.txt` from external PowerShell or VS Code Codex. Use `-NoPrepare` when you only want to import and inspect the payload first.
+
 The watcher tracks the current `OpenAI.Codex` AppX package, `InstallLocation`, `app\resources\codex.exe`, `app\resources\app.asar`, the local copied CLI, and the hash of `$env:USERPROFILE\.codex\config.toml`. It also performs read-only checks of Codex-related WindowsApps directories, recent AppX deployment logs, BITS jobs, and the `codex doctor --json` update diagnosis to notice download/deployment/runtime-update activity. For `config.toml`, it records only hash, length, and timestamp, never the file contents.
 
-When watch sees download/deployment/runtime-update activity, such as Desktop staying in a "downloading" state while the package and resources have not changed, it writes `UPDATE_ACTIVITY.txt` and first triggers `prepare-patched-update.ps1`. This V2 path calls `discover-codex-update-payload.ps1` to find a new update payload, such as an `OpenAI.Codex_*` unpacked package that differs from the current live package, an unpacked payload under `incoming`, or a Store offline package downloaded and unpacked by `acquire-codex-update-package.ps1`. Active acquisition defaults to Microsoft Store ID `9PLM9XGG6VKS` and `winget download`; set `CODEX_GUARD_WINGET_PROXY` when a proxy is required. If a new payload is found, the guard reruns the fast-patch / remote-control repair flow against that payload and writes `PATCHED_UPDATE_READY`. If the Store offline package requires Microsoft Entra ID authorization, a proxy, network access, or another manual source, it writes `NEEDS_UPDATE_SOURCE`. If it is only waiting for Store deployment to expose a local payload, it writes `WAITING_FOR_UPDATE_PAYLOAD`. It does not pretend the update was patched, and it does not reuse an old `codex.exe` for a new version.
+When watch sees download/deployment/runtime-update activity, such as Desktop staying in a "downloading" state while the package and resources have not changed, it writes `UPDATE_ACTIVITY.txt` and first triggers `prepare-patched-update.ps1`. This V2 path calls `discover-codex-update-payload.ps1` to find a new update payload, such as an `OpenAI.Codex_*` unpacked package that differs from the current live package, a sidecar/imported unpacked payload under `incoming`, or a Store offline package downloaded and unpacked by `acquire-codex-update-package.ps1`. Active acquisition defaults to Microsoft Store ID `9PLM9XGG6VKS` and `winget download`; set `CODEX_GUARD_WINGET_PROXY` when a proxy is required. If a new payload is found, the guard reruns the fast-patch / remote-control repair flow against that payload and writes `PATCHED_UPDATE_READY`. If the Store offline package requires Microsoft Entra ID authorization, a proxy, network access, or another manual source, it writes `NEEDS_UPDATE_SOURCE`. If it is only waiting for Store deployment to expose a local payload, it writes `WAITING_FOR_UPDATE_PAYLOAD`. It does not pretend the update was patched, and it does not reuse an old `codex.exe` for a new version.
 
 When an installed package or key resource changes, watch still writes an event and notification, then triggers normal prepare. `prepare-fast-patch.ps1 -Mode UpdateActivity` can still create `CURRENT_VERSION_READY`, but that is only a current known-good version protection package. It is a fallback protection artifact, not the patched-update path.
 
@@ -131,7 +153,7 @@ Prepare never stops, uninstalls, reinstalls, or modifies the live Desktop instal
 
 `NEEDS_UPDATE_SOURCE.txt` means the guard tried to acquire the Store update package but did not get a usable payload; it includes the last `winget download` command and the `incoming` drop directory. `WAITING_FOR_UPDATE_PAYLOAD.txt` means update/download activity exists but no usable new payload is available yet. `PATCHED_UPDATE_READY.txt` means a new payload has been patched and packaged by the guard and is ready for external installation. `CURRENT_VERSION_READY.txt` means the current known-good version protection package is ready. `READY.txt` means an installed package/key resource change was detected and matching installed-change staging was prepared. Staging writes `manifest.json`, `hashes.json`, `verification.log`, and `apply-command.ps1.txt`. Close Codex Desktop first, then run that command from external PowerShell, VS Code Codex, or another executor that will survive a Desktop restart. `apply-prepared-fast-patch.ps1` refuses by default to run from a Codex Desktop-launched process and refuses to continue while Desktop is still open; only explicit `-AllowStopCodexDesktop` permits stopping Desktop. `current_version_ready` can only be applied to the same package version; `patched_update_ready` only installs a prepared and signed patched MSIX.
 
-The guard does not disable Microsoft Store updates, does not automatically close Desktop, does not automatically install patches, does not set a global `CODEX_HOME`, and does not store secrets, `auth.json`, OAuth tokens, API keys, MCP credentials, `remote.json` contents, or browser profiles.
+The sidecar zip contains only the official package payload, `codex-payload-manifest.json`, and `hashes.json`; it does not export or import `.codex`, `auth.json`, OAuth tokens, API keys, MCP credentials, `remote.json` contents, runtime/user logs, or browser profiles. The guard does not disable Microsoft Store updates, does not automatically close Desktop, does not automatically install patches, does not set a global `CODEX_HOME`, and does not store secrets, `auth.json`, OAuth tokens, API keys, MCP credentials, `remote.json` contents, or browser profiles.
 
 ## Which Runner To Use
 
