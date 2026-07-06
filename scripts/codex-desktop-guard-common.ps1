@@ -87,7 +87,9 @@ function Write-GuardJsonFile {
     [int]$Depth = 12
   )
   $json = $Value | ConvertTo-Json -Depth $Depth
-  Write-GuardUtf8NoBom -Path $Path -Content ($json + "`r`n")
+  $tempPath = '{0}.{1}.tmp' -f $Path, $PID
+  Write-GuardUtf8NoBom -Path $tempPath -Content ($json + "`r`n")
+  Move-Item -LiteralPath $tempPath -Destination $Path -Force
 }
 
 function Read-GuardJsonFile {

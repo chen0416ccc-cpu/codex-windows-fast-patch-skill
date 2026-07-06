@@ -51,6 +51,7 @@
 - `scripts/acquire-codex-update-package.ps1`：Codex Desktop Guard 主动 update source 获取脚本，默认用 Store ID `9PLM9XGG6VKS` / `winget download` 下载并解包 Codex 离线包；只下载/解包，不安装。
 - `scripts/export-installed-codex-payload.ps1`：在干净 Windows / VM / 另一个用户环境导出已安装官方 Codex Desktop package payload 为 sidecar zip；只打包 package layout，不包含 `.codex`、auth、token 或 browser profile。
 - `scripts/import-codex-update-payload.ps1`：在当前 patched 机器导入 sidecar zip 或 unpacked payload 到小守卫 `incoming`，默认随后触发 patched-update prepare；不安装、不关闭 Desktop。
+- `scripts/start-sidecar-acquire.ps1` / `scripts/check-sidecar-acquire.ps1` / `scripts/stop-sidecar-acquire.ps1`：Windows Sandbox sidecar 获取官方 payload 的短命令控制面；start 启动后立即返回，check 只读状态并最多 tail 60 行，stop 只停止 Sandbox，不碰 Codex Desktop。
 - `scripts/discover-codex-update-payload.ps1`：Codex Desktop Guard update payload 发现脚本，查找可修复的新 `OpenAI.Codex_*` unpacked package。
 - `scripts/prepare-patched-update.ps1`：Codex Desktop Guard patched update 准备脚本；有新 payload 时构建修复后的更新包，找不到或拿不到 update source 时写明确 action 状态。
 - `scripts/prepare-fast-patch.ps1`：Codex Desktop Guard staging 准备脚本，只在安全确认版本映射时构建 prepared replacement。
@@ -104,7 +105,8 @@ Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'assets') -Destination
 - `logs`：watch / prepare / apply / task 日志和事件 JSONL。
 - `downloads`：主动获取的 Store 离线包、解包后的 payload 和获取日志。
 - `incoming`：用户或外部执行器可放入 unpacked `OpenAI.Codex` payload 的目录。
-- `notifications`：`UPDATE_ACTIVITY.txt`、`UPDATE_SOURCE_READY.txt`、`NEEDS_UPDATE_SOURCE.txt`、`WAITING_FOR_UPDATE_PAYLOAD.txt`、`PATCHED_UPDATE_READY.txt`、`CURRENT_VERSION_READY.txt`、`CHANGE.txt`、`READY.txt`、`NEEDS_ACTION.txt` 等文件通知。
+- `sidecar-output`：Windows Sandbox sidecar 的 `status.json`、`sandbox-sidecar.log`、`codex-payload.zip` 和 winget bootstrap cache。
+- `notifications`：`UPDATE_ACTIVITY.txt`、`UPDATE_SOURCE_READY.txt`、`NEEDS_UPDATE_SOURCE.txt`、`STORE_OFFLINE_AUTHORIZATION_REQUIRED.txt`、`WAITING_FOR_UPDATE_PAYLOAD.txt`、`PATCHED_UPDATE_READY.txt`、`CURRENT_VERSION_READY.txt`、`CHANGE.txt`、`READY.txt`、`NEEDS_ACTION.txt` 等文件通知。
 
 安装 30 分钟周期 watch 任务：
 
@@ -143,6 +145,32 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\import-codex-upda
 ```
 
 导入会把 payload 放到 `$env:USERPROFILE\.codex-fast-patch\incoming\<timestamp>-<version>-<hash>\`，并默认触发 `prepare-patched-update.ps1 -PayloadRoot <incomingPayloadRoot>`。如果构建成功，查看 `notifications\PATCHED_UPDATE_READY.txt`，关闭 Codex Desktop，再从外部 PowerShell / VS Code Codex 执行 staging 目录里的 `apply-command.ps1.txt`。如果只是想导入后手动分步检查，可以加 `-NoPrepare`。
+
+当前机器也可以用 Windows Sandbox 做临时 sidecar 取包，但 Codex Desktop 主会话只负责短命令调度，不再用 `while` / `for` / `Start-Sleep` 长轮询等待 Store 或 winget。启动 Sandbox sidecar 后命令会立即返回，长任务在 Sandbox 内自己写 `$env:USERPROFILE\.codex-fast-patch\sidecar-output\status.json`：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\start-sidecar-acquire.ps1" -RestartSidecar -ResetLog
+```
+
+之后用短查询看状态；每次只读 `status.json`、payload 文件和最多 60 行日志，正常应在几秒内返回：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\check-sidecar-acquire.ps1"
+```
+
+Sandbox sidecar 默认用 `winget download --source msstore` 获取离线包并解包，不在 Sandbox 里 `winget install` Codex Desktop，也不依赖 Store app / Store broker 完成安装。`check` 会返回 `classification`，常见值是 `RUNNING`、`READY`、`FAILED`、`NEEDS_ACTION`、`STOPPED`。失败时 `step` 会尽量指出卡点，例如 `tls_trust_failed`、`winget_not_visible`、`appinstaller_install_failed`、`store_download_failed` 或 `store_offline_authorization_required`。如果看到 `store_offline_authorization_required` / `0x8A150076`，说明 Microsoft Store 离线分发需要 Microsoft Entra ID 授权，应改走干净 Windows / VM 安装官方 Codex 后 export/import 的 sidecar source 流程。只停止 sidecar 时运行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\stop-sidecar-acquire.ps1"
+```
+
+当 `classification` 是 `READY` 且生成 `$env:USERPROFILE\.codex-fast-patch\sidecar-output\codex-payload.zip` 后，在当前 patched 机器导入这个 zip，让小守卫准备 patched update：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\import-codex-update-payload.ps1" -PayloadZip "$env:USERPROFILE\.codex-fast-patch\sidecar-output\codex-payload.zip"
+```
+
+这条 Sandbox sidecar 路径仍然不复制 `.codex` 状态、不保存凭据、不自动关闭 Desktop、不自动 apply。主会话如果需要继续观察，只重复运行短 `check`，不要在 Codex Desktop 里开 6-8 分钟的轮询。
 
 小守卫 watch 会检测当前 `OpenAI.Codex` AppX 包、`InstallLocation`、`app\resources\codex.exe`、`app\resources\app.asar`、本地复制 CLI、以及 `$env:USERPROFILE\.codex\config.toml` 的 hash。它也会只读检查 Codex 相关 WindowsApps 目录、最近 AppX 部署日志、BITS 任务和 `codex doctor --json` 的更新诊断，用于发现下载/部署/运行时更新迹象。`config.toml` 只记录 hash、长度和时间戳，不保存正文。
 

@@ -50,6 +50,7 @@ Do not run it on macOS. A macOS version needs a separate workflow for the Codex 
 - `scripts/acquire-codex-update-package.ps1`: Codex Desktop Guard active update-source acquisition script. It defaults to Store ID `9PLM9XGG6VKS` / `winget download`, downloads and unpacks the Codex offline package, and never installs it.
 - `scripts/export-installed-codex-payload.ps1`: Exports the installed official Codex Desktop package payload from a clean Windows / VM / another user environment into a sidecar zip; it packages only the app package layout, not `.codex`, auth, tokens, or browser profiles.
 - `scripts/import-codex-update-payload.ps1`: Imports a sidecar zip or unpacked payload into the current patched machine's guard `incoming` directory, then triggers patched-update prepare by default; it never installs or closes Desktop.
+- `scripts/start-sidecar-acquire.ps1` / `scripts/check-sidecar-acquire.ps1` / `scripts/stop-sidecar-acquire.ps1`: Short-command control plane for acquiring an official payload with a Windows Sandbox sidecar. Start returns immediately, check only reads status and tails at most 60 log lines, and stop stops only Sandbox, never Codex Desktop.
 - `scripts/discover-codex-update-payload.ps1`: Codex Desktop Guard update-payload discovery script for usable new `OpenAI.Codex_*` unpacked packages.
 - `scripts/prepare-patched-update.ps1`: Codex Desktop Guard patched-update preparer; it patches a new payload when one is found and writes an explicit action state when no update source can be acquired.
 - `scripts/prepare-fast-patch.ps1`: Codex Desktop Guard staging preparer; builds a prepared replacement only when the version mapping is known safe.
@@ -103,7 +104,8 @@ The default state directory is `$env:USERPROFILE\.codex-fast-patch`:
 - `logs`: watch / prepare / apply / task logs plus event JSONL.
 - `downloads`: acquired Store offline packages, unpacked payloads, and acquisition logs.
 - `incoming`: a drop directory where a user or external executor can place an unpacked `OpenAI.Codex` payload.
-- `notifications`: file notifications such as `UPDATE_ACTIVITY.txt`, `UPDATE_SOURCE_READY.txt`, `NEEDS_UPDATE_SOURCE.txt`, `WAITING_FOR_UPDATE_PAYLOAD.txt`, `PATCHED_UPDATE_READY.txt`, `CURRENT_VERSION_READY.txt`, `CHANGE.txt`, `READY.txt`, and `NEEDS_ACTION.txt`.
+- `sidecar-output`: Windows Sandbox sidecar `status.json`, `sandbox-sidecar.log`, `codex-payload.zip`, and winget bootstrap cache.
+- `notifications`: file notifications such as `UPDATE_ACTIVITY.txt`, `UPDATE_SOURCE_READY.txt`, `NEEDS_UPDATE_SOURCE.txt`, `STORE_OFFLINE_AUTHORIZATION_REQUIRED.txt`, `WAITING_FOR_UPDATE_PAYLOAD.txt`, `PATCHED_UPDATE_READY.txt`, `CURRENT_VERSION_READY.txt`, `CHANGE.txt`, `READY.txt`, and `NEEDS_ACTION.txt`.
 
 Install the 30-minute watch task:
 
@@ -142,6 +144,32 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\import-codex-upda
 ```
 
 Import places the payload under `$env:USERPROFILE\.codex-fast-patch\incoming\<timestamp>-<version>-<hash>\` and by default runs `prepare-patched-update.ps1 -PayloadRoot <incomingPayloadRoot>`. If the build succeeds, read `notifications\PATCHED_UPDATE_READY.txt`, close Codex Desktop, then run the generated `apply-command.ps1.txt` from external PowerShell or VS Code Codex. Use `-NoPrepare` when you only want to import and inspect the payload first.
+
+The current machine can also use Windows Sandbox as a temporary sidecar acquisition worker. The Codex Desktop main session should only dispatch short commands; do not use long `while` / `for` / `Start-Sleep` polling while waiting for Store or winget. Starting the Sandbox sidecar returns immediately, and the long-running work writes `$env:USERPROFILE\.codex-fast-patch\sidecar-output\status.json` from inside the Sandbox:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\start-sidecar-acquire.ps1" -RestartSidecar -ResetLog
+```
+
+Check status with a short read-only query. Each run reads `status.json`, the payload file, and at most 60 log lines, and should normally return within a few seconds:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\check-sidecar-acquire.ps1"
+```
+
+The Sandbox sidecar uses `winget download --source msstore` to acquire and unpack the offline package by default. It does not `winget install` Codex Desktop inside Sandbox, and it does not depend on the Store app / Store broker completing an installation. `check` returns a `classification` such as `RUNNING`, `READY`, `FAILED`, `NEEDS_ACTION`, or `STOPPED`. On failures, `step` points to likely causes such as `tls_trust_failed`, `winget_not_visible`, `appinstaller_install_failed`, `store_download_failed`, or `store_offline_authorization_required`. If you see `store_offline_authorization_required` / `0x8A150076`, Microsoft Store offline distribution requires Microsoft Entra ID authorization; use the clean Windows / VM official install plus export/import sidecar-source flow instead. To stop only the sidecar, run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\stop-sidecar-acquire.ps1"
+```
+
+When `classification` is `READY` and `$env:USERPROFILE\.codex-fast-patch\sidecar-output\codex-payload.zip` exists, import that zip on the current patched machine so the guard can prepare the patched update:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\import-codex-update-payload.ps1" -PayloadZip "$env:USERPROFILE\.codex-fast-patch\sidecar-output\codex-payload.zip"
+```
+
+This Sandbox sidecar path still does not copy `.codex` state, store credentials, close Desktop, or apply patches automatically. If the main session needs another look, run another short `check`; do not start a 6-8 minute polling loop inside Codex Desktop.
 
 The watcher tracks the current `OpenAI.Codex` AppX package, `InstallLocation`, `app\resources\codex.exe`, `app\resources\app.asar`, the local copied CLI, and the hash of `$env:USERPROFILE\.codex\config.toml`. It also performs read-only checks of Codex-related WindowsApps directories, recent AppX deployment logs, BITS jobs, and the `codex doctor --json` update diagnosis to notice download/deployment/runtime-update activity. For `config.toml`, it records only hash, length, and timestamp, never the file contents.
 

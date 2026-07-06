@@ -84,6 +84,22 @@ function ConvertTo-AcquireSafeText {
   return $builder.ToString()
 }
 
+function ConvertTo-AcquireExitCodeHex {
+  param([AllowNull()][object]$ExitCode)
+  if ($null -eq $ExitCode -or [string]::IsNullOrWhiteSpace([string]$ExitCode)) {
+    return $null
+  }
+  try {
+    $value = [int64]$ExitCode
+    if ($value -lt 0) {
+      $value += 4294967296
+    }
+    return ('0x{0:X8}' -f ([uint32]$value))
+  } catch {
+    return $null
+  }
+}
+
 function Get-AppxIdentityFromRoot {
   param([Parameter(Mandatory = $true)][string]$Root)
   $manifestPath = Join-Path $Root 'AppxManifest.xml'
@@ -189,7 +205,8 @@ $wingetArgs = @(
   '--accept-source-agreements',
   '--accept-package-agreements',
   '--skip-license',
-  '--disable-interactivity'
+  '--disable-interactivity',
+  '--verbose-logs'
 )
 if (-not [string]::IsNullOrWhiteSpace($Proxy)) {
   $wingetArgs += @('--proxy', $Proxy)
@@ -265,6 +282,15 @@ foreach ($packageFile in $packageFiles) {
   }
 }
 
+$detectedExitCodeHex = if ($capture) { ConvertTo-AcquireExitCodeHex -ExitCode $capture.ExitCode } else { $null }
+$detectedErrorCode = $null
+$combinedWingetText = if ($capture) { [string]::Concat([string]$capture.Stdout, "`n", [string]$capture.Stderr) } else { '' }
+if ($combinedWingetText -match '0x[0-9A-Fa-f]{8}') {
+  $detectedErrorCode = $Matches[0].ToUpperInvariant()
+} elseif ($detectedExitCodeHex) {
+  $detectedErrorCode = $detectedExitCodeHex
+}
+
 $status = if ($payloadRoots.Count -gt 0) {
   'update_source_ready'
 } else {
@@ -276,6 +302,8 @@ $reason = if ($payloadRoots.Count -gt 0) {
   'download_disabled'
 } elseif (-not $winget) {
   'winget_missing'
+} elseif ($detectedErrorCode -eq '0x8A150076') {
+  'store_offline_authorization_required'
 } elseif ($downloadAttempted) {
   'winget_download_failed_or_no_payload'
 } else {
@@ -299,6 +327,8 @@ $result = [pscustomobject]@{
   Command = $commandText
   Winget = if ($winget) { $winget.Source } else { $null }
   WingetExitCode = if ($capture) { $capture.ExitCode } else { $null }
+  WingetExitCodeHex = $detectedExitCodeHex
+  DetectedErrorCode = $detectedErrorCode
   WingetStdout = if ($capture) { ConvertTo-AcquireSafeText $capture.Stdout } else { $null }
   WingetStderr = if ($capture) { ConvertTo-AcquireSafeText $capture.Stderr } else { $null }
   DownloadedFiles = @($packageFiles | ForEach-Object { Get-GuardFileFingerprint -Path $_.FullName })
@@ -322,23 +352,39 @@ if (-not $NoNotifications) {
     Write-GuardNotification -State $state -Name "UPDATE_SOURCE_READY-$EventId.txt" -Content $text | Out-Null
     Write-GuardNotification -State $state -Name 'UPDATE_SOURCE_READY.txt' -Content $text | Out-Null
   } else {
+    $guidance = if ($reason -eq 'store_offline_authorization_required') {
+      @(
+        "Microsoft Store offline distribution requires Microsoft Entra ID authorization on this machine.",
+        "Use a clean Windows / VM / another user environment to install official Codex Desktop through Microsoft Store, then export a sidecar payload zip and import it here.",
+        "This is not a DNS-only problem, and the guard did not install or stop Codex Desktop."
+      )
+    } else {
+      @(
+        "If this machine needs a proxy for Microsoft Store offline packages, set CODEX_GUARD_WINGET_PROXY or rerun the command with winget --proxy.",
+        "You can also place an unpacked OpenAI.Codex payload under:",
+        $state.Paths.Incoming
+      )
+    }
     $text = @(
       "Codex Desktop Guard tried to acquire the Codex Desktop update package but could not produce a usable payload.",
       "Event: $EventId",
       "Status: $status",
       "Reason: $reason",
       "ProductId: $ProductId",
+      "Detected error: $detectedErrorCode",
       "Command:",
       $commandText,
       "",
-      "If this machine needs a proxy for Microsoft Store offline packages, set CODEX_GUARD_WINGET_PROXY or rerun the command with winget --proxy.",
-      "You can also place an unpacked OpenAI.Codex payload under:",
-      $state.Paths.Incoming,
+      ($guidance -join "`r`n"),
       "",
       "No patch was applied and no Desktop process was stopped."
     ) -join "`r`n"
     Write-GuardNotification -State $state -Name "NEEDS_UPDATE_SOURCE-$EventId.txt" -Content $text | Out-Null
     Write-GuardNotification -State $state -Name 'NEEDS_UPDATE_SOURCE.txt' -Content $text | Out-Null
+    if ($reason -eq 'store_offline_authorization_required') {
+      Write-GuardNotification -State $state -Name "STORE_OFFLINE_AUTHORIZATION_REQUIRED-$EventId.txt" -Content $text | Out-Null
+      Write-GuardNotification -State $state -Name 'STORE_OFFLINE_AUTHORIZATION_REQUIRED.txt' -Content $text | Out-Null
+    }
   }
 }
 
