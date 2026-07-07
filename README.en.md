@@ -48,6 +48,7 @@ Do not run it on macOS. A macOS version needs a separate workflow for the Codex 
 - `scripts/manage-codex-backups.ps1`: Backup manager for local Codex config, MCP, skills, and marketplaces.
 - `scripts/watch-codex-desktop.ps1`: Codex Desktop Guard read-only watcher for the AppX package, `resources\codex.exe`, `resources\app.asar`, the local copied CLI, and Desktop `config.toml` hash.
 - `scripts/check-codex-desktop-guard.ps1`: Codex Desktop Guard read-only status panel. It quickly summarizes the scheduled task, latest marker, READY/NEEDS state, recent watch log, and next user action.
+- `scripts/start-codex-desktop-guard-ui.ps1` / `scripts/stop-codex-desktop-guard-ui.ps1`: Local read-only Web UI, defaulting to `http://127.0.0.1:8765/`; it shows guard status in a browser and does not start Sandbox, run winget, stop Desktop, or apply patches.
 - `scripts/acquire-codex-update-package.ps1`: Codex Desktop Guard active update-source acquisition script. It defaults to Store ID `9PLM9XGG6VKS` / `winget download`, downloads and unpacks the Codex offline package, and never installs it.
 - `scripts/export-installed-codex-payload.ps1`: Exports the installed official Codex Desktop package payload from a clean Windows / VM / another user environment into a sidecar zip; it packages only the app package layout, not `.codex`, auth, tokens, or browser profiles.
 - `scripts/import-codex-update-payload.ps1`: Imports a sidecar zip or unpacked payload into the current patched machine's guard `incoming` directory, then triggers patched-update prepare by default; it never installs or closes Desktop.
@@ -181,6 +182,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\check-codex-deskt
 ```
 
 It shows whether the scheduled task is installed/enabled, last/next run time, current state classifications such as `waiting_for_external_payload`, `patched_update_ready`, or `config_change_only`, and whether apply is pending. This script only reads state files and scheduled task metadata; it does not start Sandbox, run winget, stop Desktop, or apply patches.
+
+For a friendlier browser view, start the local read-only Web UI:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\start-codex-desktop-guard-ui.ps1"
+```
+
+The default URL is `http://127.0.0.1:8765/`. The page refreshes status automatically and shows the current guard state and next action in plain language. Stop the local UI with:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\stop-codex-desktop-guard-ui.ps1"
+```
 
 When watch sees download/deployment/runtime-update activity, such as Desktop staying in a "downloading" state while the package and resources have not changed, it writes `UPDATE_ACTIVITY.txt` and first triggers `prepare-patched-update.ps1`. This V2 path calls `discover-codex-update-payload.ps1` to find a new update payload, such as an `OpenAI.Codex_*` unpacked package that differs from the current live package, a sidecar/imported unpacked payload under `incoming`, or a Store offline package downloaded and unpacked by `acquire-codex-update-package.ps1`. Active acquisition defaults to Microsoft Store ID `9PLM9XGG6VKS` and `winget download`; set `CODEX_GUARD_WINGET_PROXY` when a proxy is required. If a new payload is found, the guard reruns the fast-patch / remote-control repair flow against that payload and writes `PATCHED_UPDATE_READY`. If the Store offline package requires Microsoft Entra ID authorization, a proxy, network access, or another manual source, it writes `NEEDS_UPDATE_SOURCE`; `store_offline_authorization_required` / `0x8A150076` is treated as an authorization boundary, so later scheduled runs do not repeat the same `winget download` while `incoming` still has no payload, and instead wait for a clean Windows / VM export/import payload. If it is only waiting for Store deployment to expose a local payload, it writes `WAITING_FOR_UPDATE_PAYLOAD`. It does not pretend the update was patched, and it does not reuse an old `codex.exe` for a new version.
 
