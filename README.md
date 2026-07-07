@@ -48,6 +48,7 @@
 - `scripts/install-model-instructions-file.ps1`：可选安装内置 `model_instructions_file` 提示词资源。
 - `scripts/manage-codex-backups.ps1`：本地 Codex 配置、MCP、skills 和 marketplaces 的备份管理脚本。
 - `scripts/watch-codex-desktop.ps1`：Codex Desktop Guard 只读 watch 脚本，检测 AppX 包、`resources\codex.exe`、`resources\app.asar`、本地复制 CLI 和 Desktop `config.toml` hash。
+- `scripts/check-codex-desktop-guard.ps1`：Codex Desktop Guard 只读状态面板，短命令显示计划任务、最新 marker、READY/NEEDS 状态、最近 watch 日志和下一步用户动作。
 - `scripts/acquire-codex-update-package.ps1`：Codex Desktop Guard 主动 update source 获取脚本，默认用 Store ID `9PLM9XGG6VKS` / `winget download` 下载并解包 Codex 离线包；只下载/解包，不安装。
 - `scripts/export-installed-codex-payload.ps1`：在干净 Windows / VM / 另一个用户环境导出已安装官方 Codex Desktop package payload 为 sidecar zip；只打包 package layout，不包含 `.codex`、auth、token 或 browser profile。
 - `scripts/import-codex-update-payload.ps1`：在当前 patched 机器导入 sidecar zip 或 unpacked payload 到小守卫 `incoming`，默认随后触发 patched-update prepare；不安装、不关闭 Desktop。
@@ -173,6 +174,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\import-codex-upda
 这条 Sandbox sidecar 路径仍然不复制 `.codex` 状态、不保存凭据、不自动关闭 Desktop、不自动 apply。主会话如果需要继续观察，只重复运行短 `check`，不要在 Codex Desktop 里开 6-8 分钟的轮询。
 
 小守卫 watch 会检测当前 `OpenAI.Codex` AppX 包、`InstallLocation`、`app\resources\codex.exe`、`app\resources\app.asar`、本地复制 CLI、以及 `$env:USERPROFILE\.codex\config.toml` 的 hash。它也会只读检查 Codex 相关 WindowsApps 目录、最近 AppX 部署日志、BITS 任务和 `codex doctor --json` 的更新诊断，用于发现下载/部署/运行时更新迹象。`config.toml` 只记录 hash、长度和时间戳，不保存正文。
+
+要快速确认“小守卫现在在干嘛”，运行只读状态面板：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\check-codex-desktop-guard.ps1"
+```
+
+它会显示计划任务是否安装/启用、上次/下次运行时间、当前状态分类，例如 `waiting_for_external_payload`、`patched_update_ready`、`config_change_only`，以及是否有 apply pending。这个脚本只读状态文件和计划任务信息，不启动 Sandbox、不跑 winget、不 stop Desktop、不 apply。
 
 当发现下载/部署/运行时更新迹象，例如 Desktop 一直显示“正在下载”但包和资源还没变，watch 会写 `UPDATE_ACTIVITY.txt`，然后优先触发 `prepare-patched-update.ps1`。这条 V2 主线会调用 `discover-codex-update-payload.ps1` 查找新版本 update payload，例如不同于当前 live package 的 `OpenAI.Codex_*` unpacked package、`incoming` 里的 sidecar/imported unpacked payload，或由 `acquire-codex-update-package.ps1` 主动下载并解包的 Store 离线包。主动获取默认使用 Microsoft Store ID `9PLM9XGG6VKS` 和 `winget download`，可通过 `CODEX_GUARD_WINGET_PROXY` 传代理。能找到新 payload 时，它会对新 payload 重新跑 fast-patch / remote-control 修复，生成 `PATCHED_UPDATE_READY`。如果 Store 离线包下载需要 Microsoft Entra ID 授权、代理、网络或手动下载源，它会写 `NEEDS_UPDATE_SOURCE`；其中 `store_offline_authorization_required` / `0x8A150076` 会被视为授权边界，后续计划任务在 `incoming` 还没有 payload 时不再重复打同一个 `winget download`，而是等待干净 Windows / VM export/import payload。如果只是在等待 Store 部署露出本地 payload，则写 `WAITING_FOR_UPDATE_PAYLOAD`。它不会假装已经修好，也不会拿旧 `codex.exe` 硬套新版本。
 
