@@ -84,6 +84,68 @@ function Invoke-GuardPrepareUpdateActivity {
     return Read-GuardJsonFile -Path $manifestPath
   }
 
+  function Test-IncomingPayloadCandidate {
+    if (-not (Test-Path -LiteralPath $state.Paths.Incoming -PathType Container)) {
+      return $false
+    }
+    $manifest = Get-ChildItem -LiteralPath $state.Paths.Incoming -Recurse -File -Filter 'AppxManifest.xml' -ErrorAction SilentlyContinue |
+      Select-Object -First 1
+    return ($null -ne $manifest)
+  }
+
+  function Test-StoreOfflineAuthorizationRequiredForEvent {
+    param([Parameter(Mandatory = $true)][string]$Id)
+    $notificationPath = Join-Path $state.Paths.Notifications "STORE_OFFLINE_AUTHORIZATION_REQUIRED-$Id.txt"
+    if (Test-Path -LiteralPath $notificationPath -PathType Leaf) {
+      return $true
+    }
+    $pattern = "*-$Id-patched-update"
+    $dirs = @(Get-ChildItem -LiteralPath $state.Paths.Staging -Directory -Filter $pattern -ErrorAction SilentlyContinue)
+    foreach ($dir in $dirs) {
+      $manifestPath = Join-Path $dir.FullName 'manifest.json'
+      if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+        continue
+      }
+      $manifest = Read-GuardJsonFile -Path $manifestPath
+      $reason = if ($manifest -and $manifest.Reason) { [string]$manifest.Reason } else { '' }
+      $acquireReason = if ($manifest -and $manifest.Discovery -and $manifest.Discovery.Acquire -and $manifest.Discovery.Acquire.Reason) { [string]$manifest.Discovery.Acquire.Reason } else { '' }
+      if ($reason -eq 'store_offline_authorization_required' -or $acquireReason -eq 'store_offline_authorization_required') {
+        return $true
+      }
+    }
+    return $false
+  }
+
+  function Write-StoreOfflineAuthorizationWaitNotification {
+    param([Parameter(Mandatory = $true)][string]$Id)
+    $text = @(
+      "Codex Desktop Guard is waiting for an external Codex Desktop update payload.",
+      "Event: $Id",
+      "Status: needs_update_source",
+      "Reason: store_offline_authorization_required",
+      "",
+      "This event already hit the Microsoft Store offline distribution / Microsoft Entra ID authorization boundary.",
+      "The scheduled guard will not repeat the same winget download while incoming has no payload.",
+      "",
+      "Use a clean Windows / VM / another user environment to install official Codex Desktop, export the official package payload, then import it here:",
+      "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$ScriptRoot\import-codex-update-payload.ps1`" -PayloadZip <codex-payload.zip>",
+      "",
+      "No patch was applied and no Desktop process was stopped."
+    ) -join "`r`n"
+    Write-GuardNotification -State $state -Name "NEEDS_UPDATE_SOURCE-$Id.txt" -Content $text | Out-Null
+    Write-GuardNotification -State $state -Name 'NEEDS_UPDATE_SOURCE.txt' -Content $text | Out-Null
+    Write-GuardNotification -State $state -Name "STORE_OFFLINE_AUTHORIZATION_REQUIRED-$Id.txt" -Content $text | Out-Null
+    Write-GuardNotification -State $state -Name 'STORE_OFFLINE_AUTHORIZATION_REQUIRED.txt' -Content $text | Out-Null
+    Remove-Item -LiteralPath (Join-Path $state.Paths.Notifications 'PREPARE_FAILED.txt') -Force -ErrorAction SilentlyContinue
+  }
+
+  if ((Test-StoreOfflineAuthorizationRequiredForEvent -Id $EventId) -and -not (Test-IncomingPayloadCandidate)) {
+    Write-GuardUtf8NoBom -Path $lastPreparedPath -Content $EventId
+    Write-StoreOfflineAuthorizationWaitNotification -Id $EventId
+    Write-GuardLog -State $state -LogName 'watch.log' -Message "patched-update source previously hit Store offline authorization; waiting for sidecar/imported payload for event: $EventId"
+    return
+  }
+
   if ([string]::IsNullOrWhiteSpace($EventPath)) {
     $EventPath = Join-Path $state.Paths.Logs ("event-$EventId.json")
   }
@@ -117,7 +179,12 @@ function Invoke-GuardPrepareUpdateActivity {
   if ($lastPreparedEventId -eq $EventId) {
     $previousManifest = Get-LatestPatchedUpdateManifestForEvent -Id $EventId
     $previousStatus = if ($previousManifest) { [string]$previousManifest.Status } else { '' }
-    if ($previousStatus -in @('waiting_for_update_payload', 'needs_update_source') -or [string]::IsNullOrWhiteSpace($previousStatus)) {
+    $previousReason = if ($previousManifest -and $previousManifest.Reason) { [string]$previousManifest.Reason } else { '' }
+    if ($previousStatus -eq 'needs_update_source' -and $previousReason -eq 'store_offline_authorization_required') {
+      Write-StoreOfflineAuthorizationWaitNotification -Id $EventId
+      Write-GuardLog -State $state -LogName 'watch.log' -Message "patched-update source requires Store offline authorization; waiting for sidecar/imported payload for event: $EventId"
+      return
+    } elseif ($previousStatus -in @('waiting_for_update_payload', 'needs_update_source') -or [string]::IsNullOrWhiteSpace($previousStatus)) {
       Write-GuardLog -State $state -LogName 'watch.log' -Message "patched-update source/payload still not ready; retrying acquisition and discovery for event: $EventId"
     } else {
       Write-GuardLog -State $state -LogName 'watch.log' -Message "patched-update prepare already reached terminal status '$previousStatus' for event: $EventId"
@@ -136,7 +203,12 @@ function Invoke-GuardPrepareUpdateActivity {
   }
   $latestManifest = Get-LatestPatchedUpdateManifestForEvent -Id $EventId
   $latestStatus = if ($latestManifest) { [string]$latestManifest.Status } else { '' }
-  if ($latestStatus -in @('waiting_for_update_payload', 'needs_update_source')) {
+  $latestReason = if ($latestManifest -and $latestManifest.Reason) { [string]$latestManifest.Reason } else { '' }
+  if ($latestStatus -eq 'needs_update_source' -and $latestReason -eq 'store_offline_authorization_required') {
+    Write-GuardUtf8NoBom -Path $lastPreparedPath -Content $EventId
+    Write-StoreOfflineAuthorizationWaitNotification -Id $EventId
+    Write-GuardLog -State $state -LogName 'watch.log' -Message "patched-update source requires Store offline authorization; future watches will wait for sidecar/imported payload for event: $EventId"
+  } elseif ($latestStatus -in @('waiting_for_update_payload', 'needs_update_source')) {
     Remove-Item -LiteralPath $lastPreparedPath -Force -ErrorAction SilentlyContinue
     Write-GuardLog -State $state -LogName 'watch.log' -Message "patched-update prepare still needs source/payload; future watches will retry event: $EventId"
   } else {
@@ -187,6 +259,25 @@ if ($changes.Count -eq 0) {
 
 $updateSignalNames = @('codex_windowsapps_dir_signature', 'appx_codex_event_signature', 'bits_codex_transfer_signature', 'doctor_update_signature')
 $onlyUpdateSignals = (($changes | Where-Object { $updateSignalNames -notcontains $_.Name } | Measure-Object).Count -eq 0)
+$installedPackageChangeNames = @(
+  'package_full_name',
+  'package_version',
+  'package_signature_kind',
+  'install_location',
+  'resources_codex_exe_sha256',
+  'resources_codex_exe_length',
+  'resources_app_asar_sha256',
+  'resources_app_asar_length',
+  'local_cli_path',
+  'local_cli_sha256',
+  'local_cli_version'
+)
+$configChangeNames = @('codex_config_toml_sha256', 'codex_config_toml_length')
+$hasInstalledPackageOrResourceChange = (($changes | Where-Object { $installedPackageChangeNames -contains $_.Name } | Measure-Object).Count -gt 0)
+$hasConfigOnlyChange = (
+  (($changes | Where-Object { $configChangeNames -contains $_.Name } | Measure-Object).Count -gt 0) -and
+  (($changes | Where-Object { ($configChangeNames + $updateSignalNames) -notcontains $_.Name } | Measure-Object).Count -eq 0)
+)
 
 $eventId = New-GuardEventId -Changes $changes -Snapshot $snapshot
 $event = [pscustomobject]@{
@@ -227,6 +318,31 @@ try {
       Invoke-GuardPrepareUpdateActivity -EventId $eventId -EventPath $eventPath -Snapshot $snapshot
     } else {
       Write-GuardLog -State $state -LogName 'watch.log' -Message "update-signal baseline refreshed without Codex update activity: $eventId"
+    }
+  } elseif ($hasConfigOnlyChange -and -not $hasInstalledPackageOrResourceChange) {
+    $summary = @(
+      "Codex Desktop Guard detected a Desktop config hash change.",
+      "Event: $eventId",
+      "Package: $(Resolve-GuardPropertyPath -Object $snapshot -Path 'Package.PackageFullName')",
+      "Changed fields:",
+      (($changes | ForEach-Object { "  - $($_.Name)" }) -join "`r`n"),
+      "",
+      "Only config metadata changed. The guard recorded hash/length/timestamp only and did not read config.toml contents.",
+      "No native replacement build was started for this config-only event."
+    ) -join "`r`n"
+    Write-GuardNotification -State $state -Name "CONFIG_CHANGE-$eventId.txt" -Content $summary -NotifyMsg:$NotifyMsg | Out-Null
+    Write-GuardNotification -State $state -Name 'CONFIG_CHANGE.txt' -Content $summary -NotifyMsg:$false | Out-Null
+    Write-GuardLog -State $state -LogName 'watch.log' -Message "config-only change recorded without installed-change prepare: $eventId"
+    if ($snapshot.UpdateSignals -and $snapshot.UpdateSignals.HasCodexUpdateActivity) {
+      if ($NoPrepare) {
+        Write-GuardLog -State $state -LogName 'watch.log' -Message "NoPrepare set; active update activity check skipped after config-only change: $eventId"
+      } else {
+        $activityEventId = New-GuardUpdateActivityEventId -Snapshot $snapshot
+        $activityText = New-GuardUpdateActivityText -Snapshot $snapshot -EventId $activityEventId
+        Write-GuardNotification -State $state -Name 'UPDATE_ACTIVITY.txt' -Content $activityText | Out-Null
+        Write-GuardLog -State $state -LogName 'watch.log' -Message "active update activity still present after config-only change; checking patched-update event: $activityEventId"
+        Invoke-GuardPrepareUpdateActivity -EventId $activityEventId -Snapshot $snapshot
+      }
     }
   } elseif ($NoPrepare) {
     $summary = @(
