@@ -302,8 +302,14 @@ function Get-ManifestPublisher {
 
 function Get-OrCreateSigningCertificate {
   param([string]$Publisher)
-  $cert = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert -ErrorAction SilentlyContinue |
-    Where-Object { $_.Subject -eq $Publisher } |
+  $codeSigningEku = '1.3.6.1.5.5.7.3.3'
+  $cert = Get-ChildItem Cert:\CurrentUser\My -ErrorAction Stop |
+    Where-Object {
+      $_.Subject -eq $Publisher -and
+      $_.HasPrivateKey -and
+      $_.NotAfter -gt (Get-Date) -and
+      @($_.EnhancedKeyUsageList | ForEach-Object { $_.ObjectId.Value }) -contains $codeSigningEku
+    } |
     Sort-Object NotAfter -Descending |
     Select-Object -First 1
   if ($cert) {

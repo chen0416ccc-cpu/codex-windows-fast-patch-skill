@@ -643,6 +643,8 @@ function patchMobileSetupFlow(text) {
 function patchRemoteConnectionsSettingsVisibility(text) {
   const marker = "remote_control_settings_force_control_this_pc_visible";
   const sectionMarker = "remote_control_settings_force_remote_control_section_visible";
+  const controlRouteMarker = "remote_control_settings_force_control_this_pc_route_enabled";
+  const sectionRouteMarker = "remote_control_settings_force_remote_control_route_enabled";
   let next = text;
   let changed = false;
   const oldVisibility = "ye=Fe(),xe=!c,";
@@ -686,7 +688,23 @@ function patchRemoteConnectionsSettingsVisibility(text) {
           : next;
     changed = true;
   }
-  if (!next.includes(marker) || !next.includes(sectionMarker) || !next.includes("showControlThisMacTab")) {
+  if (!next.includes(controlRouteMarker) || !next.includes(sectionRouteMarker)) {
+    const oldRoute26707 =
+      "dt=Rn({selectedConnectionsTab:it,showControlOtherDevices:H,showControlThisMacTab:Ue,showRemoteControlConnectionsSection:V,showRemoteSshConnections:!0,";
+    const newRoute26707 =
+      "dt=Rn({selectedConnectionsTab:it,showControlOtherDevices:H,showControlThisMacTab:(void\"remote_control_settings_force_control_this_pc_route_enabled\",!0),showRemoteControlConnectionsSection:(void\"remote_control_settings_force_remote_control_route_enabled\",!0),showRemoteSshConnections:!0,";
+    if (next.includes(oldRoute26707)) {
+      next = replaceExact(next, oldRoute26707, newRoute26707, "remote connections selected-tab routing");
+      changed = true;
+    }
+  }
+  const is26707RouteShape = next.includes("dt=Rn({selectedConnectionsTab:it");
+  if (
+    !next.includes(marker) ||
+    !next.includes(sectionMarker) ||
+    !next.includes("showControlThisMacTab") ||
+    (is26707RouteShape && (!next.includes(controlRouteMarker) || !next.includes(sectionRouteMarker)))
+  ) {
     throw new Error("remote connections settings visibility marker missing after patch");
   }
   return { text: next, status: changed ? "patched" : "already-patched" };
