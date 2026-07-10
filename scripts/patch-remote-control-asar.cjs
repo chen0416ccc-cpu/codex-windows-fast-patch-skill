@@ -63,16 +63,20 @@ const mainFile = findJs("main bundle with remote-control remote-control flow", (
     text.includes("CODEX_API_BASE_URL") ||
     text.includes("remote_control_desktop_fetch_override_used") ||
     text.includes("remote_control_appserver_bh_isolated_auth_fallback") ||
+    text.includes("async function z_({action:e,appServerClient:t,desktopOriginator:n") ||
+    text.includes("async function nv({action:e,appServerClient:t,desktopApiOptions:n") ||
     text.includes("async function v_({action:e,appServerClient:t") ||
     text.includes("async function N_({action:e,appServerClient:t")) &&
   (text.includes("authorize remote control environments") || text.includes("codex.remote_control.enroll")) &&
   (text.includes("__codexRemoteControlAuthOverrideForPath") ||
+    text.includes("async function yv({appServerClient:e,desktopApiOptions:t,deviceKeyClient:n,globalState:r,requestRemoteControlEnrollmentStepUpToken:i})") ||
     text.includes("async function YX") ||
     text.includes("async function RZ") ||
     text.includes("async function ZZ") ||
     text.includes("async function c$") ||
     text.includes("async function I1")) &&
   (text.includes("remote_control_desktop_fetch_override_used") ||
+    text.includes("function L_(e){let t=process.env.CODEX_API_BASE_URL") ||
     text.includes("PN({desktopOriginator:this.options.desktopOriginator") ||
     text.includes("eP({desktopOriginator:this.options.desktopOriginator") ||
     text.includes("pP({desktopOriginator:this.options.desktopOriginator") ||
@@ -167,7 +171,7 @@ function patchFlowHelpers(text) {
     return { text, status: "already-patched" };
   }
 
-  const authHelper = `function __codexRemoteControlEnrollScope(){return typeof GX=="string"?GX:typeof qZ=="string"?qZ:typeof K_=="string"?K_:typeof i$=="string"?i$:typeof M1=="string"?M1:"codex.remote_control.enroll"}function __codexRemoteControlAuthLog(e,t={}){try{typeof __codexRemoteControlFlowLog=="function"?__codexRemoteControlFlowLog(e,{marker:"remote_control_auth_isolated_store_priority_check",...t}):console.warn("remote_control_auth_isolated_store_priority_check",e,t)}catch{}}function __codexRemoteControlAuthJsonPath(e){let t=require("node:os"),n=require("node:path");if(e!=="remote-control-oauth.json"&&e!=="remote.json")throw Error("remote_control_auth_forbidden_file");let r=n.resolve(n.join(t.homedir(),".codex",e)),i=n.resolve(n.join(t.homedir(),".codex","auth.json"));if(r===i)throw Error("remote_control_auth_global_auth_rejected");return r}function __codexRemoteControlFindAccessToken(e,t=0){if(e==null||t>8)return null;if(typeof e=="string"){let t=e.trim();return t.split(".").length>=3?t:null}if(typeof e!="object")return null;for(let n of["access_token","accessToken"]){let r=e[n];if(typeof r=="string"&&r.trim().length>0)return r.trim()}for(let n of["tokens","auth","response","credential","credentials","remote","remote_control","step_up_token_exchange_stored_isolated"]){let r=__codexRemoteControlFindAccessToken(e[n],t+1);if(r)return r}if(e.entries&&typeof e.entries=="object")for(let n of Object.values(e.entries)){let e=__codexRemoteControlFindAccessToken(n,t+1);if(e)return e}for(let n of Object.values(e)){let e=__codexRemoteControlFindAccessToken(n,t+1);if(e)return e}return null}function __codexRemoteControlAuthOverrideWithOrder(e,t){for(let n of e)try{let e=require("node:fs"),r=__codexRemoteControlAuthJsonPath(n),i=JSON.parse(e.readFileSync(r,"utf8")),a=__codexRemoteControlFindAccessToken(i),o=__codexRemoteControlJwtPayload(a),s=__codexRemoteControlScopes(o),c=s.includes(__codexRemoteControlEnrollScope()),l=typeof o?.exp=="number"&&o.exp<=Math.floor(Date.now()/1e3)+30;if(a&&l){__codexRemoteControlAuthLog("remote_control_auth_token_expired_skipped",{source:n,path:t??null,hasToken:!0,scopeCount:s.length,hasEnrollScope:c,expiresAt:o?.exp??null});continue}if(a)return __codexRemoteControlAuthLog("remote_control_auth_isolated_store_priority_check",{source:n,path:t??null,hasToken:!0,scopeCount:s.length,hasEnrollScope:c}),a;__codexRemoteControlAuthLog("remote_control_auth_isolated_store_priority_check",{source:n,path:t??null,hasToken:!1})}catch(e){__codexRemoteControlAuthLog("remote_control_auth_isolated_store_priority_check",{source:n,path:t??null,hasToken:!1,errorName:e?.name,errorMessage:e?.message,errorCode:e?.code})}return null}function __codexRemoteControlAuthOverrideForPath(e){let t=String(e??""),n=/\\/(?:backend-api\\/)?wham\\/remote\\/control\\/clients(?:\\/|$)/.test(t)||/\\/(?:backend-api\\/)?wham\\/remote\\/control\\/environments(?:\\/|$)/.test(t)?["remote.json","remote-control-oauth.json"]:["remote-control-oauth.json","remote.json"];return __codexRemoteControlAuthOverrideWithOrder(n,t)}function __codexRemoteControlAuthOverride(){return __codexRemoteControlAuthOverrideForPath("")}`;
+  const authHelper = `function __codexRemoteControlEnrollScope(){return typeof GX=="string"?GX:typeof qZ=="string"?qZ:typeof K_=="string"?K_:typeof i$=="string"?i$:typeof M1=="string"?M1:"codex.remote_control.enroll"}function __codexRemoteControlAuthLog(e,t={}){try{typeof __codexRemoteControlFlowLog=="function"?__codexRemoteControlFlowLog(e,{marker:"remote_control_auth_isolated_store_priority_check",...t}):console.warn("remote_control_auth_isolated_store_priority_check",e,t)}catch{}}function __codexRemoteControlAuthJsonPath(e){let t=require("node:os"),n=require("node:path");if(e!=="remote-control-oauth.json"&&e!=="remote.json")throw Error("remote_control_auth_forbidden_file");let r=n.resolve(n.join(t.homedir(),".codex",e)),i=n.resolve(n.join(t.homedir(),".codex","auth.json"));if(r===i)throw Error("remote_control_auth_global_auth_rejected");return r}function __codexRemoteControlFindAccessToken(e,t=0){if(e==null||t>8)return null;if(typeof e=="string"){let t=e.trim();return t.split(".").length>=3?t:null}if(typeof e!="object")return null;for(let n of["access_token","accessToken"]){let r=e[n];if(typeof r=="string"&&r.trim().length>0)return r.trim()}for(let n of["tokens","auth","response","credential","credentials","remote","remote_control","step_up_token_exchange_stored_isolated"]){let r=__codexRemoteControlFindAccessToken(e[n],t+1);if(r)return r}if(e.entries&&typeof e.entries=="object")for(let n of Object.values(e.entries)){let e=__codexRemoteControlFindAccessToken(n,t+1);if(e)return e}for(let n of Object.values(e)){let e=__codexRemoteControlFindAccessToken(n,t+1);if(e)return e}return null}function __codexRemoteControlAuthOverrideWithOrder(e,t){for(let n of e)try{let e=require("node:fs"),r=__codexRemoteControlAuthJsonPath(n),i=JSON.parse(e.readFileSync(r,"utf8")),a=__codexRemoteControlFindAccessToken(i),o=__codexRemoteControlJwtPayload(a),s=__codexRemoteControlScopes(o),c=s.includes(__codexRemoteControlEnrollScope()),l=typeof o?.exp=="number"&&o.exp<=Math.floor(Date.now()/1e3)+30;if(a&&l){__codexRemoteControlAuthLog("remote_control_auth_token_expired_skipped",{source:n,path:t??null,hasToken:!0,scopeCount:s.length,hasEnrollScope:c,expiresAt:o?.exp??null});continue}if(a)return __codexRemoteControlAuthLog("remote_control_auth_isolated_store_priority_check",{source:n,path:t??null,hasToken:!0,scopeCount:s.length,hasEnrollScope:c}),a;__codexRemoteControlAuthLog("remote_control_auth_isolated_store_priority_check",{source:n,path:t??null,hasToken:!1})}catch(e){__codexRemoteControlAuthLog("remote_control_auth_isolated_store_priority_check",{source:n,path:t??null,hasToken:!1,errorName:e?.name,errorMessage:e?.message,errorCode:e?.code})}return null}function __codexRemoteControlAuthOverrideForPath(e){let t=String(e??""),n=/\\/(?:backend-api\\/)?wham\\/remote\\/control\\/clients(?:\\/|$)/.test(t)||/\\/(?:backend-api\\/)?wham\\/remote\\/control\\/environments(?:\\/|$)/.test(t)?["remote.json","remote-control-oauth.json"]:["remote-control-oauth.json","remote.json"];return __codexRemoteControlAuthOverrideWithOrder(n,t)}function __codexRemoteControlAuthOverride(){return __codexRemoteControlAuthOverrideForPath("")}function __codexRemoteControlConnectionAuthOverride(){let e="remote.json";try{let t=require("node:fs"),n=__codexRemoteControlAuthJsonPath(e),r=JSON.parse(t.readFileSync(n,"utf8")),i=__codexRemoteControlFindAccessToken(r),a=__codexRemoteControlJwtPayload(i),o=a?.["https://api.openai.com/auth"]??{},s=__codexRemoteControlScopes(a);if(i)return __codexRemoteControlAuthLog("remote_control_connection_auth_fallback_used",{source:e,hasToken:!0,scopeCount:s.length,hasAccountId:!!(o.chatgpt_account_id??o.account_id),hasAccountUserId:!!(o.chatgpt_account_user_id??o.account_user_id),hasEnrollScope:s.includes(__codexRemoteControlEnrollScope())}),i;__codexRemoteControlAuthLog("remote_control_connection_auth_fallback_used",{source:e,hasToken:!1})}catch(t){__codexRemoteControlAuthLog("remote_control_connection_auth_fallback_used",{source:e,hasToken:!1,errorName:t?.name,errorMessage:t?.message,errorCode:t?.code})}return null}`;
   const helper = authHelper + `function __codexRemoteControlSafeWriteFile(e,t){let n=require("node:os"),r=require("node:path"),i=require("node:fs"),a=r.resolve(String(e)),o=r.resolve(r.join(n.homedir(),".codex","auth.json"));if(a===o)throw Error("remote_control_private_file_target_rejected: software_device_key_private_helper_required");try{let e=i.realpathSync.native?i.realpathSync.native(a):i.realpathSync(a);if(e===o)throw Error("remote_control_private_file_target_rejected: software_device_key_private_helper_required")}catch(e){if(e?.code!=="ENOENT")throw e}try{let e=i.lstatSync(a);if(e.isSymbolicLink())throw Error("remote_control_private_file_target_rejected: symlink")}catch(e){if(e?.code!=="ENOENT")throw e}i.mkdirSync(r.dirname(a),{recursive:!0});i.writeFileSync(a,t,{encoding:"utf8",mode:384});try{i.chmodSync(a,384)}catch{}}function __codexRemoteControlFlowLog(e,t={}){try{let n=require("node:os"),r=require("node:path"),i=require("node:fs"),a=r.join(n.homedir(),".codex","remote-control-flow.log"),o={time:new Date().toISOString(),pid:process.pid,marker:"remote_control_flow_log_ready",stage:e,...t};for(let e of["access_token","refresh_token","id_token","step_up_token","authorization_code","code","codeVerifier","code_verifier","Authorization","authorization","bearer"])delete o[e];i.mkdirSync(r.dirname(a),{recursive:!0});i.appendFileSync(a,JSON.stringify(o)+"\\n","utf8")}catch(e){try{console.warn("remote_control_flow_log_failed",{errorName:e?.name,errorMessage:e?.message,errorCode:e?.code})}catch{}}}function __codexRemoteControlStepUpStorePath(){let e=require("node:os"),t=require("node:path");return t.join(e.homedir(),".codex","remote-control-oauth.json")}function __codexRemoteControlReadStepUpStore(){try{let e=require("node:fs");return JSON.parse(e.readFileSync(__codexRemoteControlStepUpStorePath(),"utf8"))}catch{return{schema:"codex-remote-control-oauth-isolated-v1",entries:{}}}}function __codexRemoteControlJwtPayload(e){let t=String(e||"").split(".");if(t.length<2||!t[1])return null;try{return JSON.parse(Buffer.from(t[1],"base64url").toString("utf8"))}catch{return null}}function __codexRemoteControlScopes(e){let t=new Set;for(let n of e?.scope?.split?.(/\\s+/)??[])n&&t.add(n);for(let n of Array.isArray(e?.scp)?e.scp:[])n&&t.add(n);return[...t]}function __codexRemoteControlReadFreshStepUpToken(e){try{let t=__codexRemoteControlReadStepUpStore(),n=t.tokens?.access_token??t.access_token??t.entries?.step_up_token_exchange_stored_isolated?.response?.access_token??t.step_up_token_exchange_stored_isolated?.response?.access_token;if(typeof n!="string"||n.trim().length===0)return __codexRemoteControlFlowLog("remote_control_step_up_cached_missing",{}),null;n=n.trim();let r=__codexRemoteControlJwtPayload(n);if(r==null)return __codexRemoteControlFlowLog("remote_control_step_up_cached_invalid_jwt",{}),null;let i=Math.floor(Date.now()/1e3),a=Date.now(),o=r["https://api.openai.com/auth"]??{},s=o.chatgpt_account_id??o.account_id,c=o.chatgpt_account_user_id??o.account_user_id,l=__codexRemoteControlScopes(r),u=l.includes(__codexRemoteControlEnrollScope()),d=typeof r.exp=="number"&&r.exp>i+30,f=typeof r.iat=="number"&&i-r.iat<240,p=typeof r.pwd_auth_time=="number"&&a-r.pwd_auth_time<240000,m=e==null||s==null||s===e;if(d&&f&&p&&u&&m)return __codexRemoteControlFlowLog("remote_control_step_up_cached_reused",{source:"remote-control-oauth.json",scopeCount:l.length,hasAccountId:!!s,hasAccountUserId:!!c,expiresAt:r.exp}),n;return __codexRemoteControlFlowLog("remote_control_step_up_cached_rejected",{source:"remote-control-oauth.json",hasRequiredScope:u,accountMatches:m,expiresOk:d,issuedFresh:f,passwordFresh:p,scopeCount:l.length,hasAccountId:!!s,hasAccountUserId:!!c}),null}catch(t){return __codexRemoteControlFlowLog("remote_control_step_up_cached_read_failed",{errorName:t?.name,errorMessage:t?.message,errorCode:t?.code}),null}}function __codexRemoteControlStoreStepUpTokenResponse(e,t={}){try{let n=__codexRemoteControlReadStepUpStore();n.schema="codex-remote-control-oauth-isolated-v1";n.updatedAt=new Date().toISOString();n.entries??={};n.entries.step_up_token_exchange_stored_isolated={time:new Date().toISOString(),pid:process.pid,...t,response:e};__codexRemoteControlSafeWriteFile(__codexRemoteControlStepUpStorePath(),JSON.stringify(n,null,2)+"\\n");__codexRemoteControlFlowLog("remote_control_oauth_store_write",{store:"remote-control-oauth.json",responseKeys:e&&typeof e=="object"?Object.keys(e).slice(0,20):[]})}catch(e){__codexRemoteControlFlowLog("remote_control_oauth_store_write_failed",{errorName:e?.name,errorMessage:e?.message,errorCode:e?.code})}}`;
   const anchor = [
     "var zX=`app_EMoamEEZ73f0CkXaXp7hrann`",
@@ -175,6 +179,7 @@ function patchFlowHelpers(text) {
     "var VZ=`app_EMoamEEZ73f0CkXaXp7hrann`",
     "var QQ=`app_EMoamEEZ73f0CkXaXp7hrann`",
     "var E1=`app_EMoamEEZ73f0CkXaXp7hrann`",
+    "function L_(e){let t=process.env.CODEX_API_BASE_URL",
   ].find((candidate) => text.includes(candidate));
   if (!anchor) {
     throw new Error("remote-control flow helper insertion anchor not found");
@@ -187,6 +192,16 @@ function patchDesktopFetch(text) {
   const newPathMarker = "remote_control_desktop_fetch_new_auth_path_used";
   if (text.includes(marker) && (!text.includes("async function KF({appServerClient:e") || text.includes(newPathMarker))) {
     return { text, status: "already-patched" };
+  }
+  if (text.includes("async function z_({action:e,appServerClient:t,desktopOriginator:n,headers:r={},refreshToken:i=!1})")) {
+    const oldZ_ =
+      "async function z_({action:e,appServerClient:t,desktopOriginator:n,headers:r={},refreshToken:i=!1}){let o=await t.getAuthToken({refreshToken:i});if(!o){let t=a.W();throw Error(t===`ChatGPT`?`Sign in to ChatGPT to ${e}.`:`Sign in to ChatGPT in ${t} to ${e}.`)}let s={...r};return B_(s,o,{desktopOriginator:n}),s}";
+    const newZ_ =
+      "async function z_({action:e,appServerClient:t,desktopOriginator:n,headers:r={},refreshToken:i=!1}){let o=await t.getAuthToken({refreshToken:i});if(!o)try{o=typeof __codexRemoteControlConnectionAuthOverride==\"function\"?__codexRemoteControlConnectionAuthOverride():null,o&&typeof __codexRemoteControlFlowLog==\"function\"&&(__codexRemoteControlFlowLog(\"remote_control_appserver_bh_isolated_auth_fallback\",{action:e,refreshToken:i}),__codexRemoteControlFlowLog(\"remote_control_desktop_fetch_override_used\",{path:\"/codex/remote/control\",action:e}))}catch(t){try{typeof __codexRemoteControlFlowLog==\"function\"&&__codexRemoteControlFlowLog(\"remote_control_appserver_bh_isolated_auth_fallback_failed\",{action:e,errorName:t?.name,errorMessage:t?.message,errorCode:t?.code})}catch{}}if(!o){let t=a.W();throw Error(t===`ChatGPT`?`Sign in to ChatGPT to ${e}.`:`Sign in to ChatGPT in ${t} to ${e}.`)}let s={...r};return B_(s,o,{desktopOriginator:n}),s}";
+    return {
+      text: replaceExact(text, oldZ_, newZ_, "desktop_fetch 26.707 auth fallback"),
+      status: "patched-26.707-auth-path",
+    };
   }
   if (
     text.includes("async function P_({action:e,appServerClient:t,desktopApiOptions:n") &&
@@ -606,13 +621,19 @@ function patchMobileSetupFlow(text) {
     "async function je(e,t,n){return t===`local`?(await g(`set-local-remote-control-enabled`,{params:{enabled:n}}),W(e,n,{force:!0})):q(e,t,n)}";
   const newFlow2623 =
     "async function je(e,t,n){return t===`local`?(n&&(void\"remote_control_mobile_setup_authorize_before_enable\",await g(`authorize-remote-control-connections`,{params:{}})),await g(`set-local-remote-control-enabled`,{params:{enabled:n}}),W(e,n,{force:!0})):q(e,t,n)}";
+  const oldFlow26707 =
+    "async function je(e,t,n){return t===`local`?(await h(`set-local-remote-control-enabled`,{params:{enabled:n}}),W(e,n,{force:!0})):q(e,t,n)}";
+  const newFlow26707 =
+    "async function je(e,t,n){return t===`local`?(n&&(void\"remote_control_mobile_setup_authorize_before_enable\",await h(`authorize-remote-control-connections`,{params:{}})),await h(`set-local-remote-control-enabled`,{params:{enabled:n}}),W(e,n,{force:!0})):q(e,t,n)}";
   const next = text.includes(oldFlow)
     ? replaceExact(text, oldFlow, newFlow, "mobile setup authorize before local enable")
     : text.includes(oldFlow2611)
       ? replaceExact(text, oldFlow2611, newFlow2611, "mobile setup authorize before local enable")
       : text.includes(oldFlow2616)
         ? replaceExact(text, oldFlow2616, newFlow2616, "mobile setup authorize before local enable")
-        : replaceExact(text, oldFlow2623, newFlow2623, "mobile setup authorize before local enable");
+        : text.includes(oldFlow2623)
+          ? replaceExact(text, oldFlow2623, newFlow2623, "mobile setup authorize before local enable")
+          : replaceExact(text, oldFlow26707, newFlow26707, "mobile setup authorize before local enable");
   if (!next.includes(marker) || !next.includes("authorize-remote-control-connections")) {
     throw new Error("mobile setup flow authorize-before-enable marker missing after patch");
   }
@@ -632,6 +653,8 @@ function patchRemoteConnectionsSettingsVisibility(text) {
   const newVisibility2616 = "nt=(void\"remote_control_settings_force_control_this_pc_visible\",!0),";
   const oldVisibility2623 = "Ge=H&&!0,";
   const newVisibility2623 = "Ge=(void\"remote_control_settings_force_control_this_pc_visible\",!0),";
+  const oldVisibility26707 = "dn=[...Ue?cn:[],...Ge?sn:[],...ln,...ve?un:[]];";
+  const newVisibility26707 = "dn=[...(void\"remote_control_settings_force_control_this_pc_visible\",!0)?cn:[],...(void\"remote_control_settings_force_remote_control_section_visible\",!0)?sn:[],...ln,...ve?un:[]];";
   if (!next.includes(marker)) {
     next = next.includes(oldVisibility)
       ? replaceExact(next, oldVisibility, newVisibility, "remote connections local setup visibility")
@@ -639,7 +662,9 @@ function patchRemoteConnectionsSettingsVisibility(text) {
         ? replaceExact(next, oldVisibility2611, newVisibility2611, "remote connections local setup visibility")
         : next.includes(oldVisibility2616)
           ? replaceExact(next, oldVisibility2616, newVisibility2616, "remote connections local setup visibility")
-          : replaceExact(next, oldVisibility2623, newVisibility2623, "remote connections local setup visibility");
+          : next.includes(oldVisibility2623)
+            ? replaceExact(next, oldVisibility2623, newVisibility2623, "remote connections local setup visibility")
+            : replaceExact(next, oldVisibility26707, newVisibility26707, "remote connections local setup visibility");
     changed = true;
   }
   if (!next.includes(sectionMarker)) {
@@ -652,20 +677,13 @@ function patchRemoteConnectionsSettingsVisibility(text) {
     const oldSection2623 = "H=jn(),W=!p,";
     const newSection2623 =
       "H=(void\"remote_control_settings_force_remote_control_section_visible\",!0),W=!p,";
-    next = replaceExact(
-      next,
-      next.includes(oldSection2611)
-        ? oldSection2611
-        : next.includes(oldSection2616)
-          ? oldSection2616
-          : oldSection2623,
-      next.includes(oldSection2611)
-        ? newSection2611
-        : next.includes(oldSection2616)
-          ? newSection2616
-          : newSection2623,
-      "remote connections remote-control section visibility"
-    );
+    next = next.includes(oldSection2611)
+      ? replaceExact(next, oldSection2611, newSection2611, "remote connections remote-control section visibility")
+      : next.includes(oldSection2616)
+        ? replaceExact(next, oldSection2616, newSection2616, "remote connections remote-control section visibility")
+        : next.includes(oldSection2623)
+          ? replaceExact(next, oldSection2623, newSection2623, "remote connections remote-control section visibility")
+          : next;
     changed = true;
   }
   if (!next.includes(marker) || !next.includes(sectionMarker) || !next.includes("showControlThisMacTab")) {
@@ -680,11 +698,6 @@ for (const [name, patcher] of [
   ["flowHelpers", patchFlowHelpers],
   ["desktopFetch", patchDesktopFetch],
   ["appServerAuthFallback", patchAppServerAuthFallback],
-  ["stepUpFlow", patchStepUpFlow],
-  ["httpDiagnostics", patchRemoteControlHttp],
-  ["authorizeFlow", patchRemoteControlAuthorize],
-  ["deviceKeyCreationLogs", patchDeviceKeyCreationLogs],
-  ["softwareDeviceKeyFallback", patchSoftwareDeviceKeyFallback],
 ]) {
   const result = patcher(mainText);
   mainText = result.text;
@@ -693,15 +706,9 @@ for (const [name, patcher] of [
 
 for (const marker of [
   "remote_control_flow_log_ready",
+  "remote_control_desktop_fetch_override_used",
   "remote_control_appserver_bh_isolated_auth_fallback",
   "remote_control_connection_auth_fallback_used",
-  "remote_control_step_up_cached_reused",
-  "remote_control_oauth_store_write",
-  "remote_control_http_response",
-  "remote_control_qm_start",
-  "remote_control_create_device_key_start",
-  "software_device_key_async_fallback",
-  "__codexSoftwareRemoteControlDeviceKeyClient",
 ]) {
   if (!mainText.includes(marker)) {
     throw new Error(`main bundle marker missing after patch: ${marker}`);

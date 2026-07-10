@@ -7,61 +7,56 @@
   <style>
     :root {
       color-scheme: light;
-      --bg: #f6f7f9;
+      --bg: #f5f7fb;
       --panel: #ffffff;
-      --line: #d9dee7;
-      --text: #17202a;
-      --muted: #5d6878;
+      --line: #d9e0ea;
+      --text: #16202a;
+      --muted: #5f6b7a;
       --strong: #0f1720;
-      --green: #0f7b4f;
-      --green-bg: #e7f5ee;
-      --yellow: #8a6100;
-      --yellow-bg: #fff4d7;
-      --red: #b42318;
-      --red-bg: #fde8e5;
       --blue: #155eef;
-      --blue-bg: #eaf1ff;
-      --ink-bg: #eef1f5;
+      --blue-bg: #edf3ff;
+      --green: #067647;
+      --green-bg: #e8f6ef;
+      --yellow: #8a6100;
+      --yellow-bg: #fff4d6;
+      --red: #b42318;
+      --red-bg: #fdeceb;
       font-family: "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
     }
 
-    * {
-      box-sizing: border-box;
-    }
+    * { box-sizing: border-box; }
 
     body {
       margin: 0;
       background: var(--bg);
       color: var(--text);
       font-size: 15px;
-      letter-spacing: 0;
     }
 
-    button, input {
+    button {
       font: inherit;
       letter-spacing: 0;
     }
 
     .page {
-      max-width: 1160px;
+      max-width: 1240px;
       margin: 0 auto;
-      padding: 28px 20px 36px;
+      padding: 24px 18px 36px;
     }
 
-    .topbar {
+    .header {
       display: flex;
       align-items: flex-start;
       justify-content: space-between;
       gap: 16px;
-      margin-bottom: 18px;
+      margin-bottom: 16px;
     }
 
-    h1 {
+    .title {
       margin: 0;
-      color: var(--strong);
       font-size: 28px;
       line-height: 1.2;
-      font-weight: 700;
+      color: var(--strong);
     }
 
     .subtitle {
@@ -72,9 +67,8 @@
 
     .toolbar {
       display: flex;
-      align-items: center;
-      gap: 10px;
       flex-wrap: wrap;
+      gap: 10px;
       justify-content: flex-end;
     }
 
@@ -89,8 +83,7 @@
     }
 
     .button:hover {
-      border-color: #aeb7c6;
-      background: #fdfdfd;
+      border-color: #b2bcc9;
     }
 
     .button.primary {
@@ -103,172 +96,123 @@
       background: #0f4fca;
     }
 
-    .timestamp {
-      min-width: 190px;
-      color: var(--muted);
-      text-align: right;
-      font-size: 13px;
-      line-height: 1.4;
-    }
-
-    .status-band {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--panel);
-      padding: 18px;
+    .banner {
+      display: none;
       margin-bottom: 16px;
-      display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 16px;
-      align-items: center;
-    }
-
-    .status-title {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      flex-wrap: wrap;
-      margin-bottom: 8px;
-    }
-
-    .state-name {
-      font-size: 22px;
-      font-weight: 700;
-      color: var(--strong);
-    }
-
-    .badge {
-      display: inline-flex;
-      align-items: center;
-      min-height: 26px;
-      padding: 3px 9px;
-      border-radius: 999px;
-      font-size: 13px;
-      font-weight: 600;
-      border: 1px solid transparent;
-      white-space: nowrap;
-    }
-
-    .badge.good {
-      color: var(--green);
-      background: var(--green-bg);
-      border-color: #b9e4cf;
-    }
-
-    .badge.wait {
-      color: var(--yellow);
-      background: var(--yellow-bg);
-      border-color: #f2d890;
-    }
-
-    .badge.bad {
-      color: var(--red);
-      background: var(--red-bg);
-      border-color: #f5bbb5;
-    }
-
-    .badge.info {
-      color: var(--blue);
-      background: var(--blue-bg);
-      border-color: #bfd2ff;
-    }
-
-    .summary {
-      color: var(--muted);
-      line-height: 1.5;
-      max-width: 780px;
-    }
-
-    .quick-flags {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(110px, 1fr));
-      gap: 8px;
-      min-width: 330px;
-    }
-
-    .flag {
-      background: var(--ink-bg);
-      border: 1px solid var(--line);
+      padding: 14px 16px;
       border-radius: 8px;
-      padding: 10px;
+      border: 1px solid #b7d3c2;
+      background: var(--green-bg);
+      color: #115c3b;
+      line-height: 1.5;
     }
 
-    .flag-label {
-      color: var(--muted);
-      font-size: 12px;
-      margin-bottom: 4px;
+    .error {
+      display: none;
+      margin-bottom: 16px;
+      padding: 12px 14px;
+      border-radius: 8px;
+      border: 1px solid #efb8b2;
+      background: var(--red-bg);
+      color: var(--red);
     }
 
-    .flag-value {
-      color: var(--strong);
-      font-weight: 700;
-    }
-
-    .grid {
+    .status-bar {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(320px, 0.72fr);
-      gap: 16px;
-      align-items: start;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
     }
 
+    .status-card,
     .panel {
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 8px;
+    }
+
+    .status-card {
+      padding: 14px;
+    }
+
+    .label {
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 6px;
+    }
+
+    .value {
+      color: var(--strong);
+      font-size: 18px;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
+    .value.small {
+      font-size: 15px;
+      font-weight: 600;
+    }
+
+    .state-good { color: var(--green); }
+    .state-wait { color: var(--yellow); }
+    .state-bad { color: var(--red); }
+    .state-info { color: var(--blue); }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+      gap: 16px;
+    }
+
+    .panel {
       padding: 16px;
       min-width: 0;
     }
 
     .panel h2 {
       margin: 0 0 12px;
-      color: var(--strong);
       font-size: 16px;
-      line-height: 1.3;
+      color: var(--strong);
     }
 
     .kv {
       display: grid;
-      grid-template-columns: minmax(118px, 0.42fr) minmax(0, 1fr);
-      gap: 8px 12px;
+      grid-template-columns: 160px minmax(0, 1fr);
+      gap: 10px 12px;
       align-items: start;
     }
 
     .k {
       color: var(--muted);
-      min-width: 0;
     }
 
     .v {
       color: var(--text);
-      min-width: 0;
       overflow-wrap: anywhere;
     }
 
-    .action-box {
-      border: 1px solid #b9c9f5;
-      background: var(--blue-bg);
+    .hint {
+      margin-top: 12px;
+      padding: 12px;
       border-radius: 8px;
-      padding: 14px;
-      line-height: 1.5;
+      background: var(--blue-bg);
+      border: 1px solid #c5d8ff;
       color: #12306d;
-    }
-
-    .action-box strong {
-      color: #0f2460;
+      line-height: 1.5;
     }
 
     .command {
-      margin-top: 10px;
-      padding: 10px;
+      margin-top: 12px;
+      padding: 12px;
       border-radius: 8px;
-      background: #121820;
-      color: #edf4ff;
+      background: #101820;
+      color: #e4edf8;
       font-family: Consolas, "Cascadia Mono", monospace;
       font-size: 12px;
-      line-height: 1.45;
-      overflow-x: auto;
+      line-height: 1.5;
       white-space: pre-wrap;
       overflow-wrap: anywhere;
+      display: none;
     }
 
     .log {
@@ -280,46 +224,23 @@
       font-family: Consolas, "Cascadia Mono", monospace;
       font-size: 12px;
       line-height: 1.55;
-      max-height: 340px;
-      overflow: auto;
       white-space: pre-wrap;
+      max-height: 420px;
+      overflow: auto;
     }
 
-    .muted {
+    .footer {
+      margin-top: 12px;
       color: var(--muted);
+      font-size: 13px;
     }
 
-    .error {
-      border: 1px solid #f0b9b4;
-      background: var(--red-bg);
-      color: var(--red);
-      border-radius: 8px;
-      padding: 12px;
-      margin-bottom: 16px;
-      display: none;
-    }
-
-    @media (max-width: 860px) {
-      .topbar,
-      .status-band {
-        grid-template-columns: 1fr;
-        display: grid;
-      }
-
-      .toolbar {
-        justify-content: flex-start;
-      }
-
-      .timestamp {
-        text-align: left;
+    @media (max-width: 980px) {
+      .status-bar {
+        grid-template-columns: 1fr 1fr;
       }
 
       .grid {
-        grid-template-columns: 1fr;
-      }
-
-      .quick-flags {
-        min-width: 0;
         grid-template-columns: 1fr;
       }
 
@@ -327,68 +248,78 @@
         grid-template-columns: 1fr;
       }
     }
+
+    @media (max-width: 720px) {
+      .header {
+        flex-direction: column;
+      }
+
+      .toolbar {
+        justify-content: flex-start;
+      }
+
+      .status-bar {
+        grid-template-columns: 1fr;
+      }
+    }
   </style>
 </head>
 <body>
   <main class="page">
-    <div class="topbar">
+    <div class="header">
       <div>
-        <h1>小守卫状态面板</h1>
-        <div class="subtitle">Codex Desktop Guard。这里只显示状态，不会关闭 Desktop，也不会安装补丁。</div>
+        <h1 class="title">小守卫状态面板</h1>
+        <div class="subtitle">Web 面板是主观察界面。计划任务和“立即检查”默认静默运行，不会弹 PowerShell 窗口。</div>
       </div>
       <div class="toolbar">
-        <button class="button primary" id="refreshButton" type="button">刷新状态</button>
-        <div class="timestamp" id="checkedAt">尚未刷新</div>
+        <button class="button primary" id="refreshButton" type="button">Refresh</button>
+        <button class="button" id="runCheckButton" type="button">Run Check Now</button>
+        <button class="button" id="openLogsButton" type="button">Open Logs</button>
+        <button class="button" id="openStagingButton" type="button">Open Staging</button>
       </div>
     </div>
 
+    <div class="banner" id="restartBanner"></div>
     <div class="error" id="errorBox"></div>
 
-    <section class="status-band" aria-label="当前状态">
-      <div>
-        <div class="status-title">
-          <span class="state-name" id="stateLabel">读取中</span>
-          <span class="badge info" id="reasonBadge">等待数据</span>
-        </div>
-        <div class="summary" id="summaryText">正在读取小守卫状态。</div>
+    <section class="status-bar" aria-label="状态条">
+      <div class="status-card">
+        <div class="label">State</div>
+        <div class="value" id="stateValue">读取中</div>
       </div>
-      <div class="quick-flags">
-        <div class="flag">
-          <div class="flag-label">安全边界</div>
-          <div class="flag-value" id="safeFlag">-</div>
-        </div>
-        <div class="flag">
-          <div class="flag-label">是否需要安装</div>
-          <div class="flag-value" id="applyFlag">-</div>
-        </div>
-        <div class="flag">
-          <div class="flag-label">Desktop 进程</div>
-          <div class="flag-value" id="desktopCount">-</div>
-        </div>
+      <div class="status-card">
+        <div class="label">Step</div>
+        <div class="value small" id="stepValue">-</div>
+      </div>
+      <div class="status-card">
+        <div class="label">Last Run</div>
+        <div class="value small" id="lastRunValue">-</div>
+      </div>
+      <div class="status-card">
+        <div class="label">Safe</div>
+        <div class="value small" id="safeValue">-</div>
+      </div>
+      <div class="status-card">
+        <div class="label">Needs Action</div>
+        <div class="value small" id="needsActionValue">-</div>
       </div>
     </section>
 
     <section class="grid">
       <div class="panel">
-        <h2>下一步</h2>
-        <div class="action-box">
-          <strong id="actionTitle">等待状态</strong>
-          <div id="actionText">状态读取完成后这里会显示下一步。</div>
-          <div class="command" id="commandBox" hidden></div>
-        </div>
+        <h2>当前任务卡</h2>
+        <div class="kv" id="taskCard"></div>
+        <div class="hint" id="userActionBox">状态读取完成后，这里会显示下一步动作。</div>
+        <div class="command" id="applyCommandBox"></div>
       </div>
 
       <div class="panel">
-        <h2>计划任务</h2>
-        <div class="kv" id="taskGrid"></div>
+        <h2>任务与来源</h2>
+        <div class="kv" id="metaCard"></div>
+        <div class="footer" id="checkedAtText">尚未刷新</div>
       </div>
 
-      <div class="panel">
-        <h2>状态细节</h2>
-        <div class="kv" id="detailGrid"></div>
-      </div>
-
-      <div class="panel">
+      <div class="panel" style="grid-column: 1 / -1;">
         <h2>最近日志</h2>
         <pre class="log" id="logBox">暂无日志</pre>
       </div>
@@ -396,30 +327,32 @@
   </main>
 
   <script>
-    const stateLabels = {
-      not_installed: '未安装计划任务',
+    const stateNames = {
+      not_installed: '未安装任务',
       idle: '空闲值班中',
       watching: '正在观察更新',
       config_change_only: '只发现配置变化',
-      waiting_for_update_payload: '等待更新包出现',
-      waiting_for_external_payload: '等待外部更新包',
-      patched_update_ready: '新补丁包已准备好',
-      current_version_ready: '当前版本保护包已准备好',
-      ready: '补丁 staging 已准备好',
+      waiting_for_update_payload: '等待更新候选',
+      waiting_for_external_payload: '等待外部来源',
+      waiting_for_raw_package_source: '等待 raw 包来源',
+      patched_update_ready: '补丁更新已就绪',
+      current_version_ready: '当前版本保护包已就绪',
+      ready: '补丁 staging 已就绪',
       needs_action: '需要人工处理',
       prepare_failed: '准备失败',
       unknown: '状态未知'
     };
 
-    const reasonLabels = {
-      store_offline_authorization_required: 'Store 离线授权边界',
-      needs_update_source: '需要更新来源',
-      waiting_for_update_payload: '等待 payload',
-      config_change_only: '配置 hash 变化',
-      patched_update_ready: '已生成 patched update',
-      current_version_ready: '当前版本保护',
-      task_enabled_no_action_marker: '计划任务正常',
-      scheduled_task_missing: '计划任务缺失'
+    const stepNames = {
+      waiting_for_restart: 'waiting_for_restart',
+      ready_to_apply: 'ready_to_apply',
+      acquiring_raw_package: 'acquiring_raw_package',
+      discovering_update_candidate: 'discovering_update_candidate',
+      watching_for_update_activity: 'watching_for_update_activity',
+      config_change_only: 'config_change_only',
+      manual_intervention_required: 'manual_intervention_required',
+      idle: 'idle',
+      prepare_failed: 'prepare_failed'
     };
 
     function byId(id) {
@@ -433,53 +366,15 @@
       return String(value);
     }
 
-    function boolText(value) {
+    function yesNo(value) {
       return value ? '是' : '否';
     }
 
-    function badgeClass(state) {
-      if (state === 'patched_update_ready' || state === 'ready') return 'good';
-      if (state === 'prepare_failed' || state === 'needs_action') return 'bad';
-      if (state === 'waiting_for_external_payload' || state === 'waiting_for_update_payload') return 'wait';
-      return 'info';
-    }
-
-    function stateSummary(data) {
-      if (data.State === 'waiting_for_external_payload' && data.Reason === 'store_offline_authorization_required') {
-        return '本机已经碰到 Microsoft Store 离线包的授权边界。小守卫不会继续重复下载，正在等你导入干净 Windows / VM 导出的官方 payload。';
-      }
-      if (data.State === 'config_change_only') {
-        return '只发现 Codex 配置文件的 hash 或长度变化。小守卫没有读取配置正文，也没有启动 native build。';
-      }
-      if (data.State === 'patched_update_ready') {
-        return '新版本 payload 已经修复并打包。先关闭 Codex Desktop，再从外部 PowerShell 或 VS Code Codex 执行 apply。';
-      }
-      if (data.State === 'current_version_ready') {
-        return '当前版本保护包已经准备好。这不是新版本更新包，只能用于同版本保护。';
-      }
-      if (data.State === 'prepare_failed') {
-        return '上一次准备失败。请查看事件专属 PREPARE_FAILED 文件和 staging 日志。';
-      }
-      if (data.State === 'idle') {
-        return '小守卫计划任务已安装，当前没有需要处理的 marker。';
-      }
-      return text(data.UserAction, '小守卫状态已读取。');
-    }
-
-    function actionText(data) {
-      if (data.State === 'waiting_for_external_payload' && data.Reason === 'store_offline_authorization_required') {
-        return '请从干净 Windows / VM 导出官方 Codex payload zip，再导入这台机器。导入前不用关闭 Codex Desktop。';
-      }
-      if (data.State === 'patched_update_ready') {
-        return '新版本补丁包已经准备好。先关闭 Codex Desktop，再从外部 PowerShell 或 VS Code Codex 执行 apply 命令。';
-      }
-      if (data.State === 'config_change_only') {
-        return '这是配置 hash 变化，不需要操作。小守卫不会为这种变化重建补丁。';
-      }
-      if (data.State === 'prepare_failed') {
-        return '准备过程失败了。请打开事件专属 PREPARE_FAILED 文件和 staging 日志查看原因。';
-      }
-      return text(data.UserAction, '暂无动作。');
+    function stateClass(state) {
+      if (state === 'patched_update_ready' || state === 'ready') return 'state-good';
+      if (state === 'prepare_failed' || state === 'needs_action') return 'state-bad';
+      if (state === 'waiting_for_raw_package_source' || state === 'waiting_for_update_payload') return 'state-wait';
+      return 'state-info';
     }
 
     function renderKv(container, rows) {
@@ -495,78 +390,132 @@
       }
     }
 
+    function restartPrompt(data) {
+      return data.State === 'patched_update_ready' || data.Step === 'waiting_for_restart';
+    }
+
     function render(data) {
       byId('errorBox').style.display = 'none';
-      const label = stateLabels[data.State] || data.State || '状态未知';
-      const reason = reasonLabels[data.Reason] || data.Reason || '无';
-      byId('stateLabel').textContent = label;
-      const badge = byId('reasonBadge');
-      badge.textContent = reason;
-      badge.className = 'badge ' + badgeClass(data.State);
-      byId('summaryText').textContent = stateSummary(data);
-      byId('safeFlag').textContent = data.Safe ? '正常' : '需要检查';
-      byId('applyFlag').textContent = data.ApplyPending ? '需要外部 apply' : '不需要';
-      byId('desktopCount').textContent = text(data.DesktopProcessCount, '0');
-      byId('checkedAt').textContent = '刷新时间：' + text(data.CheckedAt);
 
-      byId('actionTitle').textContent = data.ApplyPending ? '先关闭 Codex Desktop' : '当前动作';
-      byId('actionText').textContent = actionText(data);
-      const command = data.ApplyCommand || data.ImportCommand || '';
-      const commandBox = byId('commandBox');
-      if (command) {
-        commandBox.hidden = false;
-        commandBox.textContent = command;
+      const stateLabel = stateNames[data.State] || data.State || '状态未知';
+      const stepLabel = stepNames[data.Step] || data.Step || '无';
+      const stateValue = byId('stateValue');
+      stateValue.textContent = stateLabel;
+      stateValue.className = 'value ' + stateClass(data.State);
+
+      byId('stepValue').textContent = stepLabel;
+      byId('lastRunValue').textContent = text(data.Task && data.Task.LastRunTime, text(data.CheckedAt));
+      byId('safeValue').textContent = data.Safe ? '是' : '否';
+      byId('needsActionValue').textContent = data.NeedsAction ? '是' : '否';
+
+      renderKv(byId('taskCard'), [
+        ['Event ID', data.EventId],
+        ['Current Package Version', data.CurrentPackageVersion],
+        ['Candidate Update Version', data.CandidateUpdateVersion],
+        ['Update Source', data.UpdateSource],
+        ['Current Step', stepLabel],
+        ['Last Error Summary', data.LastErrorSummary],
+        ['User Action', data.UserAction]
+      ]);
+
+      renderKv(byId('metaCard'), [
+        ['Mirror Source Enabled', yesNo(data.MirrorSourceEnabled)],
+        ['Mirror Package URL', data.MirrorPackageUrl],
+        ['Latest Notification', data.LatestNotification && data.LatestNotification.Name],
+        ['Task State', data.Task && data.Task.State],
+        ['Next Run', data.Task && data.Task.NextRunTime],
+        ['Apply Pending', yesNo(data.ApplyPending)],
+        ['Desktop Process Count', data.DesktopProcessCount]
+      ]);
+
+      byId('userActionBox').textContent = text(data.UserAction, '暂无动作。');
+      byId('checkedAtText').textContent = '刷新时间：' + text(data.CheckedAt);
+
+      const commandBox = byId('applyCommandBox');
+      if (data.ApplyCommand) {
+        commandBox.style.display = 'block';
+        commandBox.textContent = data.ApplyCommand;
       } else {
-        commandBox.hidden = true;
+        commandBox.style.display = 'none';
         commandBox.textContent = '';
       }
 
-      renderKv(byId('taskGrid'), [
-        ['已安装', boolText(data.Task && data.Task.Installed)],
-        ['已启用', boolText(data.Task && data.Task.Enabled)],
-        ['任务状态', data.Task && data.Task.State],
-        ['上次运行', data.Task && data.Task.LastRunTime],
-        ['下次运行', data.Task && data.Task.NextRunTime],
-        ['退出码', data.Task && data.Task.LastTaskResult]
-      ]);
-
-      renderKv(byId('detailGrid'), [
-        ['事件', data.EventId],
-        ['状态', (stateLabels[data.State] || data.State) + ' (' + text(data.State) + ')'],
-        ['原因', (reasonLabels[data.Reason] || data.Reason || '无') + ' (' + text(data.Reason) + ')'],
-        ['incoming payload', data.IncomingPayloadCandidateCount],
-        ['最新通知', data.LatestNotification && data.LatestNotification.Name],
-        ['状态目录', data.StateRoot]
-      ]);
+      const restartBanner = byId('restartBanner');
+      if (restartPrompt(data)) {
+        restartBanner.style.display = 'block';
+        restartBanner.textContent = '现在请关闭并重启 Codex Desktop。补丁更新包已经准备好，接下来请从外部 PowerShell 执行 apply。';
+      } else {
+        restartBanner.style.display = 'none';
+        restartBanner.textContent = '';
+      }
 
       const lines = Array.isArray(data.RecentLog) ? data.RecentLog : [];
       byId('logBox').textContent = lines.length ? lines.join('\n') : '暂无日志';
     }
 
-    async function refresh() {
+    function showError(message) {
+      const box = byId('errorBox');
+      box.style.display = 'block';
+      box.textContent = message;
+    }
+
+    async function getJson(path) {
+      const response = await fetch(path, { cache: 'no-store' });
+      if (!response.ok) {
+        throw new Error('HTTP ' + response.status);
+      }
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        return response.json();
+      }
+      return {};
+    }
+
+    async function refreshStatus() {
       const button = byId('refreshButton');
       button.disabled = true;
-      button.textContent = '刷新中';
+      button.textContent = 'Refreshing';
       try {
-        const response = await fetch('/api/status', { cache: 'no-store' });
-        if (!response.ok) {
-          throw new Error('HTTP ' + response.status);
-        }
-        const data = await response.json();
+        const data = await getJson('/api/status');
         render(data);
       } catch (error) {
-        const box = byId('errorBox');
-        box.style.display = 'block';
-        box.textContent = '读取状态失败：' + error.message;
+        showError('读取状态失败：' + error.message);
       } finally {
         button.disabled = false;
-        button.textContent = '刷新状态';
+        button.textContent = 'Refresh';
       }
     }
 
-    byId('refreshButton').addEventListener('click', refresh);
-    refresh();
-    window.setInterval(refresh, 15000);
+    async function runCheckNow() {
+      const button = byId('runCheckButton');
+      button.disabled = true;
+      button.textContent = 'Running';
+      try {
+        await getJson('/api/run-check');
+      } catch (error) {
+        showError('静默触发检查失败：' + error.message);
+      } finally {
+        button.disabled = false;
+        button.textContent = 'Run Check Now';
+        window.setTimeout(refreshStatus, 1200);
+      }
+    }
+
+    async function openPath(path) {
+      try {
+        await getJson(path);
+      } catch (error) {
+        showError('打开失败：' + error.message);
+      }
+    }
+
+    byId('refreshButton').addEventListener('click', refreshStatus);
+    byId('runCheckButton').addEventListener('click', runCheckNow);
+    byId('openLogsButton').addEventListener('click', () => openPath('/api/open-logs'));
+    byId('openStagingButton').addEventListener('click', () => openPath('/api/open-staging'));
+
+    refreshStatus();
+    window.setInterval(refreshStatus, 15000);
   </script>
 </body>
 </html>

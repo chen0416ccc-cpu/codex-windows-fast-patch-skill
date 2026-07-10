@@ -103,7 +103,7 @@ function Get-CodexExeVersionFromPath {
     if ($capture.ExitCode -ne 0) {
       throw "codex.exe --version exited with $($capture.ExitCode): $($capture.Stderr)"
     }
-    if ($versionOutput -match 'codex-cli\s+([0-9]+\.[0-9]+\.[0-9]+)') {
+    if ($versionOutput -match 'codex-cli\s+([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)') {
       $version = $Matches[1]
     }
   } catch {
@@ -348,6 +348,27 @@ if (
       Path = $acquireScript
       Error = 'acquire script not found'
     })
+  }
+}
+
+$usableCandidates = @($candidates | Where-Object { $_.Usable } | Sort-Object PackageVersion -Descending)
+if (
+  $usableCandidates.Count -eq 0 -and
+  $acquire -and
+  $acquire.Status -eq 'update_source_ready' -and
+  $acquire.UnpackedPayloadRoots
+) {
+  $fallbackRoot = [string](@($acquire.UnpackedPayloadRoots | Select-Object -First 1).Path)
+  if (-not [string]::IsNullOrWhiteSpace($fallbackRoot)) {
+    try {
+      $candidates.Add((New-DirectoryCandidate -Root $fallbackRoot -Source 'acquire_primary_payload'))
+    } catch {
+      $errors.Add([pscustomobject]@{
+        Source = 'acquire_primary_payload'
+        Path = $fallbackRoot
+        Error = $_.Exception.Message
+      })
+    }
   }
 }
 

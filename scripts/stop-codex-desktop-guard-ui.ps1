@@ -12,6 +12,18 @@ Assert-GuardWindows
 $paths = New-GuardDirectorySet -StateRoot $StateRoot
 $serverPath = Join-Path $paths.Root 'ui\server.json'
 
+function Read-UiServerRecord {
+  if (-not (Test-Path -LiteralPath $serverPath -PathType Leaf)) {
+    return $null
+  }
+  try {
+    return Read-GuardJsonFile -Path $serverPath
+  } catch {
+    Remove-Item -LiteralPath $serverPath -Force -ErrorAction SilentlyContinue
+    return $null
+  }
+}
+
 function Write-StopResult {
   param([object]$Result)
   if ($Json) {
@@ -21,7 +33,7 @@ function Write-StopResult {
   }
 }
 
-$server = Read-GuardJsonFile -Path $serverPath
+$server = Read-UiServerRecord
 if (-not $server -or -not $server.Pid) {
   Write-StopResult ([pscustomobject]@{
     Status = 'not_running'
@@ -32,7 +44,7 @@ if (-not $server -or -not $server.Pid) {
 }
 
 $pidValue = [int]$server.Pid
-$process = Get-CimInstance Win32_Process -Filter "ProcessId = $pidValue" -ErrorAction SilentlyContinue
+$process = Get-Process -Id $pidValue -ErrorAction SilentlyContinue
 if (-not $process) {
   Remove-Item -LiteralPath $serverPath -Force -ErrorAction SilentlyContinue
   Write-StopResult ([pscustomobject]@{
@@ -42,11 +54,6 @@ if (-not $process) {
     ServerPath = $serverPath
   })
   return
-}
-
-$commandLine = [string]$process.CommandLine
-if ($commandLine -notlike '*start-codex-desktop-guard-ui.ps1*' -or $commandLine -notlike '*-Foreground*') {
-  throw "Refusing to stop PID $pidValue because it does not look like the guard UI server."
 }
 
 Stop-Process -Id $pidValue -Force

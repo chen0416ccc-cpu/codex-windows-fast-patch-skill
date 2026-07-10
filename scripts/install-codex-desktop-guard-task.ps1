@@ -16,9 +16,9 @@ if ($IntervalMinutes -lt 5) {
   throw 'IntervalMinutes must be at least 5.'
 }
 $state = Initialize-GuardState -StateRoot $StateRoot
-$watchScript = Join-Path $ScriptRoot 'watch-codex-desktop.ps1'
-if (-not (Test-Path -LiteralPath $watchScript -PathType Leaf)) {
-  throw "watch script not found: $watchScript"
+$runnerScript = Join-Path $ScriptRoot 'run-codex-desktop-guard-check.ps1'
+if (-not (Test-Path -LiteralPath $runnerScript -PathType Leaf)) {
+  throw "guard runner script not found: $runnerScript"
 }
 
 $existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
@@ -31,10 +31,12 @@ if ($existing) {
 
 $arguments = @(
   '-NoProfile',
+  '-WindowStyle',
+  'Hidden',
   '-ExecutionPolicy',
   'Bypass',
   '-File',
-  (ConvertTo-GuardWindowsCommandArgument $watchScript),
+  (ConvertTo-GuardWindowsCommandArgument $runnerScript),
   '-StateRoot',
   (ConvertTo-GuardWindowsCommandArgument $state.Paths.Root)
 )
@@ -55,5 +57,5 @@ Write-GuardLog -State $state -LogName 'task.log' -Message "installed scheduled t
   TaskName = $TaskName
   IntervalMinutes = $IntervalMinutes
   StateRoot = $state.Paths.Root
-  WatchScript = $watchScript
+  RunnerScript = $runnerScript
 } | ConvertTo-Json

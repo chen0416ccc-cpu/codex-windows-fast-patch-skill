@@ -13,6 +13,9 @@ $ScriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $My
 
 Assert-GuardWindows
 $paths = New-GuardDirectorySet -StateRoot $StateRoot
+$guardState = [pscustomobject]@{
+  Paths = $paths
+}
 
 function ConvertTo-GuardCheckSingleLine {
   param([AllowNull()][string]$Text)
@@ -117,7 +120,14 @@ function Get-GuardCheckLatestStagingManifest {
   if (-not (Test-Path -LiteralPath $paths.Staging -PathType Container)) {
     return $null
   }
-  $manifest = Get-ChildItem -LiteralPath $paths.Staging -Recurse -File -Filter 'manifest.json' -ErrorAction SilentlyContinue |
+  $manifest = Get-ChildItem -LiteralPath $paths.Staging -Directory -ErrorAction SilentlyContinue |
+    ForEach-Object {
+      $candidate = Join-Path $_.FullName 'manifest.json'
+      if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+        Get-Item -LiteralPath $candidate -ErrorAction SilentlyContinue
+      }
+    } |
+    Where-Object { $null -ne $_ } |
     Sort-Object LastWriteTimeUtc -Descending |
     Select-Object -First 1
   if (-not $manifest) {
@@ -149,21 +159,25 @@ function Get-GuardCheckReadyManifest {
     return $null
   }
   $matches = New-Object System.Collections.Generic.List[object]
+  $stagingDirs = @(Get-ChildItem -LiteralPath $paths.Staging -Directory -ErrorAction SilentlyContinue)
   foreach ($candidate in $candidates) {
-    Get-ChildItem -LiteralPath $paths.Staging -Recurse -File -Filter $candidate.Marker -ErrorAction SilentlyContinue |
-      ForEach-Object {
-        $manifestPath = Join-Path $_.DirectoryName 'manifest.json'
+    foreach ($dir in $stagingDirs) {
+      $markerPath = Join-Path $dir.FullName $candidate.Marker
+      if (-not (Test-Path -LiteralPath $markerPath -PathType Leaf)) {
+        continue
+      }
+      $manifestPath = Join-Path $dir.FullName 'manifest.json'
         if (Test-Path -LiteralPath $manifestPath -PathType Leaf) {
           $manifest = Read-GuardJsonFile -Path $manifestPath
           $matches.Add([pscustomobject]@{
             State = $candidate.State
-            Marker = $_.FullName
-            MarkerTimeUtc = $_.LastWriteTimeUtc
+            Marker = $markerPath
+            MarkerTimeUtc = (Get-Item -LiteralPath $markerPath).LastWriteTimeUtc
             ManifestPath = $manifestPath
             Manifest = $manifest
           })
         }
-      }
+    }
   }
   $latest = $matches | Sort-Object MarkerTimeUtc -Descending | Select-Object -First 1
   if (-not $latest) {
@@ -178,6 +192,83 @@ function Get-GuardCheckReadyManifest {
     ApplyCommand = if ($latest.Manifest.ApplyCommand) { [string]$latest.Manifest.ApplyCommand } else { $null }
     StagingDir = if ($latest.Manifest.StagingDir) { [string]$latest.Manifest.StagingDir } else { Split-Path -Parent $latest.ManifestPath }
   }
+}
+
+function Get-GuardCheckPreferredManifestData {
+  param(
+    [AllowNull()][object]$ReadyManifest,
+    [AllowNull()][object]$LatestManifest
+  )
+  $manifestPath = if ($ReadyManifest -and $ReadyManifest.ManifestPath) {
+    [string]$ReadyManifest.ManifestPath
+  } elseif ($LatestManifest -and $LatestManifest.Path) {
+    [string]$LatestManifest.Path
+  } else {
+    $null
+  }
+  if ([string]::IsNullOrWhiteSpace($manifestPath)) {
+    return $null
+  }
+  return Read-GuardJsonFile -Path $manifestPath
+}
+
+function Get-GuardCheckCurrentStep {
+  param(
+    [Parameter(Mandatory = $true)][string]$State,
+    [AllowNull()][object]$ManifestData,
+    [int]$DesktopProcessCount
+  )
+  if ($State -eq 'patched_update_ready') {
+    if ($DesktopProcessCount -gt 0) {
+      return 'waiting_for_restart'
+    }
+    return 'ready_to_apply'
+  }
+  switch ($State) {
+    'waiting_for_raw_package_source' { return 'acquiring_raw_package' }
+    'waiting_for_update_payload' { return 'discovering_update_candidate' }
+    'watching' { return 'watching_for_update_activity' }
+    'prepare_failed' { return 'prepare_failed' }
+    'needs_action' { return 'manual_intervention_required' }
+    'config_change_only' { return 'config_change_only' }
+    'idle' { return 'idle' }
+    default {
+      $status = Resolve-GuardPropertyPath -Object $ManifestData -Path 'Status'
+      if (-not [string]::IsNullOrWhiteSpace([string]$status)) {
+        return [string]$status
+      }
+      return $State
+    }
+  }
+}
+
+function Get-GuardCheckLastErrorSummary {
+  param(
+    [AllowNull()][object]$ManifestData,
+    [AllowNull()][string]$LatestNotificationText
+  )
+  $status = [string](Resolve-GuardPropertyPath -Object $ManifestData -Path 'Status')
+  $reason = [string](Resolve-GuardPropertyPath -Object $ManifestData -Path 'Reason')
+  $details = @(Resolve-GuardPropertyPath -Object $ManifestData -Path 'Details')
+  if ($status -in @('prepare_failed', 'needs_action', 'needs_update_source', 'waiting_for_update_payload', 'needs_update_payload')) {
+    $firstDetail = @($details | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -First 1)
+    if ($firstDetail.Count -gt 0) {
+      return [string]$firstDetail[0]
+    }
+    if (-not [string]::IsNullOrWhiteSpace($reason)) {
+      return $reason
+    }
+  }
+  if (-not [string]::IsNullOrWhiteSpace($LatestNotificationText)) {
+    $line = @(
+      $LatestNotificationText -split "`r?`n" |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    ) | Select-Object -First 1
+    if (-not [string]::IsNullOrWhiteSpace([string]$line)) {
+      return [string]$line
+    }
+  }
+  return $null
 }
 
 function Get-GuardCheckIncomingCount {
@@ -202,7 +293,8 @@ function Resolve-GuardCheckState {
     [string[]]$NotificationNames,
     [object]$ReadyManifest,
     [object]$LatestManifest,
-    [string[]]$RecentLog
+    [string[]]$RecentLog,
+    [object]$MirrorSettings
   )
   if (-not $Task.Installed) {
     return [pscustomobject]@{
@@ -239,10 +331,10 @@ function Resolve-GuardCheckState {
   }
   if ($NotificationNames -contains 'STORE_OFFLINE_AUTHORIZATION_REQUIRED.txt') {
     return [pscustomobject]@{
-      State = 'waiting_for_external_payload'
+      State = $(if ($MirrorSettings.Enabled) { 'waiting_for_raw_package_source' } else { 'waiting_for_external_payload' })
       Reason = 'store_offline_authorization_required'
       EventId = if ($LatestManifest) { $LatestManifest.EventId } else { $null }
-      UserAction = 'Import an official Codex payload exported from a clean Windows / VM sidecar.'
+      UserAction = $(if ($MirrorSettings.Enabled) { 'A configured mirror raw-package source is available; rerun watch now or wait for the next scheduled retry.' } else { 'Configure an authorized mirror that serves the official raw MSIX/MSIXBundle package, then rerun the guard.' })
       Safe = $true
       ApplyPending = $false
       DesktopTouched = $false
@@ -250,10 +342,10 @@ function Resolve-GuardCheckState {
   }
   if ($NotificationNames -contains 'NEEDS_UPDATE_SOURCE.txt') {
     return [pscustomobject]@{
-      State = 'waiting_for_external_payload'
+      State = $(if ($MirrorSettings.Enabled) { 'waiting_for_raw_package_source' } else { 'waiting_for_external_payload' })
       Reason = 'needs_update_source'
       EventId = if ($LatestManifest) { $LatestManifest.EventId } else { $null }
-      UserAction = 'Provide a usable OpenAI.Codex update payload under incoming or import a sidecar payload zip.'
+      UserAction = $(if ($MirrorSettings.Enabled) { 'Inspect the configured mirror raw-package source or rerun watch after the mirror is reachable.' } else { 'Configure an authorized mirror that serves the official raw MSIX/MSIXBundle package.' })
       Safe = $true
       ApplyPending = $false
       DesktopTouched = $false
@@ -264,7 +356,7 @@ function Resolve-GuardCheckState {
       State = 'waiting_for_update_payload'
       Reason = 'waiting_for_update_payload'
       EventId = if ($LatestManifest) { $LatestManifest.EventId } else { $null }
-      UserAction = 'Wait for a usable payload or import one from a clean sidecar.'
+      UserAction = 'Wait for the guard to acquire a usable raw official package, or rerun watch after the mirror/source is reachable.'
       Safe = $true
       ApplyPending = $false
       DesktopTouched = $false
@@ -366,6 +458,10 @@ function Write-GuardCheckText {
   Write-Host ("  Apply pending: {0}" -f ($(if ($Report.ApplyPending) { 'yes' } else { 'no' })))
   Write-Host ("  Desktop process count: {0}" -f $Report.DesktopProcessCount)
   Write-Host ("  Incoming payload candidates: {0}" -f $Report.IncomingPayloadCandidateCount)
+  Write-Host ("  Mirror source enabled: {0}" -f ($(if ($Report.MirrorSourceEnabled) { 'yes' } else { 'no' })))
+  if ($Report.MirrorPackageUrl) {
+    Write-Host ("  Mirror package URL: {0}" -f $Report.MirrorPackageUrl)
+  }
   Write-Host ''
   Write-Host 'Latest notification:'
   if ($Report.LatestNotification) {
@@ -381,11 +477,6 @@ function Write-GuardCheckText {
     Write-Host ''
     Write-Host 'Apply command:'
     Write-Host ("  {0}" -f $Report.ApplyCommand)
-  }
-  if ($Report.ImportCommand) {
-    Write-Host ''
-    Write-Host 'Import command:'
-    Write-Host ("  {0}" -f $Report.ImportCommand)
   }
   if (-not $NoLog) {
     Write-Host ''
@@ -406,15 +497,35 @@ $latestNotification = Get-GuardCheckLatestNotification
 $readyManifest = Get-GuardCheckReadyManifest
 $latestManifest = Get-GuardCheckLatestStagingManifest
 $recentLog = if ($NoLog) { @() } else { Get-GuardCheckRecentLog -LineCount $TailLines }
-$state = Resolve-GuardCheckState -Task $task -NotificationNames $notificationNames -ReadyManifest $readyManifest -LatestManifest $latestManifest -RecentLog $recentLog
+$mirrorSettings = Get-GuardMirrorFallbackSettings -State $guardState
+$state = Resolve-GuardCheckState -Task $task -NotificationNames $notificationNames -ReadyManifest $readyManifest -LatestManifest $latestManifest -RecentLog $recentLog -MirrorSettings $mirrorSettings
 $desktopProcessCount = Get-GuardCheckDesktopProcessCount
 $incomingCount = Get-GuardCheckIncomingCount
-$importScript = Join-Path $ScriptRoot 'import-codex-update-payload.ps1'
-$importCommand = if ($state.State -in @('waiting_for_external_payload', 'waiting_for_update_payload')) {
-  'powershell.exe -NoProfile -ExecutionPolicy Bypass -File {0} -PayloadZip <codex-payload.zip>' -f (ConvertTo-GuardWindowsCommandArgument $importScript)
-} else {
-  $null
+$latestNotificationText = if ($latestNotification) { Get-GuardCheckNotificationText -Name $latestNotification.Name } else { $null }
+$manifestData = Get-GuardCheckPreferredManifestData -ReadyManifest $readyManifest -LatestManifest $latestManifest
+$currentPackageVersion = [string](Resolve-GuardPropertyPath -Object $manifestData -Path 'Snapshot.Package.Version')
+if ([string]::IsNullOrWhiteSpace($currentPackageVersion)) {
+  $currentPackageVersion = [string](Resolve-GuardPropertyPath -Object $manifestData -Path 'Discovery.CurrentPackageVersion')
 }
+$candidateUpdateVersion = [string](Resolve-GuardPropertyPath -Object $manifestData -Path 'Payload.PackageVersion')
+if ([string]::IsNullOrWhiteSpace($candidateUpdateVersion)) {
+  $candidateUpdateVersion = [string](Resolve-GuardPropertyPath -Object $manifestData -Path 'Discovery.SelectedPayload.PackageVersion')
+}
+$updateSource = [string](Resolve-GuardPropertyPath -Object $manifestData -Path 'Discovery.Acquire.MirrorLabel')
+if (-not [string]::IsNullOrWhiteSpace($updateSource)) {
+  $mirrorUrl = [string](Resolve-GuardPropertyPath -Object $manifestData -Path 'Discovery.Acquire.MirrorPackageUrl')
+  if (-not [string]::IsNullOrWhiteSpace($mirrorUrl)) {
+    $updateSource = "$updateSource ($mirrorUrl)"
+  }
+} else {
+  $updateSource = [string](Resolve-GuardPropertyPath -Object $manifestData -Path 'Discovery.Acquire.Source')
+}
+if ([string]::IsNullOrWhiteSpace($updateSource) -and $mirrorSettings.Enabled -and -not [string]::IsNullOrWhiteSpace($mirrorSettings.Label)) {
+  $updateSource = [string]$mirrorSettings.Label
+}
+$currentStep = Get-GuardCheckCurrentStep -State $state.State -ManifestData $manifestData -DesktopProcessCount $desktopProcessCount
+$needsAction = ($state.State -in @('needs_action', 'prepare_failed')) -or ($currentStep -in @('waiting_for_restart', 'ready_to_apply'))
+$lastErrorSummary = Get-GuardCheckLastErrorSummary -ManifestData $manifestData -LatestNotificationText $latestNotificationText
 $applyCommand = if ($readyManifest -and $readyManifest.ApplyCommand -and $state.ApplyPending) {
   [string]$readyManifest.ApplyCommand
 } elseif ($latestManifest -and $latestManifest.ApplyCommand -and $state.ApplyPending) {
@@ -429,20 +540,32 @@ $report = [pscustomobject]@{
   StateRoot = $paths.Root
   State = $state.State
   Reason = $state.Reason
+  Step = $currentStep
   EventId = $state.EventId
   Safe = [bool]$state.Safe
+  NeedsAction = [bool]$needsAction
   DesktopTouched = [bool]$state.DesktopTouched
   ApplyPending = [bool]$state.ApplyPending
   UserAction = $state.UserAction
+  CurrentPackageVersion = $currentPackageVersion
+  CandidateUpdateVersion = $candidateUpdateVersion
+  UpdateSource = $updateSource
+  LastErrorSummary = $lastErrorSummary
   Task = $task
   DesktopProcessCount = $desktopProcessCount
   IncomingPayloadCandidateCount = $incomingCount
   LatestNotification = $latestNotification
+  LatestNotificationText = $latestNotificationText
   NotificationNames = $notificationNames
   LatestManifest = $latestManifest
   ReadyManifest = $readyManifest
   ApplyCommand = $applyCommand
-  ImportCommand = $importCommand
+  MirrorSourceEnabled = [bool]$mirrorSettings.Enabled
+  MirrorPackageUrl = $mirrorSettings.PackageUrl
+  MirrorLabel = $mirrorSettings.Label
+  OpenLogsPath = $paths.Logs
+  OpenStagingPath = if ($readyManifest -and $readyManifest.StagingDir) { [string]$readyManifest.StagingDir } elseif ($latestManifest -and $latestManifest.StagingDir) { [string]$latestManifest.StagingDir } else { $paths.Staging }
+  RunStatePath = (Join-Path $paths.Root 'ui\last-run.json')
   Paths = $paths
   RecentLog = $recentLog
 }

@@ -663,6 +663,77 @@ const { WindowsComputerUseClientBase } = await import(
   Write-Utf8NoBom $ClientPath ($content.Replace($oldImport, $replacement))
 }
 
+function Normalize-SkyDistPnpmImportPaths {
+  param([string]$DistPath)
+
+  if (-not (Test-Path -LiteralPath $DistPath -PathType Container)) {
+    return
+  }
+
+  $pattern = '(/\.pnpm/)([^/]+)(/node_modules/)'
+  $changedFiles = 0
+  foreach ($file in (Get-ChildItem -LiteralPath $DistPath -Recurse -File -Include *.js,*.mjs -ErrorAction SilentlyContinue)) {
+    $before = [System.IO.File]::ReadAllText($file.FullName)
+    $after = [regex]::Replace($before, $pattern, {
+        param($match)
+        $segment = [string]$match.Groups[2].Value
+        if (-not $segment.Contains('@')) {
+          return $match.Value
+        }
+        return $match.Groups[1].Value + ($segment -replace '@', '%40') + $match.Groups[3].Value
+      })
+    if ($after -ne $before) {
+      Write-Utf8NoBom $file.FullName $after
+      $changedFiles += 1
+    }
+  }
+
+  if ($changedFiles -gt 0) {
+    Write-Log "normalized encoded .pnpm import paths in Computer Use runtime dist: $changedFiles file(s)"
+  }
+}
+
+function Ensure-SkyDistPnpmDirectoryAliases {
+  param([string]$DistPath)
+
+  $pnpmRoot = Join-Path $DistPath 'node_modules\.pnpm'
+  if (-not (Test-Path -LiteralPath $pnpmRoot -PathType Container)) {
+    return
+  }
+
+  $aliasCount = 0
+  foreach ($entry in (Get-ChildItem -LiteralPath $pnpmRoot -Directory -Force -ErrorAction SilentlyContinue)) {
+    if (-not $entry.Name.Contains('%40')) {
+      continue
+    }
+
+    $aliasName = $entry.Name -replace '%40', '@'
+    if ($aliasName -eq $entry.Name) {
+      continue
+    }
+
+    $aliasPath = Join-Path $pnpmRoot $aliasName
+    if (Test-Path -LiteralPath $aliasPath) {
+      $aliasItem = Get-Item -LiteralPath $aliasPath -Force
+      if (($aliasItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0) {
+        $existingChildren = @(Get-ChildItem -LiteralPath $aliasPath -Force -ErrorAction SilentlyContinue)
+        if ($existingChildren.Count -gt 0) {
+          continue
+        }
+      } else {
+        continue
+      }
+    }
+
+    Copy-DirectoryDataOnly $entry.FullName $aliasPath
+    $aliasCount += 1
+  }
+
+  if ($aliasCount -gt 0) {
+    Write-Log "created decoded .pnpm directory mirrors for Computer Use runtime dist: $aliasCount alias(es)"
+  }
+}
+
 function Write-PluginTree {
   param([string]$Root)
 
@@ -699,6 +770,8 @@ function Write-PluginTree {
     Remove-ReparsePointOrDirectory $distPath
   }
   Copy-DirectoryDataOnly $runtimeDistPath $distPath
+  Normalize-SkyDistPnpmImportPaths $distPath
+  Ensure-SkyDistPnpmDirectoryAliases $distPath
 
   ConvertTo-JsonFile $packagePath ([ordered]@{
     name = '@oai/sky'
@@ -811,17 +884,23 @@ tomllib.loads(path.read_text(encoding="utf-8"))
 function Get-CuaSkyRuntimeRoot {
   $runtimeRoot = Join-Path $env:LOCALAPPDATA 'OpenAI\Codex\runtimes\cua_node'
   $candidates = @()
+  $skyRelativeRoots = @(
+    'bin\node_modules\@oai\sky',
+    'bin\node_modules\%40oai\sky'
+  )
 
   if (Test-Path -LiteralPath $runtimeRoot -PathType Container) {
     $candidates += foreach ($runtime in (Get-ChildItem -LiteralPath $runtimeRoot -Directory -ErrorAction SilentlyContinue)) {
-      $skyRoot = Join-Path $runtime.FullName 'bin\node_modules\@oai\sky'
-      $basePath = Join-Path $skyRoot 'dist\project\cua\sky_js\src\targets\windows\internal\computer_use_client_base.js'
-      $packagePath = Join-Path $skyRoot 'package.json'
-      if ((Test-Path -LiteralPath $basePath -PathType Leaf) -and (Test-Path -LiteralPath $packagePath -PathType Leaf)) {
-        $packageItem = Get-Item -LiteralPath $packagePath
-        [pscustomobject]@{
-          Path = $skyRoot
-          LastWriteTime = $packageItem.LastWriteTime
+      foreach ($relativeRoot in $skyRelativeRoots) {
+        $skyRoot = Join-Path $runtime.FullName $relativeRoot
+        $basePath = Join-Path $skyRoot 'dist\project\cua\sky_js\src\targets\windows\internal\computer_use_client_base.js'
+        $packagePath = Join-Path $skyRoot 'package.json'
+        if ((Test-Path -LiteralPath $basePath -PathType Leaf) -and (Test-Path -LiteralPath $packagePath -PathType Leaf)) {
+          $packageItem = Get-Item -LiteralPath $packagePath
+          [pscustomobject]@{
+            Path = $skyRoot
+            LastWriteTime = $packageItem.LastWriteTime
+          }
         }
       }
     }
@@ -831,14 +910,19 @@ function Get-CuaSkyRuntimeRoot {
     Sort-Object Version -Descending |
     Select-Object -First 1
   if ($pkg) {
-    $packageSkyRoot = Join-Path $pkg.InstallLocation 'app\resources\cua_node\bin\node_modules\@oai\sky'
-    $packageBasePath = Join-Path $packageSkyRoot 'dist\project\cua\sky_js\src\targets\windows\internal\computer_use_client_base.js'
-    $packagePath = Join-Path $packageSkyRoot 'package.json'
-    if ((Test-Path -LiteralPath $packageBasePath -PathType Leaf) -and (Test-Path -LiteralPath $packagePath -PathType Leaf)) {
-      $packageItem = Get-Item -LiteralPath $packagePath
-      $candidates += [pscustomobject]@{
-        Path = $packageSkyRoot
-        LastWriteTime = $packageItem.LastWriteTime
+    foreach ($relativeRoot in @(
+      'app\resources\cua_node\bin\node_modules\@oai\sky',
+      'app\resources\cua_node\bin\node_modules\%40oai\sky'
+    )) {
+      $packageSkyRoot = Join-Path $pkg.InstallLocation $relativeRoot
+      $packageBasePath = Join-Path $packageSkyRoot 'dist\project\cua\sky_js\src\targets\windows\internal\computer_use_client_base.js'
+      $packagePath = Join-Path $packageSkyRoot 'package.json'
+      if ((Test-Path -LiteralPath $packageBasePath -PathType Leaf) -and (Test-Path -LiteralPath $packagePath -PathType Leaf)) {
+        $packageItem = Get-Item -LiteralPath $packagePath
+        $candidates += [pscustomobject]@{
+          Path = $packageSkyRoot
+          LastWriteTime = $packageItem.LastWriteTime
+        }
       }
     }
   }
@@ -1081,7 +1165,10 @@ function Sync-BundledMarketplaceFromInstalledApp {
 }
 
 function Test-BundledMarketplaceMirror {
-  param([string]$MarketplaceRoot)
+  param(
+    [string]$MarketplaceRoot,
+    [string[]]$RequiredPluginNames = @()
+  )
 
   $sourceRoot = Get-InstalledBundledMarketplaceRoot
   $sourceManifestPath = Join-Path $sourceRoot '.agents\plugins\marketplace.json'
@@ -1097,8 +1184,18 @@ function Test-BundledMarketplaceMirror {
     $localEntries[[string]$entry.name] = $entry
   }
 
+  $requiredNameSet = @{}
+  foreach ($requiredName in @($RequiredPluginNames)) {
+    if (-not [string]::IsNullOrWhiteSpace($requiredName)) {
+      $requiredNameSet[[string]$requiredName] = $true
+    }
+  }
+
   foreach ($sourceEntry in @($sourceManifest.plugins)) {
     $name = [string]$sourceEntry.name
+    if ($requiredNameSet.Count -gt 0 -and -not $requiredNameSet.ContainsKey($name)) {
+      continue
+    }
     if (-not $localEntries.ContainsKey($name)) {
       throw "local openai-bundled marketplace is missing installed plugin entry: $name"
     }
@@ -1378,6 +1475,7 @@ function Test-ComputerUse {
   $chromeCacheVersionRoot = Join-Path $codexHomeResolved "plugins\cache\openai-bundled\chrome\$chromeVersion"
   $chromeNativeManifest = Join-Path $env:LOCALAPPDATA 'OpenAI\extension\com.openai.codexextension.json'
   $chromeHostPath = Join-Path $chromeCacheVersionRoot 'extension-host\windows\x64\extension-host.exe'
+  $chromeLatestHostPath = Join-Path $chromeCacheLatest 'extension-host\windows\x64\extension-host.exe'
   $computerUseClientPath = Join-Path $cacheLatest 'scripts\computer-use-client.mjs'
   $computerUseBasePath = Join-Path $cacheLatest 'node_modules\@oai\sky\dist\project\cua\sky_js\src\targets\windows\internal\computer_use_client_base.js'
   $helperTransportPath = Join-Path $cacheLatest 'node_modules\@oai\sky\dist\project\cua\sky_js\src\targets\windows\internal\helper_transport.js'
@@ -1426,7 +1524,11 @@ function Test-ComputerUse {
 
   if (Test-Path -LiteralPath $chromeNativeManifest -PathType Leaf) {
     $nativeManifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $chromeNativeManifest | ConvertFrom-Json
-    if ([string]$nativeManifest.path -ne $chromeHostPath) {
+    $acceptableChromeHostPaths = @($chromeHostPath)
+    if (Test-Path -LiteralPath $chromeCacheLatest) {
+      $acceptableChromeHostPaths += $chromeLatestHostPath
+    }
+    if ([string]$nativeManifest.path -notin $acceptableChromeHostPaths) {
       throw "Chrome native messaging manifest does not point at stable cache path: $chromeNativeManifest"
     }
   }
@@ -1440,7 +1542,7 @@ function Test-ComputerUse {
     throw 'computer-use marketplace entry does not point to ./plugins/computer-use'
   }
 
-  Test-BundledMarketplaceMirror $marketplaceRoot
+  Test-BundledMarketplaceMirror $marketplaceRoot @('computer-use', 'browser', 'chrome')
 
   $userEnv = [Environment]::GetEnvironmentVariable('CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE', 'User')
   if ($userEnv -ne '1') {

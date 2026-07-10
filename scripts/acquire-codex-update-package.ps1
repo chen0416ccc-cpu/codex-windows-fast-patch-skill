@@ -10,6 +10,8 @@ param(
   [ValidateSet('x64', 'x86', 'arm64', 'neutral')]
   [string]$Architecture = 'x64',
   [string]$Proxy = $env:CODEX_GUARD_WINGET_PROXY,
+  [string]$MirrorPackageUrl,
+  [string]$MirrorLabel,
   [int]$TimeoutSeconds = 900,
   [switch]$NoDownload,
   [switch]$NoNotifications
@@ -21,6 +23,19 @@ $ScriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $My
 
 Assert-GuardWindows
 $state = Initialize-GuardState -StateRoot $StateRoot
+$mirrorSettings = Get-GuardMirrorFallbackSettings -State $state
+if ([string]::IsNullOrWhiteSpace($MirrorPackageUrl)) {
+  $MirrorPackageUrl = $mirrorSettings.PackageUrl
+  $mirrorEnabled = [bool]$mirrorSettings.Enabled
+} else {
+  $mirrorEnabled = $true
+}
+if ([string]::IsNullOrWhiteSpace($MirrorLabel)) {
+  $MirrorLabel = $mirrorSettings.Label
+}
+if ([string]::IsNullOrWhiteSpace($MirrorLabel) -and -not [string]::IsNullOrWhiteSpace($MirrorPackageUrl)) {
+  $MirrorLabel = 'community_mirror'
+}
 
 $event = $null
 if (-not [string]::IsNullOrWhiteSpace($EventPath)) {
@@ -136,6 +151,30 @@ function Test-CodexPayloadRoot {
   )
 }
 
+function Normalize-ScopedPackagePaths {
+  param([Parameter(Mandatory = $true)][string]$Root)
+  $unpackedRoot = Join-Path $Root 'app\resources\app.asar.unpacked'
+  if (-not (Test-Path -LiteralPath $unpackedRoot -PathType Container)) {
+    return 0
+  }
+  $items = @(Get-ChildItem -LiteralPath $unpackedRoot -Recurse -Force -ErrorAction SilentlyContinue |
+    Sort-Object { $_.FullName.Length } -Descending)
+  $renameCount = 0
+  foreach ($item in $items) {
+    $decodedName = [System.Uri]::UnescapeDataString($item.Name)
+    if ($decodedName -eq $item.Name) {
+      continue
+    }
+    $targetPath = Join-Path (Split-Path -Parent $item.FullName) $decodedName
+    if (Test-Path -LiteralPath $targetPath) {
+      continue
+    }
+    Rename-Item -LiteralPath $item.FullName -NewName $decodedName
+    $renameCount++
+  }
+  return $renameCount
+}
+
 function Expand-ZipPackage {
   param(
     [Parameter(Mandatory = $true)][string]$PackageFile,
@@ -163,35 +202,122 @@ function Expand-DownloadedPackageFile {
   )
   $roots = New-Object System.Collections.Generic.List[object]
   $extension = [System.IO.Path]::GetExtension($PackageFile).ToLowerInvariant()
-  if ($extension -in @('.msixbundle', '.appxbundle')) {
-    Write-AcquireLog "unpacking bundle: $PackageFile"
-    $bundleRoot = Expand-ZipPackage -PackageFile $PackageFile -DestinationRoot (Join-Path $DownloadDirectory 'bundles') -Suffix 'bundle'
-    $innerPackages = @(Get-ChildItem -LiteralPath $bundleRoot -Recurse -File -ErrorAction SilentlyContinue |
-      Where-Object { [System.IO.Path]::GetExtension($_.FullName).ToLowerInvariant() -in @('.msix', '.appx') })
-    foreach ($inner in $innerPackages) {
-      try {
-        $payloadRoot = Expand-ZipPackage -PackageFile $inner.FullName -DestinationRoot $UnpackRoot -Suffix 'payload'
-        if (Test-CodexPayloadRoot -Root $payloadRoot) {
-          $roots.Add($payloadRoot)
-          Write-AcquireLog "usable Codex payload unpacked: $payloadRoot"
-        } else {
-          Write-AcquireLog "skipping non-Codex or incomplete inner package: $($inner.FullName)"
-        }
-      } catch {
-        Write-AcquireLog "warning: could not unpack inner package $($inner.FullName): $($_.Exception.Message)"
-      }
+  $containerLabel = if ($extension -in @('.msixbundle', '.appxbundle')) { 'bundle' } else { 'package' }
+  Write-AcquireLog "unpacking $($containerLabel): $PackageFile"
+  $containerRoot = Expand-ZipPackage -PackageFile $PackageFile -DestinationRoot (Join-Path $DownloadDirectory 'archives') -Suffix $containerLabel
+  if (Test-CodexPayloadRoot -Root $containerRoot) {
+    $renamed = Normalize-ScopedPackagePaths -Root $containerRoot
+    if ($renamed -gt 0) {
+      Write-AcquireLog "normalized $renamed scoped package path(s) under: $containerRoot"
     }
-  } elseif ($extension -in @('.msix', '.appx')) {
-    Write-AcquireLog "unpacking package: $PackageFile"
-    $payloadRoot = Expand-ZipPackage -PackageFile $PackageFile -DestinationRoot $UnpackRoot -Suffix 'payload'
-    if (Test-CodexPayloadRoot -Root $payloadRoot) {
-      $roots.Add($payloadRoot)
-      Write-AcquireLog "usable Codex payload unpacked: $payloadRoot"
-    } else {
-      Write-AcquireLog "downloaded package is not a complete OpenAI.Codex payload: $PackageFile"
+    $roots.Add($containerRoot)
+    Write-AcquireLog "usable Codex payload unpacked: $containerRoot"
+  }
+
+  $innerPackages = @(Get-ChildItem -LiteralPath $containerRoot -Recurse -File -ErrorAction SilentlyContinue |
+    Where-Object { [System.IO.Path]::GetExtension($_.FullName).ToLowerInvariant() -in @('.msix', '.appx') })
+  foreach ($inner in $innerPackages) {
+    try {
+      $payloadRoot = Expand-ZipPackage -PackageFile $inner.FullName -DestinationRoot $UnpackRoot -Suffix 'payload'
+      if (Test-CodexPayloadRoot -Root $payloadRoot) {
+        $renamed = Normalize-ScopedPackagePaths -Root $payloadRoot
+        if ($renamed -gt 0) {
+          Write-AcquireLog "normalized $renamed scoped package path(s) under: $payloadRoot"
+        }
+        $roots.Add($payloadRoot)
+        Write-AcquireLog "usable Codex payload unpacked: $payloadRoot"
+      } else {
+        Write-AcquireLog "skipping non-Codex or incomplete inner package: $($inner.FullName)"
+      }
+    } catch {
+      Write-AcquireLog "warning: could not unpack inner package $($inner.FullName): $($_.Exception.Message)"
     }
   }
+
+  if ($roots.Count -eq 0) {
+    Write-AcquireLog "downloaded package did not produce a complete OpenAI.Codex payload: $PackageFile"
+  }
   return @($roots.ToArray())
+}
+
+function Get-AcquirePackageFiles {
+  return @(
+    Get-ChildItem -LiteralPath $DownloadDirectory -Recurse -File -ErrorAction SilentlyContinue |
+      Where-Object { [System.IO.Path]::GetExtension($_.FullName).ToLowerInvariant() -in @('.msix', '.appx', '.msixbundle', '.appxbundle') } |
+      Sort-Object Length -Descending
+  )
+}
+
+function Add-PayloadRootsFromPackageFile {
+  param(
+    [Parameter(Mandatory = $true)][string]$PackageFile,
+    [Parameter(Mandatory = $true)][string]$UnpackRoot,
+    [Parameter(Mandatory = $true)][string]$SourceLabel
+  )
+  foreach ($root in @(Expand-DownloadedPackageFile -PackageFile $PackageFile -UnpackRoot $UnpackRoot)) {
+    $identity = Get-AppxIdentityFromRoot -Root $root
+    $payloadRoots.Add([pscustomobject]@{
+      Path = $root
+      Identity = $identity
+      Source = $SourceLabel
+    })
+  }
+}
+
+function Get-MirrorDownloadExtension {
+  param([AllowNull()][string]$Url)
+  $normalized = if ([string]::IsNullOrWhiteSpace($Url)) { '' } else { $Url.ToLowerInvariant() }
+  if ($normalized -match '\.msixbundle(?:$|\?)' -or $normalized -match '\.appxbundle(?:$|\?)') {
+    return '.msixbundle'
+  }
+  if ($normalized -match '\.appx(?:$|\?)') {
+    return '.appx'
+  }
+  return '.msix'
+}
+
+function Invoke-MirrorPackageDownload {
+  param(
+    [Parameter(Mandatory = $true)][string]$Url,
+    [Parameter(Mandatory = $true)][string]$Label
+  )
+  $mirrorRoot = Join-Path $DownloadDirectory 'mirror'
+  New-Item -ItemType Directory -Force -Path $mirrorRoot | Out-Null
+  $extension = Get-MirrorDownloadExtension -Url $Url
+  $targetPath = Join-Path $mirrorRoot ("codex-desktop-mirror-latest$extension")
+  if (Test-Path -LiteralPath $targetPath -PathType Leaf) {
+    Remove-Item -LiteralPath $targetPath -Force
+  }
+  $previousProtocols = [System.Net.ServicePointManager]::SecurityProtocol
+  try {
+    [System.Net.ServicePointManager]::SecurityProtocol = $previousProtocols -bor [System.Net.SecurityProtocolType]::Tls12
+    Write-AcquireLog "downloading Codex package from mirror '$Label': $Url"
+    $curl = Get-Command curl.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($curl) {
+      $curlArgs = @(
+        '--silent',
+        '--show-error',
+        '--location',
+        '--fail',
+        '--retry', '4',
+        '--retry-all-errors',
+        '--retry-delay', '5',
+        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; CodexDesktopGuard)',
+        '--output', $targetPath,
+        $Url
+      )
+      $capture = Invoke-GuardProcessCapture -FilePath $curl.Source -Arguments $curlArgs -TimeoutSeconds $TimeoutSeconds
+      if ($capture.ExitCode -ne 0) {
+        throw "curl mirror download failed with exit code $($capture.ExitCode): $($capture.Stderr)"
+      }
+    } else {
+      Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $targetPath -MaximumRedirection 5 -UserAgent 'Mozilla/5.0 (Windows NT 10.0; CodexDesktopGuard)' -ErrorAction Stop | Out-Null
+    }
+    Write-AcquireLog "mirror download complete: $targetPath"
+    return $targetPath
+  } finally {
+    [System.Net.ServicePointManager]::SecurityProtocol = $previousProtocols
+  }
 }
 
 $winget = Get-Command winget.exe -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -257,21 +383,15 @@ if ($NoDownload) {
   }
 }
 
-$packageFiles = @(Get-ChildItem -LiteralPath $DownloadDirectory -Recurse -File -ErrorAction SilentlyContinue |
-  Where-Object { [System.IO.Path]::GetExtension($_.FullName).ToLowerInvariant() -in @('.msix', '.appx', '.msixbundle', '.appxbundle') } |
-  Sort-Object Length -Descending)
+$packageFiles = @(Get-AcquirePackageFiles)
 $unpackRoot = Join-Path $DownloadDirectory 'payloads'
 New-Item -ItemType Directory -Force -Path $unpackRoot | Out-Null
 $payloadRoots = New-Object System.Collections.Generic.List[object]
+$mirrorAttempted = $false
+$mirrorDownloadedFile = $null
 foreach ($packageFile in $packageFiles) {
   try {
-    foreach ($root in @(Expand-DownloadedPackageFile -PackageFile $packageFile.FullName -UnpackRoot $unpackRoot)) {
-      $identity = Get-AppxIdentityFromRoot -Root $root
-      $payloadRoots.Add([pscustomobject]@{
-        Path = $root
-        Identity = $identity
-      })
-    }
+    Add-PayloadRootsFromPackageFile -PackageFile $packageFile.FullName -UnpackRoot $unpackRoot -SourceLabel 'winget_download'
   } catch {
     $errors.Add([pscustomobject]@{
       Source = 'unpack'
@@ -279,6 +399,22 @@ foreach ($packageFile in $packageFiles) {
       Error = $_.Exception.Message
     })
     Write-AcquireLog "warning: failed to unpack $($packageFile.FullName): $($_.Exception.Message)"
+  }
+}
+
+if ($payloadRoots.Count -eq 0 -and -not $NoDownload -and $mirrorEnabled -and -not [string]::IsNullOrWhiteSpace($MirrorPackageUrl)) {
+  $mirrorAttempted = $true
+  try {
+    $mirrorDownloadedFile = Invoke-MirrorPackageDownload -Url $MirrorPackageUrl -Label $MirrorLabel
+    $packageFiles = @(Get-AcquirePackageFiles)
+    Add-PayloadRootsFromPackageFile -PackageFile $mirrorDownloadedFile -UnpackRoot $unpackRoot -SourceLabel $MirrorLabel
+  } catch {
+    $errors.Add([pscustomobject]@{
+      Source = if ([string]::IsNullOrWhiteSpace($MirrorLabel)) { 'community_mirror' } else { $MirrorLabel }
+      Url = $MirrorPackageUrl
+      Error = $_.Exception.Message
+    })
+    Write-AcquireLog "mirror download failed: $($_.Exception.Message)"
   }
 }
 
@@ -297,11 +433,13 @@ $status = if ($payloadRoots.Count -gt 0) {
   'needs_update_source'
 }
 $reason = if ($payloadRoots.Count -gt 0) {
-  'downloaded_payload_unpacked'
+  if ($mirrorDownloadedFile) { 'mirror_payload_unpacked' } else { 'downloaded_payload_unpacked' }
 } elseif ($NoDownload) {
   'download_disabled'
 } elseif (-not $winget) {
   'winget_missing'
+} elseif ($mirrorAttempted) {
+  'mirror_download_failed_or_no_payload'
 } elseif ($detectedErrorCode -eq '0x8A150076') {
   'store_offline_authorization_required'
 } elseif ($downloadAttempted) {
@@ -322,6 +460,11 @@ $result = [pscustomobject]@{
   Source = $Source
   Architecture = $Architecture
   Proxy = $Proxy
+  MirrorEnabled = $mirrorEnabled
+  MirrorPackageUrl = $MirrorPackageUrl
+  MirrorLabel = $MirrorLabel
+  MirrorAttempted = $mirrorAttempted
+  MirrorDownloadedFile = $mirrorDownloadedFile
   DownloadDirectory = $DownloadDirectory
   LogPath = $logPath
   Command = $commandText
@@ -338,11 +481,18 @@ $result = [pscustomobject]@{
 }
 Write-GuardJsonFile -Path $OutputPath -Value $result
 
+if ($reason -ne 'store_offline_authorization_required') {
+  Remove-Item -LiteralPath (Join-Path $state.Paths.Notifications "STORE_OFFLINE_AUTHORIZATION_REQUIRED-$EventId.txt") -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath (Join-Path $state.Paths.Notifications 'STORE_OFFLINE_AUTHORIZATION_REQUIRED.txt') -Force -ErrorAction SilentlyContinue
+}
+
 if (-not $NoNotifications) {
   if ($status -eq 'update_source_ready') {
+    $sourceLine = if ($mirrorDownloadedFile) { "Source: $MirrorLabel ($MirrorPackageUrl)" } else { "Source: Microsoft Store / winget" }
     $text = @(
       "Codex Desktop Guard acquired a Codex update package.",
       "Event: $EventId",
+      $sourceLine,
       "ProductId: $ProductId",
       "Payload roots:",
       (($payloadRoots | ForEach-Object { "  $($_.Path)" }) -join "`r`n"),
@@ -358,9 +508,17 @@ if (-not $NoNotifications) {
         "Use a clean Windows / VM / another user environment to install official Codex Desktop through Microsoft Store, then export a sidecar payload zip and import it here.",
         "This is not a DNS-only problem, and the guard did not install or stop Codex Desktop."
       )
+    } elseif ($mirrorAttempted) {
+      @(
+        "The configured community mirror did not produce a usable payload on this run.",
+        "Check mirror availability or update guard-config.json with another official-package mirror URL.",
+        "You can also place an unpacked OpenAI.Codex payload under:",
+        $state.Paths.Incoming
+      )
     } else {
       @(
         "If this machine needs a proxy for Microsoft Store offline packages, set CODEX_GUARD_WINGET_PROXY or rerun the command with winget --proxy.",
+        "If you have explicitly configured a community mirror in guard-config.json, the guard can retry with that source on the next run.",
         "You can also place an unpacked OpenAI.Codex payload under:",
         $state.Paths.Incoming
       )
@@ -371,6 +529,8 @@ if (-not $NoNotifications) {
       "Status: $status",
       "Reason: $reason",
       "ProductId: $ProductId",
+      "Mirror enabled: $mirrorEnabled",
+      "Mirror source: $MirrorPackageUrl",
       "Detected error: $detectedErrorCode",
       "Command:",
       $commandText,

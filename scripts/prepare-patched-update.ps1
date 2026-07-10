@@ -46,6 +46,25 @@ function Write-PatchedUpdateLog {
   Add-Content -LiteralPath (Join-Path $state.Paths.Logs 'prepare-patched-update.log') -Value $line -Encoding UTF8
 }
 
+function Invoke-PatchedUpdatePowerShellScript {
+  param(
+    [Parameter(Mandatory = $true)][string]$ScriptPath,
+    [Parameter(Mandatory = $true)][string[]]$Arguments,
+    [Parameter(Mandatory = $true)][string]$LogPath,
+    [switch]$Append
+  )
+  $oldErrorActionPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = 'Continue'
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $ScriptPath @Arguments 2>&1 |
+      Tee-Object -FilePath $LogPath -Append:$Append |
+      Out-Host
+    return $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $oldErrorActionPreference
+  }
+}
+
 function Write-PatchedUpdateTerminalManifest {
   param(
     [Parameter(Mandatory = $true)][string]$Status,
@@ -220,7 +239,9 @@ if (-not $mappingResult.Safe) {
 }
 
 $mapping = $mappingResult.Mapping
-$buildRoot = if ([string]::IsNullOrWhiteSpace($WorkRoot)) { Join-Path $stagingDir 'native-build' } else { Resolve-GuardFullPath $WorkRoot }
+$defaultBuildRootParent = Join-Path $state.Paths.Root 'b'
+$defaultBuildRoot = Join-Path $defaultBuildRootParent $EventId
+$buildRoot = if ([string]::IsNullOrWhiteSpace($WorkRoot)) { $defaultBuildRoot } else { Resolve-GuardFullPath $WorkRoot }
 $buildRoot = Assert-GuardPathUnderRoot -Path $buildRoot -Root $state.Paths.Root -Label 'WorkRoot'
 $replacementExe = $null
 $patchedMsixPath = $null
@@ -235,17 +256,32 @@ if ($DryRun -or $NoBuild) {
     throw "native build script not found: $buildScript"
   }
   Write-PatchedUpdateLog "building native replacement for update payload under: $buildRoot"
-  & powershell -NoProfile -ExecutionPolicy Bypass -File $buildScript `
-    -WorkRoot $buildRoot `
-    -CodexSourceRef $mapping.CodexSourceRef `
-    -AppServerVersion $mapping.AppServerVersion *>&1 |
-    Tee-Object -FilePath $verificationLog
-  if ($LASTEXITCODE -ne 0) {
-    throw "native replacement build failed with exit code $LASTEXITCODE"
+  $buildExitCode = Invoke-PatchedUpdatePowerShellScript -ScriptPath $buildScript -Arguments @(
+    '-WorkRoot',
+    $buildRoot,
+    '-CodexSourceRef',
+    $mapping.CodexSourceRef,
+    '-AppServerVersion',
+    $mapping.AppServerVersion
+  ) -LogPath $verificationLog
+  if ($buildExitCode -ne 0) {
+    throw "native replacement build failed with exit code $buildExitCode"
   }
-  $builtReplacement = Join-Path $buildRoot 'target-msvc\x86_64-pc-windows-msvc\dev-small\codex.exe'
-  if (-not (Test-Path -LiteralPath $builtReplacement -PathType Leaf)) {
-    throw "expected replacement binary was not produced: $builtReplacement"
+  $candidateBuiltReplacements = @(
+    (Join-Path $buildRoot 'target-msvc\x86_64-pc-windows-msvc\dev-small\codex.exe'),
+    (Join-Path $buildRoot 'o\x86_64-pc-windows-msvc\dev-small\codex.exe')
+  )
+  $builtReplacement = $candidateBuiltReplacements |
+    Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+    Select-Object -First 1
+  if (-not $builtReplacement) {
+    $builtReplacement = Get-ChildItem -LiteralPath $buildRoot -Recurse -Filter 'codex.exe' -File -ErrorAction SilentlyContinue |
+      Where-Object { $_.FullName -like '*x86_64-pc-windows-msvc*dev-small*' } |
+      Sort-Object LastWriteTimeUtc -Descending |
+      Select-Object -First 1 -ExpandProperty FullName
+  }
+  if (-not $builtReplacement) {
+    throw "expected replacement binary was not produced under: $buildRoot"
   }
   $replacementDir = Join-Path $stagingDir 'replacement'
   New-Item -ItemType Directory -Force -Path $replacementDir | Out-Null
@@ -258,16 +294,21 @@ if ($DryRun -or $NoBuild) {
   }
   New-Item -ItemType Directory -Force -Path $patchOutputRoot | Out-Null
   Write-PatchedUpdateLog "building patched update package from payload: $($payload.Path)"
-  & powershell -NoProfile -ExecutionPolicy Bypass -File $patchScript `
-    -SourceRoot $payload.Path `
-    -SourcePackageFullName $payload.PackageFullName `
-    -SourcePackageVersion $payload.PackageVersion `
-    -ReplacementResourceCodexExe $replacementExe `
-    -OutputRoot $patchOutputRoot `
-    -InstallPrerequisites *>&1 |
-    Tee-Object -FilePath $verificationLog -Append
-  if ($LASTEXITCODE -ne 0) {
-    throw "patched update package build failed with exit code $LASTEXITCODE"
+  $patchExitCode = Invoke-PatchedUpdatePowerShellScript -ScriptPath $patchScript -Arguments @(
+    '-SourceRoot',
+    $payload.Path,
+    '-SourcePackageFullName',
+    $payload.PackageFullName,
+    '-SourcePackageVersion',
+    $payload.PackageVersion,
+    '-ReplacementResourceCodexExe',
+    $replacementExe,
+    '-OutputRoot',
+    $patchOutputRoot,
+    '-InstallPrerequisites'
+  ) -LogPath $verificationLog -Append
+  if ($patchExitCode -ne 0) {
+    throw "patched update package build failed with exit code $patchExitCode"
   }
   $patchedMsix = Get-ChildItem -LiteralPath $patchOutputRoot -Filter '*.msix' -File -ErrorAction SilentlyContinue |
     Sort-Object LastWriteTimeUtc -Descending |

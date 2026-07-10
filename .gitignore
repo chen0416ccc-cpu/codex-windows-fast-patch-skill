@@ -1,6 +1,8 @@
 *.log
 *.tmp
 *.bak
+__pycache__/
+*.pyc
 codex-msix-repack/
 work-*/
 artifacts/

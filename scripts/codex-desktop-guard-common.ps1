@@ -53,6 +53,52 @@ function Initialize-GuardState {
   }
 }
 
+function Get-GuardConfigPath {
+  param([Parameter(Mandatory = $true)][object]$State)
+  return (Join-Path $State.Paths.Root 'guard-config.json')
+}
+
+function Read-GuardConfig {
+  param([Parameter(Mandatory = $true)][object]$State)
+  return (Read-GuardJsonFile -Path (Get-GuardConfigPath -State $State))
+}
+
+function Get-GuardMirrorFallbackSettings {
+  param([Parameter(Mandatory = $true)][object]$State)
+  $config = Read-GuardConfig -State $State
+  $configUrl = [string](Resolve-GuardPropertyPath -Object $config -Path 'UpdateSources.MirrorPackageUrl')
+  $configLabel = [string](Resolve-GuardPropertyPath -Object $config -Path 'UpdateSources.MirrorLabel')
+  $enabledValue = Resolve-GuardPropertyPath -Object $config -Path 'UpdateSources.MirrorEnabled'
+
+  $packageUrl = if (-not [string]::IsNullOrWhiteSpace($env:CODEX_GUARD_MIRROR_PACKAGE_URL)) {
+    [string]$env:CODEX_GUARD_MIRROR_PACKAGE_URL
+  } else {
+    $configUrl
+  }
+  $label = if (-not [string]::IsNullOrWhiteSpace($env:CODEX_GUARD_MIRROR_LABEL)) {
+    [string]$env:CODEX_GUARD_MIRROR_LABEL
+  } elseif (-not [string]::IsNullOrWhiteSpace($configLabel)) {
+    $configLabel
+  } elseif (-not [string]::IsNullOrWhiteSpace($packageUrl)) {
+    'community_mirror'
+  } else {
+    $null
+  }
+
+  $enabled = if ($null -ne $enabledValue) {
+    [bool]$enabledValue
+  } else {
+    -not [string]::IsNullOrWhiteSpace($packageUrl)
+  }
+
+  return [pscustomobject]@{
+    Enabled = $enabled
+    PackageUrl = $packageUrl
+    Label = $label
+    ConfigPath = (Get-GuardConfigPath -State $State)
+  }
+}
+
 function Write-GuardUtf8NoBom {
   param(
     [Parameter(Mandatory = $true)][string]$Path,
@@ -259,7 +305,7 @@ function Get-GuardLocalCodexCliInfo {
   try {
     $capture = Invoke-GuardProcessCapture -FilePath $hit.FullName -Arguments @('--version') -TimeoutSeconds 15
     $versionOutput = (($capture.Stdout, $capture.Stderr) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join "`n"
-    if ($versionOutput -match 'codex-cli\s+([0-9]+\.[0-9]+\.[0-9]+)') {
+    if ($versionOutput -match 'codex-cli\s+([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)') {
       $version = $matches[1]
     } else {
       $versionError = "could not parse codex-cli version from: $versionOutput"
@@ -754,8 +800,8 @@ function Resolve-GuardPayloadVersionMapping {
     } else {
       $reasons.Add("Could not determine payload codex-cli version: $nativeVersionError")
     }
-  } elseif ($nativeVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
-    $reasons.Add("Payload codex-cli version '$nativeVersion' is not a simple semantic version.")
+  } elseif ($nativeVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$') {
+    $reasons.Add("Payload codex-cli version '$nativeVersion' is not a supported semantic version.")
   }
   if ([string]::IsNullOrWhiteSpace($liveNativeSha)) {
     $reasons.Add('Payload resources\codex.exe hash is unavailable.')

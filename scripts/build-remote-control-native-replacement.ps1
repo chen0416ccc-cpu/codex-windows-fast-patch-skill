@@ -217,32 +217,30 @@ function Invoke-Checked {
   $prefix = if ($WorkingDirectory) { "[$WorkingDirectory] " } else { '' }
   Write-Log "$prefix$FilePath $($Arguments -join ' ')"
   $oldErrorActionPreference = $ErrorActionPreference
-  $hadNativeErrorPreference = Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue
-  if ($hadNativeErrorPreference) {
-    $oldNativeErrorPreference = $PSNativeCommandUseErrorActionPreference
-  }
   try {
     $ErrorActionPreference = 'Continue'
-    if ($hadNativeErrorPreference) {
-      $PSNativeCommandUseErrorActionPreference = $false
-    }
     if ($WorkingDirectory) {
       Push-Location -LiteralPath $WorkingDirectory
       try {
-        & $FilePath @Arguments
+        & $FilePath @Arguments 2>&1 | ForEach-Object {
+          if ($null -ne $_) {
+            Write-Host $_
+          }
+        }
         $exitCode = $LASTEXITCODE
       } finally {
         Pop-Location
       }
     } else {
-      & $FilePath @Arguments
+      & $FilePath @Arguments 2>&1 | ForEach-Object {
+        if ($null -ne $_) {
+          Write-Host $_
+        }
+      }
       $exitCode = $LASTEXITCODE
     }
   } finally {
     $ErrorActionPreference = $oldErrorActionPreference
-    if ($hadNativeErrorPreference) {
-      $PSNativeCommandUseErrorActionPreference = $oldNativeErrorPreference
-    }
   }
   if ($exitCode -ne 0) {
     Fail "$ErrorMessage (exit code $exitCode)"
@@ -402,16 +400,16 @@ function Test-BinaryMarkers {
 
 $WorkRoot = Resolve-FullPath $WorkRoot
 if ([string]::IsNullOrWhiteSpace($SourceRoot)) {
-  $SourceRoot = Join-Path $WorkRoot 'codex'
+  $SourceRoot = Join-Path $WorkRoot 's'
 }
 if ([string]::IsNullOrWhiteSpace($CacheRoot)) {
-  $CacheRoot = Join-Path $WorkRoot 'cache'
+  $CacheRoot = Join-Path $WorkRoot 'c'
 }
 if ([string]::IsNullOrWhiteSpace($TempRoot)) {
-  $TempRoot = Join-Path $WorkRoot 'tmp'
+  $TempRoot = Join-Path $WorkRoot 't'
 }
 if ([string]::IsNullOrWhiteSpace($TargetRoot)) {
-  $TargetRoot = Join-Path $WorkRoot 'target-msvc'
+  $TargetRoot = Join-Path $WorkRoot 'o'
 }
 
 $SourceRoot = Resolve-FullPath $SourceRoot
@@ -489,8 +487,8 @@ if (-not (Test-Path -LiteralPath $CargoManifestPath -PathType Leaf)) {
 }
 Set-CargoWorkspacePackageVersion -CargoManifestPath $CargoManifestPath -Version $AppServerVersion
 
-$env:CARGO_HOME = Join-Path $CacheRoot 'cargo'
-$env:RUSTUP_HOME = Join-Path $CacheRoot 'rustup'
+$env:CARGO_HOME = Join-Path $CacheRoot 'c'
+$env:RUSTUP_HOME = Join-Path $CacheRoot 'r'
 $env:TEMP = $TempRoot
 $env:TMP = $TempRoot
 $env:CARGO_TARGET_DIR = $TargetRoot

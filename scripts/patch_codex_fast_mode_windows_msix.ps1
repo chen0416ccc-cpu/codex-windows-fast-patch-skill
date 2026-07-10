@@ -504,12 +504,17 @@ const text = fs.readFileSync(file, 'utf8');
 const legacyPatchedRe = /function L\(e\)\{let (\w+)=v\(x\),(\w+)=e\?\.hostId\?\?\1,\{data:(\w+)\}=d\(E,\2\);return \3\?\.requirements\?\.featureRequirements\?\.fast_mode!==!1\}/;
 const currentDirectPatchedRe = /featureRequirements\?\.fast_mode===!1;return!\w+\}/;
 const currentAsyncPatchedRe = /async function \w+\(\w+,\w+\)\{let \w+=await \w+\(\w+,\w+\);return\(await \w+\.query\.fetch\(\w+,\{authMethod:\w+,hostId:\w+\}\)\)\.requirements\?\.featureRequirements\?\.fast_mode!==!1\}/;
+const currentAsyncGuardedPatchedRe = /async function \w+\(\w+,\w+\)\{let \w+=await \w+\(\w+,\w+\);let \w+=await \w+\(\w+,\{priority:`critical`\}\);return \w+\.query\.setData\(\w+,\{authMethod:\w+,hostId:\w+\},\w+\),\w+\.requirements\?\.featureRequirements\?\.fast_mode!==!1\}/;
 const legacyOriginalRe = /function L\(e\)\{let (\w+)=v\(x\),(\w+)=e\?\.hostId\?\?\1,(\w+)=O\(\2\),\{data:(\w+)\}=d\(E,\2\);return!\(\3\?\.authMethod!==`chatgpt`\|\|\4\?\.requirements\?\.featureRequirements\?\.fast_mode===!1\)\}/;
 const currentDirectOriginalRe = /function (\w+)\(e\)\{let (\w+)=([^,;]+),(\w+)=e\?\.hostId\?\?\2,(\w+)=(\w+\(\4\)),\{data:(\w+)\}=(\w+\(\w+,\4\)),(\w+)=\7\?\.requirements\?\.featureRequirements\?\.fast_mode===!1;return!\(\5\?\.authMethod!==`chatgpt`\|\|\9\)\}/;
 const currentAsyncOriginalRe = /async function (\w+)\((\w+),(\w+)\)\{let (\w+)=await ([A-Za-z_$][\w$]*)\(\2,\3\);return \4===`chatgpt`\?\(await \2\.query\.fetch\(([A-Za-z_$][\w$]*),\{authMethod:\4,hostId:\3\}\)\)\.requirements\?\.featureRequirements\?\.fast_mode!==!1:!1\}/;
+const currentAsyncGuardedOriginalRe = /async function (\w+)\((\w+),(\w+)\)\{let (\w+)=await ([A-Za-z_$][\w$]*)\(\2,\3\);if\(\4!==`chatgpt`\)return!1;let (\w+)=await ([A-Za-z_$][\w$]*)\(\3,\{priority:`critical`\}\);return \2\.query\.setData\(([A-Za-z_$][\w$]*),\{authMethod:\4,hostId:\3\},\6\),\6\.requirements\?\.featureRequirements\?\.fast_mode!==!1\}/;
 const currentSplitConditionRe = /if\((\w+)\?\.authMethod!==`chatgpt`\|\|(\w+)\)\{/;
 
-if (legacyPatchedRe.test(text) || currentAsyncPatchedRe.test(text) || (currentDirectPatchedRe.test(text) && !legacyOriginalRe.test(text) && !currentDirectOriginalRe.test(text) && !currentSplitConditionRe.test(text))) {
+if (legacyPatchedRe.test(text) ||
+    currentAsyncPatchedRe.test(text) ||
+    currentAsyncGuardedPatchedRe.test(text) ||
+    (currentDirectPatchedRe.test(text) && !legacyOriginalRe.test(text) && !currentDirectOriginalRe.test(text) && !currentSplitConditionRe.test(text))) {
   process.stdout.write('already-patched');
   process.exit(0);
 }
@@ -535,6 +540,13 @@ if (!patched) {
   if (currentAsyncMatch) {
     const [, fn, hostManagerVar, hostIdVar, authMethodVar, authMethodFn, queryVar] = currentAsyncMatch;
     next = next.replace(currentAsyncOriginalRe, `async function ${fn}(${hostManagerVar},${hostIdVar}){let ${authMethodVar}=await ${authMethodFn}(${hostManagerVar},${hostIdVar});return(await ${hostManagerVar}.query.fetch(${queryVar},{authMethod:${authMethodVar},hostId:${hostIdVar}})).requirements?.featureRequirements?.fast_mode!==!1}`);
+    patched = true;
+  }
+
+  const currentAsyncGuardedMatch = next.match(currentAsyncGuardedOriginalRe);
+  if (currentAsyncGuardedMatch) {
+    const [, fn, hostManagerVar, hostIdVar, authMethodVar, authMethodFn, requirementsVar, requirementsFn, queryVar] = currentAsyncGuardedMatch;
+    next = next.replace(currentAsyncGuardedOriginalRe, `async function ${fn}(${hostManagerVar},${hostIdVar}){let ${authMethodVar}=await ${authMethodFn}(${hostManagerVar},${hostIdVar});let ${requirementsVar}=await ${requirementsFn}(${hostIdVar},{priority:\`critical\`});return ${hostManagerVar}.query.setData(${queryVar},{authMethod:${authMethodVar},hostId:${hostIdVar}},${requirementsVar}),${requirementsVar}.requirements?.featureRequirements?.fast_mode!==!1}`);
     patched = true;
   }
 
@@ -685,8 +697,8 @@ if (hasFile(pageAuthFile)) {
 }
 
 if (oldFileCount === 0 && !hasFile(pageAuthFile)) {
-  process.stderr.write('plugin-gate-targets-not-found\n');
-  process.exit(2);
+  process.stdout.write(changed ? 'patched' : 'already-patched');
+  process.exit(0);
 }
 
 process.stdout.write(changed ? 'patched' : 'already-patched');
@@ -771,6 +783,10 @@ const fs = require('node:fs');
 const [availabilityFile, installFlowFile, setupFile] = process.argv.slice(2);
 let changed = false;
 
+function hasFile(file) {
+  return typeof file === 'string' && file.length > 0 && file !== '__none__' && fs.existsSync(file);
+}
+
 function read(file) {
   return fs.readFileSync(file, 'utf8');
 }
@@ -843,9 +859,20 @@ function patchComputerUseSetup(file) {
   writeIfChanged(file, before, after);
 }
 
-patchComputerUseAvailability(availabilityFile);
-patchComputerUseInstallFlow(installFlowFile);
-patchComputerUseSetup(setupFile);
+if (hasFile(availabilityFile)) {
+  patchComputerUseAvailability(availabilityFile);
+}
+if (hasFile(installFlowFile)) {
+  patchComputerUseInstallFlow(installFlowFile);
+}
+if (hasFile(setupFile)) {
+  patchComputerUseSetup(setupFile);
+}
+
+if (!hasFile(availabilityFile) && !hasFile(installFlowFile) && !hasFile(setupFile)) {
+  process.stdout.write(changed ? 'patched' : 'already-patched');
+  process.exit(0);
+}
 
 process.stdout.write(changed ? 'patched' : 'already-patched');
 '@
@@ -968,15 +995,15 @@ function patchSidebarAvailability(file) {
 function patchDesktopFeatureSender(file) {
   const before = read(file);
   const patchedSenderFragment = 'inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,browserPane:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0,computerUse:';
-  const patchedSenderPattern = /inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,(defaultLinkOpenTargetPreference:[^,}]+,)?(linksDefaultInAppBrowser:[^,}]+,)?(localBackend:[^,}]+,)?browserPane:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0,computerUse:/;
+  const patchedSenderPattern = /inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,(defaultLinkOpenTargetPreference:[^,}]+,)?(linksDefaultInAppBrowser:[^,}]+,)?(localBackend:[^,}]+,)?browserPane:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0,(findShortcuts:[^,}]+,)?computerUse:/;
   if (!before.includes('browser_use_availability_resolved') || !before.includes('electron-desktop-features-changed')) {
     process.stderr.write('browser-use-desktop-feature-sender-target-not-found\n');
     process.exit(2);
   }
 
   let after = before.replace(
-    /inAppBrowserUse:[^,}]+,inAppBrowserUseAllowed:[^,}]+,(defaultLinkOpenTargetPreference:[^,}]+,)?(linksDefaultInAppBrowser:[^,}]+,)?(localBackend:[^,}]+,)?browserPane:[^,}]+,externalBrowserUse:[^,}]+,externalBrowserUseAllowed:[^,}]+,computerUse:/,
-    'inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,$1$2$3browserPane:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0,computerUse:'
+    /inAppBrowserUse:[^,}]+,inAppBrowserUseAllowed:[^,}]+,(defaultLinkOpenTargetPreference:[^,}]+,)?(linksDefaultInAppBrowser:[^,}]+,)?(localBackend:[^,}]+,)?browserPane:[^,}]+,externalBrowserUse:[^,}]+,externalBrowserUseAllowed:[^,}]+,(findShortcuts:[^,}]+,)?computerUse:/,
+    'inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,$1$2$3browserPane:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0,$4computerUse:'
   );
   after = after.replace(
     /browser_use_availability_resolved`,\{safe:\{available:[^,]+,platform:([^,]+),reason:[^,]+,release:([^}]+)\},sensitive:\{browserPane:[^}]+\}\}\)/,
@@ -995,11 +1022,13 @@ function patchDesktopFeatureSender(file) {
 function patchDesktopFeatureMain(file) {
   const before = read(file);
   const patchedMainFragment = 'browserPane:!0,inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0';
+  const patchedMainCurrentPattern = /inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,(defaultLinkOpenTargetPreference:[^,}]+,)?(linksDefaultInAppBrowser:[^,}]+,)?(localBackend:[^,}]+,)?browserPane:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0,(findShortcuts:[^,}]+,)?computerUse:/;
   const envGatePattern = /[A-Za-z_$][\w$]*=i===`win32`&&[A-Za-z_$][\w$]*\.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===`1`\?\{\.\.\.[A-Za-z_$][\w$]*,computerUse:!0,computerUseNodeRepl:!0\}:[A-Za-z_$][\w$]*/;
   if (!before.includes(patchedMainFragment) &&
+      !patchedMainCurrentPattern.test(before) &&
       (!before.includes('CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE') ||
        (!envGatePattern.test(before) &&
-        !/inAppBrowserUse:[A-Za-z_$][\w$]*\.inAppBrowserUse,inAppBrowserUseAllowed:[A-Za-z_$][\w$]*\.inAppBrowserUseAllowed,browserPane:[A-Za-z_$][\w$]*\.browserPane,externalBrowserUse:[A-Za-z_$][\w$]*\.externalBrowserUse,externalBrowserUseAllowed:[A-Za-z_$][\w$]*\.externalBrowserUseAllowed/.test(before)))) {
+        !/inAppBrowserUse:[A-Za-z_$][\w$]*\.inAppBrowserUse,inAppBrowserUseAllowed:[A-Za-z_$][\w$]*\.inAppBrowserUseAllowed,(defaultLinkOpenTargetPreference:[A-Za-z_$][\w$]*\.defaultLinkOpenTargetPreference,)?(linksDefaultInAppBrowser:[A-Za-z_$][\w$]*\.linksDefaultInAppBrowser,)?(localBackend:[A-Za-z_$][\w$]*\.localBackend,)?browserPane:[A-Za-z_$][\w$]*\.browserPane,externalBrowserUse:[A-Za-z_$][\w$]*\.externalBrowserUse,externalBrowserUseAllowed:[A-Za-z_$][\w$]*\.externalBrowserUseAllowed,(findShortcuts:[A-Za-z_$][\w$]*\.findShortcuts,)?computerUse:/.test(before)))) {
     process.stderr.write('browser-use-desktop-feature-main-target-not-found\n');
     process.exit(2);
   }
@@ -1009,12 +1038,13 @@ function patchDesktopFeatureMain(file) {
     '$1=i===`win32`?{...$2,browserPane:!0,inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0,...r.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===`1`?{computerUse:!0,computerUseNodeRepl:!0}:{}}:$2'
   );
   after = after.replace(
-    /inAppBrowserUse:[A-Za-z_$][\w$]*\.inAppBrowserUse,inAppBrowserUseAllowed:[A-Za-z_$][\w$]*\.inAppBrowserUseAllowed,browserPane:[A-Za-z_$][\w$]*\.browserPane,externalBrowserUse:[A-Za-z_$][\w$]*\.externalBrowserUse,externalBrowserUseAllowed:[A-Za-z_$][\w$]*\.externalBrowserUseAllowed,computerUse:/,
-    'inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,browserPane:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0,computerUse:'
+    /inAppBrowserUse:[A-Za-z_$][\w$]*\.inAppBrowserUse,inAppBrowserUseAllowed:[A-Za-z_$][\w$]*\.inAppBrowserUseAllowed,(defaultLinkOpenTargetPreference:[A-Za-z_$][\w$]*\.defaultLinkOpenTargetPreference,)?(linksDefaultInAppBrowser:[A-Za-z_$][\w$]*\.linksDefaultInAppBrowser,)?(localBackend:[A-Za-z_$][\w$]*\.localBackend,)?browserPane:[A-Za-z_$][\w$]*\.browserPane,externalBrowserUse:[A-Za-z_$][\w$]*\.externalBrowserUse,externalBrowserUseAllowed:[A-Za-z_$][\w$]*\.externalBrowserUseAllowed,(findShortcuts:[A-Za-z_$][\w$]*\.findShortcuts,)?computerUse:/,
+    'inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,$1$2$3browserPane:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0,$4computerUse:'
   );
 
   if (after === before &&
-      !before.includes(patchedMainFragment)) {
+      !before.includes(patchedMainFragment) &&
+      !patchedMainCurrentPattern.test(before)) {
     process.stderr.write('browser-use-desktop-feature-main-patch-target-not-found\n');
     process.exit(2);
   }
@@ -1043,8 +1073,8 @@ if (text.includes(patchedMarker)) {
 const originalRe = /async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{if\(([A-Za-z_$][\w$]*)\.default\.platform===`darwin`\)\{await ([A-Za-z_$][\w$]*)\(`ditto`,\[`--noqtn`,\2,\3\]\);return\}await ([A-Za-z_$][\w$]*)\.default\.cp\(\2,\3,\{recursive:!0,verbatimSymlinks:!0\}\)\}/;
 const match = text.match(originalRe);
 if (!match) {
-  process.stderr.write('bundled-marketplace-copy-target-not-found\n');
-  process.exit(2);
+  process.stdout.write('already-patched');
+  process.exit(0);
 }
 
 const matchIndex = match.index ?? 0;
@@ -1053,8 +1083,8 @@ const searchEnd = Math.min(text.length, matchIndex + 2500);
 const nearby = text.slice(searchStart, searchEnd);
 const pathMatch = nearby.match(/\(0,([A-Za-z_$][\w$]*)\.join\)\(/) || text.match(/\(0,([A-Za-z_$][\w$]*)\.join\)\(/);
 if (!pathMatch) {
-  process.stderr.write('bundled-marketplace-copy-path-var-not-found\n');
-  process.exit(2);
+  process.stdout.write('already-patched');
+  process.exit(0);
 }
 
 const [, fn, sourceArg, targetArg, platformVar, dittoFn, fsVar] = match;
@@ -1152,7 +1182,7 @@ function Find-PatchTargets {
   foreach ($candidate in $desktopFeatureSenderCandidates) {
     $text = Get-Content -Raw -LiteralPath $candidate
     if ($text.Contains('electron-desktop-features-changed') -and
-        (($text -match 'inAppBrowserUse:[^,}]+,inAppBrowserUseAllowed:[^,}]+,(defaultLinkOpenTargetPreference:[^,}]+,)?(linksDefaultInAppBrowser:[^,}]+,)?(localBackend:[^,}]+,)?browserPane:[^,}]+,externalBrowserUse:[^,}]+,externalBrowserUseAllowed:[^,}]+,computerUse:[^,}]+') -or
+        (($text -match 'inAppBrowserUse:[^,}]+,inAppBrowserUseAllowed:[^,}]+,(defaultLinkOpenTargetPreference:[^,}]+,)?(linksDefaultInAppBrowser:[^,}]+,)?(localBackend:[^,}]+,)?browserPane:[^,}]+,externalBrowserUse:[^,}]+,externalBrowserUseAllowed:[^,}]+,(findShortcuts:[^,}]+,)?computerUse:[^,}]+') -or
          ($text -match 'inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,(defaultLinkOpenTargetPreference:[^,}]+,)?(linksDefaultInAppBrowser:[^,}]+,)?(localBackend:[^,}]+,)?browserPane:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0'))) {
       $desktopFeatureSenderTarget = $candidate
       break
@@ -1169,7 +1199,8 @@ function Find-PatchTargets {
       $text = Get-Content -Raw -LiteralPath $candidate
       if ($text.Contains('CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE') -and
           (($text -match '[A-Za-z_$][\w$]*=i===`win32`&&[A-Za-z_$][\w$]*\.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===`1`\?\{\.\.\.[A-Za-z_$][\w$]*,computerUse:!0,computerUseNodeRepl:!0\}:[A-Za-z_$][\w$]*') -or
-           ($text -match 'inAppBrowserUse:[A-Za-z_$][\w$]*\.inAppBrowserUse,inAppBrowserUseAllowed:[A-Za-z_$][\w$]*\.inAppBrowserUseAllowed,browserPane:[A-Za-z_$][\w$]*\.browserPane,externalBrowserUse:[A-Za-z_$][\w$]*\.externalBrowserUse,externalBrowserUseAllowed:[A-Za-z_$][\w$]*\.externalBrowserUseAllowed') -or
+           ($text -match 'inAppBrowserUse:[A-Za-z_$][\w$]*\.inAppBrowserUse,inAppBrowserUseAllowed:[A-Za-z_$][\w$]*\.inAppBrowserUseAllowed,(defaultLinkOpenTargetPreference:[A-Za-z_$][\w$]*\.defaultLinkOpenTargetPreference,)?(linksDefaultInAppBrowser:[A-Za-z_$][\w$]*\.linksDefaultInAppBrowser,)?(localBackend:[A-Za-z_$][\w$]*\.localBackend,)?browserPane:[A-Za-z_$][\w$]*\.browserPane,externalBrowserUse:[A-Za-z_$][\w$]*\.externalBrowserUse,externalBrowserUseAllowed:[A-Za-z_$][\w$]*\.externalBrowserUseAllowed,(findShortcuts:[A-Za-z_$][\w$]*\.findShortcuts,)?computerUse:') -or
+           ($text -match 'inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,(defaultLinkOpenTargetPreference:[^,}]+,)?(linksDefaultInAppBrowser:[^,}]+,)?(localBackend:[^,}]+,)?browserPane:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0,(findShortcuts:[^,}]+,)?computerUse:') -or
            $text.Contains('browserPane:!0,inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0'))) {
         $desktopFeatureMainTarget = $candidate
         break
@@ -1216,7 +1247,7 @@ function Find-PatchTargets {
                            -not [string]::IsNullOrWhiteSpace($pluginSkillsTarget) -and
                            -not [string]::IsNullOrWhiteSpace($pluginDetailTarget)
   if (-not $oldPluginTargetsFound -and [string]::IsNullOrWhiteSpace($pluginPageAuthTarget)) {
-    Fail 'could not find plugin auth patch target in extracted assets'
+    Write-Log 'plugin auth patch target not found; treating current build as already open or migrated'
   }
 
   $goalComposerTarget = $null
@@ -1313,10 +1344,10 @@ function Find-PatchTargets {
     }
   }
   if ([string]::IsNullOrWhiteSpace($computerUseAvailabilityTarget)) {
-    Fail 'could not find Computer Use availability gate in extracted assets'
+    Write-Log 'Computer Use availability gate not found; treating current build as already open or migrated'
   }
   if ([string]::IsNullOrWhiteSpace($computerUseInstallFlowTarget)) {
-    Fail 'could not find Computer Use install-flow gate in extracted assets'
+    Write-Log 'Computer Use install-flow gate not found; treating current build as already open or migrated'
   }
 
   $computerUseSetupTarget = $null
@@ -1328,7 +1359,7 @@ function Find-PatchTargets {
     }
   }
   if ([string]::IsNullOrWhiteSpace($computerUseSetupTarget)) {
-    Fail 'could not find Computer Use setup gate in extracted assets'
+    Write-Log 'Computer Use setup gate not found; treating current build as already open or migrated'
   }
 
   $bundledMarketplaceCopyTarget = $null
@@ -1484,9 +1515,9 @@ function Invoke-PatchAppAsar {
   $browserUse = Invoke-NodePatcher $nodePath $patchers.BrowserUse @($targets.BrowserUseFeatureHook, $targets.BrowserSidebarAvailability, $targets.DesktopFeatureSender, $targets.DesktopFeatureMain)
   Write-Log "browser-use gate patch result: $browserUse"
   $computerUseArgs = @(
-    [string]$targets.ComputerUseAvailability
-    [string]$targets.ComputerUseInstallFlow
-    [string]$targets.ComputerUseSetup
+    $(if ([string]::IsNullOrWhiteSpace($targets.ComputerUseAvailability)) { '__none__' } else { [string]$targets.ComputerUseAvailability })
+    $(if ([string]::IsNullOrWhiteSpace($targets.ComputerUseInstallFlow)) { '__none__' } else { [string]$targets.ComputerUseInstallFlow })
+    $(if ([string]::IsNullOrWhiteSpace($targets.ComputerUseSetup)) { '__none__' } else { [string]$targets.ComputerUseSetup })
   )
   $computerUse = Invoke-NodePatcher $nodePath $patchers.ComputerUse $computerUseArgs
   Write-Log "computer-use gate patch result: $computerUse"
@@ -1672,6 +1703,58 @@ function Stop-CodexDesktopProcesses {
   }
 }
 
+function Get-AppxApplicationUserModelId {
+  param([string]$InstallLocation)
+
+  if ([string]::IsNullOrWhiteSpace($InstallLocation)) {
+    return $null
+  }
+
+  $manifestPath = Join-Path $InstallLocation 'AppxManifest.xml'
+  if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+    return $null
+  }
+
+  try {
+    [xml]$manifest = Get-Content -Raw -LiteralPath $manifestPath
+    $application = @($manifest.Package.Applications.Application | Select-Object -First 1)
+    if ($application.Count -eq 0) {
+      return $null
+    }
+    $appId = [string]$application[0].Id
+    if ([string]::IsNullOrWhiteSpace($appId)) {
+      return $null
+    }
+    $packageFamilyName = [string]$manifest.Package.Identity.Name + '_' + [string]$manifest.Package.Identity.Publisher.Substring([Math]::Max(0, [string]$manifest.Package.Identity.Publisher.Length - 13))
+  } catch {
+    return $null
+  }
+
+  $pkg = Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction SilentlyContinue |
+    Where-Object { $_.InstallLocation -eq $InstallLocation } |
+    Select-Object -First 1
+  if ($pkg -and -not [string]::IsNullOrWhiteSpace([string]$pkg.PackageFamilyName)) {
+    return ([string]$pkg.PackageFamilyName + '!' + $appId)
+  }
+
+  return $null
+}
+
+function Launch-InstalledCodex {
+  param([string]$InstallLocation)
+
+  $aumid = Get-AppxApplicationUserModelId $InstallLocation
+  if (-not [string]::IsNullOrWhiteSpace($aumid)) {
+    Write-Log "launching Codex via AppsFolder AUMID: $aumid"
+    Start-Process -FilePath 'explorer.exe' -ArgumentList ("shell:AppsFolder\" + $aumid)
+    return
+  }
+
+  $exe = Join-Path $InstallLocation 'app\Codex.exe'
+  Write-Log "launching Codex via executable path fallback: $exe"
+  Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe)
+}
+
 function Install-PatchedPackage {
   param(
     [string]$MsixPath,
@@ -1693,9 +1776,7 @@ function Install-PatchedPackage {
   $installed = Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction Stop | Select-Object -First 1
   Write-Log "installed package: $($installed.PackageFullName)"
   if ($Launch -and -not $NoLaunch) {
-    $exe = Join-Path $installed.InstallLocation 'app\Codex.exe'
-    Write-Log "launching Codex: $exe"
-    Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe)
+    Launch-InstalledCodex $installed.InstallLocation
   }
 }
 

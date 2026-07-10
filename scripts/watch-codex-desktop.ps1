@@ -119,16 +119,15 @@ function Invoke-GuardPrepareUpdateActivity {
   function Write-StoreOfflineAuthorizationWaitNotification {
     param([Parameter(Mandatory = $true)][string]$Id)
     $text = @(
-      "Codex Desktop Guard is waiting for an external Codex Desktop update payload.",
+      "Codex Desktop Guard could not acquire a usable raw Codex Desktop package from Microsoft Store on this machine.",
       "Event: $Id",
       "Status: needs_update_source",
       "Reason: store_offline_authorization_required",
       "",
       "This event already hit the Microsoft Store offline distribution / Microsoft Entra ID authorization boundary.",
-      "The scheduled guard will not repeat the same winget download while incoming has no payload.",
+      "Without a configured raw-package mirror source, the scheduled guard will not repeat the same winget download.",
       "",
-      "Use a clean Windows / VM / another user environment to install official Codex Desktop, export the official package payload, then import it here:",
-      "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$ScriptRoot\import-codex-update-payload.ps1`" -PayloadZip <codex-payload.zip>",
+      "Configure an authorized community mirror that serves the official raw MSIX/MSIXBundle package, then let the guard retry acquisition.",
       "",
       "No patch was applied and no Desktop process was stopped."
     ) -join "`r`n"
@@ -139,11 +138,21 @@ function Invoke-GuardPrepareUpdateActivity {
     Remove-Item -LiteralPath (Join-Path $state.Paths.Notifications 'PREPARE_FAILED.txt') -Force -ErrorAction SilentlyContinue
   }
 
+  $mirrorSettings = Get-GuardMirrorFallbackSettings -State $state
   if ((Test-StoreOfflineAuthorizationRequiredForEvent -Id $EventId) -and -not (Test-IncomingPayloadCandidate)) {
-    Write-GuardUtf8NoBom -Path $lastPreparedPath -Content $EventId
-    Write-StoreOfflineAuthorizationWaitNotification -Id $EventId
-    Write-GuardLog -State $state -LogName 'watch.log' -Message "patched-update source previously hit Store offline authorization; waiting for sidecar/imported payload for event: $EventId"
-    return
+    if ($mirrorSettings.Enabled -and -not [string]::IsNullOrWhiteSpace($mirrorSettings.PackageUrl)) {
+      Remove-Item -LiteralPath (Join-Path $state.Paths.Notifications "STORE_OFFLINE_AUTHORIZATION_REQUIRED-$EventId.txt") -Force -ErrorAction SilentlyContinue
+      Remove-Item -LiteralPath (Join-Path $state.Paths.Notifications 'STORE_OFFLINE_AUTHORIZATION_REQUIRED.txt') -Force -ErrorAction SilentlyContinue
+      Remove-Item -LiteralPath (Join-Path $state.Paths.Notifications "NEEDS_UPDATE_SOURCE-$EventId.txt") -Force -ErrorAction SilentlyContinue
+      Remove-Item -LiteralPath (Join-Path $state.Paths.Notifications 'NEEDS_UPDATE_SOURCE.txt') -Force -ErrorAction SilentlyContinue
+      Remove-Item -LiteralPath $lastPreparedPath -Force -ErrorAction SilentlyContinue
+      Write-GuardLog -State $state -LogName 'watch.log' -Message "patched-update source previously hit Store offline authorization, but mirror raw-package fallback is enabled; retrying acquisition for event: $EventId"
+    } else {
+      Write-GuardUtf8NoBom -Path $lastPreparedPath -Content $EventId
+      Write-StoreOfflineAuthorizationWaitNotification -Id $EventId
+      Write-GuardLog -State $state -LogName 'watch.log' -Message "patched-update source previously hit Store offline authorization; waiting for configured raw-package mirror source for event: $EventId"
+      return
+    }
   }
 
   if ([string]::IsNullOrWhiteSpace($EventPath)) {
@@ -181,9 +190,14 @@ function Invoke-GuardPrepareUpdateActivity {
     $previousStatus = if ($previousManifest) { [string]$previousManifest.Status } else { '' }
     $previousReason = if ($previousManifest -and $previousManifest.Reason) { [string]$previousManifest.Reason } else { '' }
     if ($previousStatus -eq 'needs_update_source' -and $previousReason -eq 'store_offline_authorization_required') {
-      Write-StoreOfflineAuthorizationWaitNotification -Id $EventId
-      Write-GuardLog -State $state -LogName 'watch.log' -Message "patched-update source requires Store offline authorization; waiting for sidecar/imported payload for event: $EventId"
-      return
+      if ($mirrorSettings.Enabled -and -not [string]::IsNullOrWhiteSpace($mirrorSettings.PackageUrl)) {
+        Remove-Item -LiteralPath $lastPreparedPath -Force -ErrorAction SilentlyContinue
+        Write-GuardLog -State $state -LogName 'watch.log' -Message "patched-update source requires Store offline authorization, but mirror raw-package fallback is enabled; retrying acquisition for event: $EventId"
+      } else {
+        Write-StoreOfflineAuthorizationWaitNotification -Id $EventId
+        Write-GuardLog -State $state -LogName 'watch.log' -Message "patched-update source requires Store offline authorization; waiting for configured raw-package mirror source for event: $EventId"
+        return
+      }
     } elseif ($previousStatus -in @('waiting_for_update_payload', 'needs_update_source') -or [string]::IsNullOrWhiteSpace($previousStatus)) {
       Write-GuardLog -State $state -LogName 'watch.log' -Message "patched-update source/payload still not ready; retrying acquisition and discovery for event: $EventId"
     } else {
@@ -205,9 +219,14 @@ function Invoke-GuardPrepareUpdateActivity {
   $latestStatus = if ($latestManifest) { [string]$latestManifest.Status } else { '' }
   $latestReason = if ($latestManifest -and $latestManifest.Reason) { [string]$latestManifest.Reason } else { '' }
   if ($latestStatus -eq 'needs_update_source' -and $latestReason -eq 'store_offline_authorization_required') {
-    Write-GuardUtf8NoBom -Path $lastPreparedPath -Content $EventId
-    Write-StoreOfflineAuthorizationWaitNotification -Id $EventId
-    Write-GuardLog -State $state -LogName 'watch.log' -Message "patched-update source requires Store offline authorization; future watches will wait for sidecar/imported payload for event: $EventId"
+    if ($mirrorSettings.Enabled -and -not [string]::IsNullOrWhiteSpace($mirrorSettings.PackageUrl)) {
+      Remove-Item -LiteralPath $lastPreparedPath -Force -ErrorAction SilentlyContinue
+      Write-GuardLog -State $state -LogName 'watch.log' -Message "patched-update source still reports Store offline authorization, but mirror raw-package fallback is enabled; future watches will retry event: $EventId"
+    } else {
+      Write-GuardUtf8NoBom -Path $lastPreparedPath -Content $EventId
+      Write-StoreOfflineAuthorizationWaitNotification -Id $EventId
+      Write-GuardLog -State $state -LogName 'watch.log' -Message "patched-update source requires Store offline authorization; future watches will wait for configured raw-package mirror source for event: $EventId"
+    }
   } elseif ($latestStatus -in @('waiting_for_update_payload', 'needs_update_source')) {
     Remove-Item -LiteralPath $lastPreparedPath -Force -ErrorAction SilentlyContinue
     Write-GuardLog -State $state -LogName 'watch.log' -Message "patched-update prepare still needs source/payload; future watches will retry event: $EventId"
