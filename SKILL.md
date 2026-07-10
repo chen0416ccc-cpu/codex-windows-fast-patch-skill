@@ -1,11 +1,11 @@
 ---
 name: codex-windows-fast-patch
-description: Reapply and repair Windows Codex Desktop after Store upgrades, including Fast Mode request/UI gates, locale i18n, plugin UI gates, Chrome/browser_use gates, Goal command gates, Windows Computer Use availability gates and plugin/runtime repair, phone remote-control pairing under third-party/API-key main app usage, Desktop dynamicTools/inputSchema thread-start schema drift, local conversation visibility recovery after model_provider switches, restored-conversation missing-cwd continuation repair, ASAR integrity repair, signing/installing patched MSIX packages, SDK cleanup, Fast Mode wire verification, local plugin marketplace registration, and optional custom model_instructions_file setup.
+description: Reapply and repair Windows Codex Desktop after Store upgrades, including Fast Mode request/UI gates, locale i18n, plugin UI gates, Chrome/browser_use gates, Goal command gates, Windows Computer Use availability gates and plugin/runtime repair, phone remote-control pairing under third-party/API-key main app usage, Desktop dynamicTools/inputSchema thread-start schema drift, local conversation visibility recovery after model_provider switches, stale per-thread model/reasoning state repair, restored-conversation missing-cwd continuation repair, ASAR integrity repair, signing/installing patched MSIX packages, SDK cleanup, Fast Mode wire verification, local plugin marketplace registration, and optional custom model_instructions_file setup.
 ---
 
 # Codex Windows Fast Patch
 
-Use this skill when the user says Codex Desktop was upgraded and the Fast Mode / Plugins / Goal patch disappeared, asks to repatch Codex on Windows, asks to verify whether Fast Mode is really being sent, asks to restore/register the local plugin marketplace, asks to enable Chrome browser use or Windows Computer Use in Codex Desktop, or asks to enable/repair phone remote control while keeping third-party/API-key model access. Also use it when the language/locale setting reverts after restart, browser or plugin entries are hidden by availability gates, the Computer Control settings page shows "Any App" / "任意应用" as disabled by organization or unavailable in the current region, a Computer Use task reports native pipe, bundled plugin cache, helper path, package import, or runtime initialization errors, phone remote-control QR pairing spins/fails, post-pairing phone-created turns hit the wrong model API endpoint, Desktop new-chat/thread start fails with `missing field inputSchema`, local conversations disappear after switching `model_provider` / API account, restored conversations are visible but cannot continue because the current working directory is missing, or the user explicitly asks to configure the bundled custom `model_instructions_file` prompt asset.
+Use this skill when the user says Codex Desktop was upgraded and the Fast Mode / Plugins / Goal patch disappeared, asks to repatch Codex on Windows, asks to verify whether Fast Mode is really being sent, asks to restore/register the local plugin marketplace, asks to enable Chrome browser use or Windows Computer Use in Codex Desktop, or asks to enable/repair phone remote control while keeping third-party/API-key model access. Also use it when the language/locale setting reverts after restart, browser or plugin entries are hidden by availability gates, the Computer Control settings page shows "Any App" / "任意应用" as disabled by organization or unavailable in the current region, a Computer Use task reports native pipe, bundled plugin cache, helper path, package import, or runtime initialization errors, phone remote-control QR pairing spins/fails, post-pairing phone-created turns hit the wrong model API endpoint, Desktop new-chat/thread start fails with `missing field inputSchema`, local conversations disappear after switching `model_provider` / API account, a specific old conversation retains stale local `model` / `reasoning_effort` state, restored conversations are visible but cannot continue because the current working directory is missing, or the user explicitly asks to configure the bundled custom `model_instructions_file` prompt asset.
 
 ## Platform Compatibility
 
@@ -54,6 +54,7 @@ Before choosing the full MSIX repack path, identify whether the current failure 
 - Use the Phone Remote Control workflow when the user needs mobile pairing/control, the Connections page hides the phone setup card, the QR dialog spins, remote-control setup jumps to ChatGPT auth, the Allow dialog fails, the phone says the Codex environment version expired, or phone-created turns reach Desktop but send model requests to the wrong API endpoint.
 - Use the Missing inputSchema decision workflow when Codex Desktop cannot create a new conversation or local task and the newest Desktop log reports `method=thread/start` with the phrase `missing field inputSchema`. Do not assume this is always MCP. First compare CLI/app-server smoke tests against Desktop logs and inspect whether Desktop is sending non-null app dynamic tools. If the failure follows a suspect MCP server, isolate MCP. If CLI thread start succeeds while Desktop UI fails and extracted ASAR has `webview\assets\app-server-dynamic-tools-*.js` returning a namespace-wrapped `dynamicTools` object, use the Dynamic Tools Schema workflow. Do not run Phone Remote Control or Computer Use repair for this symptom unless separate evidence points there.
 - Use the Provider History Sync workflow when old conversations disappear from the official Desktop sidebar after the user changes `model_provider`, API account, or provider config, but local `sessions`, `archived_sessions`, or `state_5.sqlite` data still exists. Also use it when the conversations reappear but opening/continuing one fails with `当前工作目录缺失`, `current working directory missing`, or `invalid codex request` caused by a missing historical `cwd`. This workflow is data-layer repair; it does not require third-party recovery tools, does not patch ASAR, and must not modify `config.toml`.
+- Use the Thread Model Sync workflow only after evidence identifies one or more thread IDs whose local `model` or `reasoning_effort` is stale. It is a narrow state repair, not a fix for a model provider, a model itself, or a streaming transport failure.
 - Use the targeted bundled marketplace repair when the newest Desktop logs show the runtime marketplace reconciling only 4 bundled plugins instead of the expected `sites,browser,chrome,computer-use,latex`, or show `not_in_bundled_marketplace_plugin_names` uninstalling `sites@openai-bundled`, `browser@openai-bundled`, or `chrome@openai-bundled`. In newer Windows builds, `sites` can be present in the shipped marketplace but filtered out by `features.sites = false`; this should not trigger a broad repatch or Phone Remote Control workflow.
 - If the user asks for Phone Remote Control and ordinary Desktop features in the same repair, patch Phone Remote Control first, then verify Fast Mode/browser/Chrome/Computer Use. If the remote-control MSIX install disturbs Computer Use or Chrome native-host state, immediately run the Computer Use Only workflow and re-run `-StrictVerifyOnly`.
 - Do not infer that a new `resources\codex.exe` PE file means `app.asar` is gone or that Computer Use needs binary patching. Inspect the current package resources first. If `app.asar` still exists and the symptom is a plugin/runtime import or cache failure, run `scripts\install-computer-use-local.ps1` before considering MSIX or binary changes.
@@ -308,6 +309,33 @@ Success criteria:
 - Codex Desktop's official sidebar shows the recovered historical conversations after restart.
 - If the symptom was a visible restored conversation that could not continue, `missing rollout cwd dirs after` reports zero or only reviewed/skipped paths, and the affected conversation can send a new turn after Desktop restart.
 - The Projects/workspace area does not gain new empty project groups as a side effect.
+
+## Thread Model Sync
+
+Use this only when direct local evidence identifies a stale thread record: for example, the saved thread row still has an old `model` / `reasoning_effort` while Desktop or the rollout already shows the intended values. It is not a treatment for `stream disconnected before completion`, an upstream model outage, or a provider-wide model-selection failure.
+
+The script requires explicit thread IDs and previews by default. It selects only rows that are non-archived `thread_source='user'` records with the requested `model_provider` and expected old `model`. An optional `-ExpectedReasoningEffort` adds one more selection guard. It updates only the matching SQLite rows and each selected rollout's first `session_meta` line; it does not recursively rewrite arbitrary JSONL fields.
+
+Run the built-in offline fixture check before relying on a new copy of the script:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\sync-codex-thread-model.ps1" -SelfTest
+```
+
+Preview one affected thread without writing:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\sync-codex-thread-model.ps1" -ThreadId '<thread-id>' -FromModel 'gpt-5.4' -ToModel 'gpt-5.6-terra' -ModelProvider 'krill' -ExpectedReasoningEffort 'medium' -ToReasoningEffort 'xhigh'
+```
+
+Only after reviewing the selected thread IDs and stopping Desktop from an external PowerShell, add `-Apply`:
+
+```powershell
+Get-Process Codex -ErrorAction SilentlyContinue | Where-Object { $_.Path -like 'C:\Program Files\WindowsApps\OpenAI.Codex_*\app\Codex.exe' } | Stop-Process -Force
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\sync-codex-thread-model.ps1" -ThreadId '<thread-id>' -FromModel 'gpt-5.4' -ToModel 'gpt-5.6-terra' -ModelProvider 'krill' -ExpectedReasoningEffort 'medium' -ToReasoningEffort 'xhigh' -Apply
+```
+
+The write path refuses to run while any `Codex` process is active and makes timestamped SQLite and rollout backups under `$env:USERPROFILE\.codex\backups\thread-model-sync`. Stop Codex from an external PowerShell with `Get-Process Codex -ErrorAction SilentlyContinue | Stop-Process -Force`; if no row matches the full scope, the script makes no write. Do not broaden this script into a provider-wide or all-thread migration; use the provider history workflow for provider metadata repair.
 
 ## Important Guardrails
 
