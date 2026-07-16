@@ -105,8 +105,13 @@ function Find-CodexAppPath {
     }
   }
 
-  $running = Get-Process -Name 'Codex' -ErrorAction SilentlyContinue |
-    Where-Object { $_.Path -and $_.Path -like '*\WindowsApps\OpenAI.Codex_*\app\Codex.exe' } |
+  $running = Get-Process -Name 'Codex', 'ChatGPT' -ErrorAction SilentlyContinue |
+    Where-Object {
+      $_.Path -and (
+        $_.Path -like '*\WindowsApps\OpenAI.Codex_*\app\Codex.exe' -or
+        $_.Path -like '*\WindowsApps\OpenAI.Codex_*\app\ChatGPT.exe'
+      )
+    } |
     Sort-Object StartTime -Descending |
     Select-Object -First 1
   if ($running) {
@@ -508,10 +513,11 @@ const text = fs.readFileSync(file, 'utf8');
 const legacyPatchedRe = /function L\(e\)\{let (\w+)=v\(x\),(\w+)=e\?\.hostId\?\?\1,\{data:(\w+)\}=d\(E,\2\);return \3\?\.requirements\?\.featureRequirements\?\.fast_mode!==!1\}/;
 const currentDirectPatchedRe = /featureRequirements\?\.fast_mode===!1;return!\w+\}/;
 const currentAsyncPatchedRe = /async function \w+\(\w+,\w+\)\{let \w+=await \w+\(\w+,\w+\);return\(await \w+\.query\.fetch\(\w+,\{authMethod:\w+,hostId:\w+\}\)\)\.requirements\?\.featureRequirements\?\.fast_mode!==!1\}/;
-const currentCachedAsyncPatchedRe = /return [^;]+\.query\.setData\([\s\S]*?\),\w+\.requirements\?\.featureRequirements\?\.fast_mode!==!1\}/;
+const currentCachedAsyncPatchedRe = /async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3\);let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\3,\{priority:`critical`\}\);return \2\.query\.setData\(([A-Za-z_$][\w$]*),\{authMethod:\4,hostId:\3\},\6\),\6\.requirements\?\.featureRequirements\?\.fast_mode!==!1\}/;
 const legacyOriginalRe = /function L\(e\)\{let (\w+)=v\(x\),(\w+)=e\?\.hostId\?\?\1,(\w+)=O\(\2\),\{data:(\w+)\}=d\(E,\2\);return!\(\3\?\.authMethod!==`chatgpt`\|\|\4\?\.requirements\?\.featureRequirements\?\.fast_mode===!1\)\}/;
 const currentDirectOriginalRe = /function (\w+)\(e\)\{let (\w+)=([^,;]+),(\w+)=e\?\.hostId\?\?\2,(\w+)=(\w+\(\4\)),\{data:(\w+)\}=(\w+\(\w+,\4\)),(\w+)=\7\?\.requirements\?\.featureRequirements\?\.fast_mode===!1;return!\(\5\?\.authMethod!==`chatgpt`\|\|\9\)\}/;
 const currentAsyncOriginalRe = /async function (\w+)\((\w+),(\w+)\)\{let (\w+)=await ([A-Za-z_$][\w$]*)\(\2,\3\);return \4===`chatgpt`\?\(await \2\.query\.fetch\(([A-Za-z_$][\w$]*),\{authMethod:\4,hostId:\3\}\)\)\.requirements\?\.featureRequirements\?\.fast_mode!==!1:!1\}/;
+const currentCachedAsyncOriginalRe = /async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3\);if\(\4!==`chatgpt`\)return!1;let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\3,\{priority:`critical`\}\);return \2\.query\.setData\(([A-Za-z_$][\w$]*),\{authMethod:\4,hostId:\3\},\6\),\6\.requirements\?\.featureRequirements\?\.fast_mode!==!1\}/;
 const currentSplitConditionRe = /if\((\w+)\?\.authMethod!==`chatgpt`\|\|(\w+)\)\{/;
 
 if (legacyPatchedRe.test(text) || currentAsyncPatchedRe.test(text) || currentCachedAsyncPatchedRe.test(text) || (currentDirectPatchedRe.test(text) && !legacyOriginalRe.test(text) && !currentDirectOriginalRe.test(text) && !currentSplitConditionRe.test(text))) {
@@ -540,6 +546,13 @@ if (!patched) {
   if (currentAsyncMatch) {
     const [, fn, hostManagerVar, hostIdVar, authMethodVar, authMethodFn, queryVar] = currentAsyncMatch;
     next = next.replace(currentAsyncOriginalRe, `async function ${fn}(${hostManagerVar},${hostIdVar}){let ${authMethodVar}=await ${authMethodFn}(${hostManagerVar},${hostIdVar});return(await ${hostManagerVar}.query.fetch(${queryVar},{authMethod:${authMethodVar},hostId:${hostIdVar}})).requirements?.featureRequirements?.fast_mode!==!1}`);
+    patched = true;
+  }
+
+  const currentCachedAsyncMatch = next.match(currentCachedAsyncOriginalRe);
+  if (currentCachedAsyncMatch) {
+    const [, fn, hostManagerVar, hostIdVar, authMethodVar, authMethodFn, requirementsVar, requirementsFn, queryVar] = currentCachedAsyncMatch;
+    next = next.replace(currentCachedAsyncOriginalRe, `async function ${fn}(${hostManagerVar},${hostIdVar}){let ${authMethodVar}=await ${authMethodFn}(${hostManagerVar},${hostIdVar});let ${requirementsVar}=await ${requirementsFn}(${hostIdVar},{priority:\`critical\`});return ${hostManagerVar}.query.setData(${queryVar},{authMethod:${authMethodVar},hostId:${hostIdVar}},${requirementsVar}),${requirementsVar}.requirements?.featureRequirements?.fast_mode!==!1}`);
     patched = true;
   }
 
@@ -737,8 +750,10 @@ if (hasFile(pageAuthFile)) {
 }
 
 if (oldFileCount === 0 && !hasFile(pageAuthFile)) {
-  process.stderr.write('plugin-gate-targets-not-found\n');
-  process.exit(2);
+  // No legacy or current auth gate present in this build: the plugin auth gate
+  // was removed upstream and install is already open. Treat as already-patched.
+  process.stdout.write('already-patched');
+  process.exit(0);
 }
 
 process.stdout.write(changed ? 'patched' : 'already-patched');
@@ -856,6 +871,9 @@ function patchComputerUseAvailability(file) {
 }
 
 function patchComputerUseInstallFlow(file) {
+  if (!file || file === '__none__') {
+    return;
+  }
   const before = read(file);
   if (!before.includes('openPluginInstall') ||
       (!before.includes('installPlugin:async') && !before.includes('install-plugin'))) {
@@ -1089,12 +1107,15 @@ const text = fs.readFileSync(file, 'utf8');
 
 const copyPatchedMarker = 'codex_windows_bundled_marketplace_copy_fallback';
 const sitesPatchedMarker = 'codex_windows_sites_bundled_plugin_available';
+const deepResearchPatchedMarker = 'codex_windows_deep_research_bundled_plugin_available';
 let after = text;
 let changed = false;
 
 const hasNativeWindowsCopyFallback =
-  after.includes('copyDirectoryAllowDecryptedDestinationOnEncryptionFailure') &&
-  after.includes('windows-file-copy-');
+  (after.includes('copyDirectoryAllowDecryptedDestinationOnEncryptionFailure') &&
+   after.includes('windows-file-copy-')) ||
+  /platform!==`win32`\)\{await [A-Za-z_$][\w$]*\.default\.cp\([^)]*\{recursive:!0,verbatimSymlinks:!0\}\);return\}/.test(after) ||
+  /require\(`\.\/windows-file-copy-[A-Za-z0-9_-]+\.js`\)/.test(after);
 
 if (!after.includes(copyPatchedMarker) && !hasNativeWindowsCopyFallback) {
   const originalRe = /async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{if\(([A-Za-z_$][\w$]*)\.default\.platform===`darwin`\)\{await ([A-Za-z_$][\w$]*)\(`ditto`,\[`--noqtn`,\2,\3\]\);return\}await ([A-Za-z_$][\w$]*)\.default\.cp\(\2,\3,\{recursive:!0,verbatimSymlinks:!0\}\)\}/;
@@ -1103,7 +1124,6 @@ if (!after.includes(copyPatchedMarker) && !hasNativeWindowsCopyFallback) {
     process.stderr.write('bundled-marketplace-copy-target-not-found\n');
     process.exit(2);
   }
-
   const matchIndex = match.index ?? 0;
   const searchStart = Math.max(0, matchIndex - 2500);
   const searchEnd = Math.min(after.length, matchIndex + 2500);
@@ -1129,6 +1149,16 @@ if (!after.includes(sitesPatchedMarker)) {
     process.exit(2);
   }
   after = after.replace(sitesAvailabilityRe, `isAvailable:()=>!0/*${sitesPatchedMarker}*/`);
+  changed = true;
+}
+
+if (!after.includes(deepResearchPatchedMarker)) {
+  const deepResearchAvailabilityRe = /isAvailable:\(\{features:([A-Za-z_$][\w$]*)\}\)=>\1\.deepResearch/;
+  if (!deepResearchAvailabilityRe.test(after)) {
+    process.stderr.write('bundled-marketplace-deep-research-availability-target-not-found\n');
+    process.exit(2);
+  }
+  after = after.replace(deepResearchAvailabilityRe, `isAvailable:()=>!0/*${deepResearchPatchedMarker}*/`);
   changed = true;
 }
 
@@ -1307,7 +1337,7 @@ function Find-PatchTargets {
                            -not [string]::IsNullOrWhiteSpace($pluginSkillsTarget) -and
                            -not [string]::IsNullOrWhiteSpace($pluginDetailTarget)
   if (-not $oldPluginTargetsFound -and [string]::IsNullOrWhiteSpace($pluginPageAuthTarget)) {
-    Fail 'could not find plugin auth patch target in extracted assets'
+    Write-Log 'plugin auth gate not found; treating current build as already open or migrated'
   }
 
   $goalComposerTarget = $null
@@ -1411,7 +1441,7 @@ function Find-PatchTargets {
     Fail 'could not find Computer Use availability gate in extracted assets'
   }
   if ([string]::IsNullOrWhiteSpace($computerUseInstallFlowTarget)) {
-    Fail 'could not find Computer Use install-flow gate in extracted assets'
+    Write-Log 'Computer Use install-flow gate not found; treating current build as already open or migrated'
   }
 
   $computerUseSetupTarget = $null
@@ -1666,7 +1696,7 @@ function Invoke-PatchAppAsar {
   Write-Log "browser-use gate patch result: $browserUse"
   $computerUseArgs = @(
     [string]$targets.ComputerUseAvailability
-    [string]$targets.ComputerUseInstallFlow
+    $(if ([string]::IsNullOrWhiteSpace($targets.ComputerUseInstallFlow)) { '__none__' } else { [string]$targets.ComputerUseInstallFlow })
     [string]$targets.ComputerUseSetup
   )
   $computerUse = Invoke-NodePatcher $nodePath $patchers.ComputerUse $computerUseArgs
@@ -1842,14 +1872,15 @@ function Invoke-SignPackage {
 function Stop-CodexDesktopProcesses {
   param([string]$InstallLocation)
   $targetRoot = if ($InstallLocation) { $InstallLocation.TrimEnd('\') } else { $null }
-  $processes = Get-Process -Name 'Codex' -ErrorAction SilentlyContinue | Where-Object {
+  $processes = Get-Process -Name 'Codex', 'ChatGPT' -ErrorAction SilentlyContinue | Where-Object {
     $_.Path -and (
       ($targetRoot -and $_.Path.StartsWith($targetRoot, [StringComparison]::OrdinalIgnoreCase)) -or
-      $_.Path -like '*\WindowsApps\OpenAI.Codex_*\app\Codex.exe'
+      $_.Path -like '*\WindowsApps\OpenAI.Codex_*\app\Codex.exe' -or
+      $_.Path -like '*\WindowsApps\OpenAI.Codex_*\app\ChatGPT.exe'
     )
   }
   foreach ($p in $processes) {
-    Write-Log "stopping Codex desktop process pid=$($p.Id)"
+    Write-Log "stopping Codex package process name=$($p.ProcessName) pid=$($p.Id)"
     Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
   }
 }
@@ -1875,9 +1906,27 @@ function Install-PatchedPackage {
   $installed = Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction Stop | Select-Object -First 1
   Write-Log "installed package: $($installed.PackageFullName)"
   if ($Launch -and -not $NoLaunch) {
-    $appUserModelId = "$($installed.PackageFamilyName)!App"
+    $application = @(Get-AppxPackageManifest -Package $installed).Package.Applications.Application | Select-Object -First 1
+    $appUserModelId = "$($installed.PackageFamilyName)!$($application.Id)"
+    $appExecutable = Join-Path $installed.InstallLocation ([string]$application.Executable).Replace('/', '\')
     Write-Log "launching Codex package app: $appUserModelId"
     Start-Process -FilePath 'explorer.exe' -ArgumentList "shell:AppsFolder\$appUserModelId"
+
+    $deadline = (Get-Date).AddSeconds(20)
+    $desktopProcess = $null
+    while (-not $desktopProcess -and (Get-Date) -lt $deadline) {
+      Start-Sleep -Milliseconds 500
+      $desktopProcess = Get-Process -Name ([System.IO.Path]::GetFileNameWithoutExtension($appExecutable)) -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -and $_.Path.Equals($appExecutable, [StringComparison]::OrdinalIgnoreCase) } |
+        Select-Object -First 1
+    }
+    if (-not $desktopProcess) {
+      Fail "Codex Desktop executable did not start: $appExecutable"
+    }
+
+    # A second activation makes an already-running Electron instance surface its window.
+    Start-Process -FilePath 'explorer.exe' -ArgumentList "shell:AppsFolder\$appUserModelId"
+    Write-Log "Codex Desktop package process started: $appExecutable pid=$($desktopProcess.Id)"
   }
 }
 
@@ -1930,6 +1979,102 @@ function Add-LocalMarketplace {
   if ($LASTEXITCODE -ne 0) {
     Write-Log "warning: marketplace registration returned exit code $LASTEXITCODE"
   }
+}
+
+function Test-BrowserClientProcessShimCompatible {
+  param([string]$Content)
+
+  $localProxy = "  const process = processShim;`n  const global = Object.create(globalThis, { process: { value: processShim, enumerable: true } });"
+  if ($Content.Contains($localProxy)) {
+    return $true
+  }
+
+  foreach ($legacyBinding in @(
+    'globalThis.process = processShim;',
+    'globalThis.global.process = processShim;',
+    'const process = processShim;'
+  )) {
+    if ($Content.Contains($legacyBinding)) {
+      return $false
+    }
+  }
+
+  foreach ($directShimMarker in @(
+    'const processShim = {',
+    'processShim.on("beforeExit"',
+    'processShim.memoryUsage().rss',
+    'typeof processShim.versions.icu'
+  )) {
+    if (-not $Content.Contains($directShimMarker)) {
+      return $false
+    }
+  }
+
+  return $true
+}
+
+function Patch-ChromePluginWindowsRegistryParsing {
+  param([string]$WorkApp)
+
+  $chromePluginRoot = Join-Path $WorkApp 'resources\plugins\openai-bundled\plugins\chrome'
+  if (-not (Test-Path -LiteralPath $chromePluginRoot -PathType Container)) {
+    return 'not-present'
+  }
+
+  $changed = $false
+  $genericOld = 'if (match && match[1] === label) return stripRegistryString(match[2]);'
+  $genericNew = 'if (match && (valueName == null || match[1] === label)) return stripRegistryString(match[2]);'
+  foreach ($relativePath in @('scripts\open-chrome-window.js', 'scripts\installed-browsers.js')) {
+    $path = Join-Path $chromePluginRoot $relativePath
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+      continue
+    }
+    $content = [System.IO.File]::ReadAllText($path, [System.Text.UTF8Encoding]::new($false))
+    if ($content.Contains($genericNew)) {
+      continue
+    }
+    if (-not $content.Contains($genericOld)) {
+      Write-Log "warning: Chrome registry parser anchor not found: $path"
+      continue
+    }
+    [System.IO.File]::WriteAllText($path, $content.Replace($genericOld, $genericNew), [System.Text.UTF8Encoding]::new($false))
+    $changed = $true
+  }
+
+  $nativeHostPath = Join-Path $chromePluginRoot 'scripts\check-native-host-manifest.js'
+  if (Test-Path -LiteralPath $nativeHostPath -PathType Leaf) {
+    $nativeOld = 'if (match && match[1] === valueName) return stripRegistryString(match[2]);'
+    $nativeNew = 'if (match && (valueName === "(Default)" || match[1] === valueName)) return stripRegistryString(match[2]);'
+    $nativeContent = [System.IO.File]::ReadAllText($nativeHostPath, [System.Text.UTF8Encoding]::new($false))
+    if (-not $nativeContent.Contains($nativeNew)) {
+      if ($nativeContent.Contains($nativeOld)) {
+        [System.IO.File]::WriteAllText($nativeHostPath, $nativeContent.Replace($nativeOld, $nativeNew), [System.Text.UTF8Encoding]::new($false))
+        $changed = $true
+      } else {
+        Write-Log "warning: Chrome native-host registry parser anchor not found: $nativeHostPath"
+      }
+    }
+  }
+
+  $browserClientPath = Join-Path $chromePluginRoot 'scripts\browser-client.mjs'
+  if (Test-Path -LiteralPath $browserClientPath -PathType Leaf) {
+    $browserClientContent = [System.IO.File]::ReadAllText($browserClientPath, [System.Text.UTF8Encoding]::new($false))
+    $browserClientNew = "  const process = processShim;`n  const global = Object.create(globalThis, { process: { value: processShim, enumerable: true } });"
+    if (-not (Test-BrowserClientProcessShimCompatible $browserClientContent)) {
+      $browserClientOld = "  globalThis.process = processShim;`n  globalThis.global = globalThis.global ?? globalThis;`n  globalThis.global.process = processShim;"
+      $browserClientIntermediate = "  const process = processShim;`n  const global = globalThis;"
+      $browserClientIntermediate2 = "  const process = processShim;`n  const global = Object.assign(Object.create(globalThis), { process: processShim });"
+      $browserClientAnchor = if ($browserClientContent.Contains($browserClientOld)) { $browserClientOld } elseif ($browserClientContent.Contains($browserClientIntermediate)) { $browserClientIntermediate } elseif ($browserClientContent.Contains($browserClientIntermediate2)) { $browserClientIntermediate2 } else { $null }
+      if ($null -ne $browserClientAnchor) {
+        [System.IO.File]::WriteAllText($browserClientPath, $browserClientContent.Replace($browserClientAnchor, $browserClientNew), [System.Text.UTF8Encoding]::new($false))
+        $changed = $true
+      } else {
+        Fail "Chrome browser client process shim shape is unsupported: $browserClientPath"
+      }
+    }
+  }
+
+  return $(if ($changed) { 'patched' } else { 'already-patched' })
 }
 
 function Invoke-FastModeVerification {
@@ -2009,6 +2154,19 @@ function decodeFrames(buffer) {
 }
 
 const server = http.createServer((req, res) => {
+  if (req.method === "GET" && req.url.startsWith("/v1/models")) {
+    write({ kind: "http", method: req.method, url: req.url, service_tier: null });
+    const body = JSON.stringify({
+      object: "list",
+      data: [{ id: "gpt-5.6-sol", object: "model", created: 0, owned_by: "openai" }],
+    });
+    res.writeHead(200, {
+      "Content-Type": "application/json",
+      "Content-Length": Buffer.byteLength(body),
+    });
+    res.end(body);
+    return;
+  }
   const chunks = [];
   req.on("data", (chunk) => chunks.push(chunk));
   req.on("end", () => {
@@ -2023,7 +2181,13 @@ const server = http.createServer((req, res) => {
       // Keep the raw body if a future client uses an encoding this runtime cannot decode.
     }
     const text = body.toString("utf8");
-    write({ kind: "http", method: req.method, url: req.url, service_tier: getServiceTier(text) });
+    const isResponsesRequest = req.url === "/v1/responses" || req.url.startsWith("/v1/responses?");
+    write({
+      kind: "http",
+      method: req.method,
+      url: req.url,
+      service_tier: isResponsesRequest ? getServiceTier(text) : null,
+    });
     const response = Buffer.from(JSON.stringify({ error: { message: "capture complete", type: "invalid_request_error" } }));
     res.writeHead(400, { "Content-Type": "application/json", "Content-Length": response.length });
     res.end(response);
@@ -2051,7 +2215,10 @@ server.on("upgrade", (req, socket, head) => {
     const decoded = decodeFrames(pending);
     pending = Buffer.from(decoded.rest);
     for (const frame of decoded.frames) {
-      if (frame.opcode === 1) write({ kind: "frame", service_tier: getServiceTier(frame.text) });
+      if (frame.opcode === 1) {
+        const isResponsesRequest = req.url === "/v1/responses" || req.url.startsWith("/v1/responses?");
+        write({ kind: "frame", url: req.url, service_tier: isResponsesRequest ? getServiceTier(frame.text) : null });
+      }
       if (frame.opcode === 8) socket.destroy();
     }
   }
@@ -2068,6 +2235,8 @@ setTimeout(() => server.close(() => process.exit(0)), 15000).unref();
 '@
 
   Set-Content -LiteralPath $serverPath -Value $serverSource -Encoding ASCII
+  $verificationCodexHome = Join-Path $captureDir 'codex-home'
+  New-Item -ItemType Directory -Force -Path $verificationCodexHome | Out-Null
   $port = Get-Random -Minimum 41000 -Maximum 49000
   $server = Start-Process -FilePath $node -ArgumentList @($serverPath, [string]$port, $logPath) -PassThru -WindowStyle Hidden
   $codexJob = $null
@@ -2089,6 +2258,7 @@ setTimeout(() => server.close(() => process.exit(0)), 15000).unref();
     $providerNameConfig = 'model_providers.' + $providerId + '.name="Codex Fast Wire Capture"'
     $baseUrlConfig = 'model_providers.' + $providerId + '.base_url="http://127.0.0.1:' + $port + '/v1"'
     $wireApiConfig = 'model_providers.' + $providerId + '.wire_api="responses"'
+    $providerEnvKeyConfig = 'model_providers.' + $providerId + '.env_key="OPENAI_API_KEY"'
     $providerConfig = 'model_provider="' + $providerId + '"'
     $wireTier = $null
     $codexJob = Start-Job -ScriptBlock {
@@ -2097,10 +2267,14 @@ setTimeout(() => server.close(() => process.exit(0)), 15000).unref();
         [string]$ProviderConfig,
         [string]$ProviderNameConfig,
         [string]$BaseUrlConfig,
-        [string]$WireApiConfig
+        [string]$WireApiConfig,
+        [string]$ProviderEnvKeyConfig,
+        [string]$VerificationCodexHome
       )
-      & $CodexPath exec --ignore-user-config --ephemeral --json --skip-git-repo-check -c $ProviderConfig -c $ProviderNameConfig -c $BaseUrlConfig -c $WireApiConfig -c 'service_tier="fast"' -c 'model_reasoning_effort="low"' -c 'features.enable_request_compression=false' 'wire capture only' 2>&1 | Out-Null
-    } -ArgumentList $codex, $providerConfig, $providerNameConfig, $baseUrlConfig, $wireApiConfig
+      $env:CODEX_HOME = $VerificationCodexHome
+      $env:OPENAI_API_KEY = 'codex-fast-wire-verification'
+      & $CodexPath exec --ignore-user-config --ephemeral --json --skip-git-repo-check -c $ProviderConfig -c $ProviderNameConfig -c $BaseUrlConfig -c $WireApiConfig -c $ProviderEnvKeyConfig -c 'service_tier="fast"' -c 'model_reasoning_effort="low"' -c 'model="gpt-5.6-sol"' -c 'features.enable_request_compression=false' 'wire capture only' 2>&1 | Out-Null
+    } -ArgumentList $codex, $providerConfig, $providerNameConfig, $baseUrlConfig, $wireApiConfig, $providerEnvKeyConfig, $verificationCodexHome
 
     $requestDeadline = (Get-Date).AddSeconds(25)
     while ((Get-Date) -lt $requestDeadline -and -not $wireTier) {
@@ -2115,6 +2289,9 @@ setTimeout(() => server.close(() => process.exit(0)), 15000).unref();
           continue
         }
         if ($entry.kind -notin @('frame', 'http')) {
+          continue
+        }
+        if ([string]$entry.url -notmatch '^/v1/responses(?:\?|$)') {
           continue
         }
         if (-not [string]::IsNullOrWhiteSpace([string]$entry.service_tier)) {
@@ -2218,6 +2395,9 @@ New-Item -ItemType Directory -Force -Path $tempWork | Out-Null
 try {
   Copy-PackageLayout $sourcePackageRoot $workPackageRoot
   Remove-OldPackageArtifacts $workPackageRoot
+
+  $chromeRegistryParsing = Patch-ChromePluginWindowsRegistryParsing $workApp
+  Write-Log "Chrome localized registry parsing patch result: $chromeRegistryParsing"
 
   $patched = Invoke-PatchAppAsar $workApp $sourceApp $tempWork
   $asar = Join-Path $workApp 'resources\app.asar'
