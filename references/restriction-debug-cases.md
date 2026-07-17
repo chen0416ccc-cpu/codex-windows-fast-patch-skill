@@ -209,6 +209,29 @@ Action:
 - If verification succeeds but Desktop still reports native pipe unavailable, fully quit and relaunch Codex Desktop, then inspect the newest Desktop log for `computer-use native pipe startup ready`.
 - Only consider a full MSIX repack when Desktop logs or UI evidence show a closed feature gate. Do not patch `resources\codex.exe` or the ASAR just because the immediate failure is an `@oai/sky` package export/import error.
 
+## Computer Use Screenshot Fails With 0x80004002 On Windows 10
+
+Symptoms:
+
+- App/window enumeration works, but the first real screenshot fails with `SetIsBorderRequired failed: The requested interface is not supported (0x80004002)`.
+- Skipping only the border-interface call changes the failure into `FrameArrived timed out`.
+- The machine is Windows 10 and the failing binary is the user-level CUA `codex-computer-use.exe`, not the Desktop ASAR or `resources\codex.exe`.
+
+Checks:
+
+- Run `scripts\install-computer-use-local.ps1 -StrictVerifyOnly` and keep the exact helper error.
+- Resolve the selected helper under `%LOCALAPPDATA%\OpenAI\Codex\runtimes\cua_node`, then calculate its SHA-256 and read the adjacent `@oai/sky\package.json` version.
+- Use `scripts\patch-computer-use-helper-win10.ps1` without `-Install` to classify the helper as `original-patchable`, `patched`, or `unsupported`.
+- Do not treat this native screenshot failure as a missing plugin/cache path or a Desktop feature gate.
+
+Action:
+
+- Read `references/win10-computer-use-screenshot-backend.md` before writing the helper.
+- For the exact documented `@oai/sky 0.4.20` original helper hash, run the hash-guarded patcher with `-Install`, then rerun `install-computer-use-local.ps1 -VerifyOnly` and `-StrictVerifyOnly`. Desktop `26.707.12708.0` is the end-to-end validation baseline, not the compatibility boundary.
+- Validate through the real Computer Use client with a first screenshot, repeated static captures, dynamic captures spaced about two seconds apart, accessibility text, `list_windows`, and post-warm-up resource counts.
+- Use the patcher's `-Rollback` mode to restore the verified original backup.
+- If the helper hash is unknown, stop. Do not reuse offsets, restore an older Codex Desktop package, copy a helper from another version, or edit `C:\Program Files\WindowsApps`.
+
 ## Sandbox Setup Refresh Fails With OS Error 740
 
 Symptoms:
