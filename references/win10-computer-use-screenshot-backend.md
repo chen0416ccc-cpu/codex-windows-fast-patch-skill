@@ -112,4 +112,16 @@ The helper profile passed the following Windows 10 tests on Desktop `26.707.1270
 | Window enumeration | Explorer and Task Manager both returned by `list_windows`. |
 | Local plugin verification | `client import ok`, `helper transport ok`, and `verification ok`. |
 
+### Desktop 26.715.2305 repair regression
+
+The Store upgrade to Desktop `26.715.2305.0` (`codex-cli 0.145.0-alpha.18`) was also checked after a full MSIX repatch on Windows 10 build `19045`:
+
+- The live package was restored from `SignatureKind=Store` to `SignatureKind=Developer`, and a second full dry run reported every patch target as `already-patched`.
+- Fast Mode wire verification reached `/v1/responses` with `service_tier=priority`.
+- The selected `@oai/sky 0.4.20` runtime helper remained at the documented patched SHA-256; no binary rewrite or cross-version helper copy was needed.
+- `install-computer-use-local.ps1 -StrictVerifyOnly` passed with `client import ok`, `helper transport ok`, and a `1920x1080` screenshot transport.
+- Current-startup Desktop logs reported `computer-use native pipe startup ready`, browser availability as `reason=local-patched`, and all seven bundled plugins in the runtime marketplace, without the documented negative marketplace/helper-path markers.
+
+This is an upgrade-repair regression check. The repeated static captures, dynamic-frame checks, accessibility/window tests, and resource-stability run in the table above remain the deeper end-to-end helper validation performed on Desktop `26.707.12708.0`; the helper hash pair, not either Desktop version, remains the compatibility boundary.
+
 Repeated static captures can appear as alternating complete/black composites in the conversation renderer. In the validated run, every underlying static image data URL had the same length and SHA-256, so that presentation artifact was not a corrupted helper frame.
