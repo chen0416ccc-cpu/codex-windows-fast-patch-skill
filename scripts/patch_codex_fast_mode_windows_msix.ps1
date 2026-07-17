@@ -494,6 +494,7 @@ function Write-PatcherFiles {
   $fastUiPatcherPath = Join-Path $WorkDir 'PatchFastModeUi.cjs'
   $customModelsPatcherPath = Join-Path $WorkDir 'PatchCustomModels.cjs'
   $powerSliderPatcherPath = Join-Path $WorkDir 'PatchPowerSlider.cjs'
+  $ultraFullAccessPatcherPath = Join-Path $WorkDir 'PatchUltraFullAccess.cjs'
   $localePatcherPath = Join-Path $WorkDir 'PatchLocaleI18n.cjs'
   $pluginsPatcherPath = Join-Path $WorkDir 'PatchPlugins.cjs'
   $goalPatcherPath = Join-Path $WorkDir 'PatchGoal.cjs'
@@ -638,6 +639,11 @@ if (text.includes(marker)) {
   process.exit(0);
 }
 
+if (!text.includes('harborEnabled:') && (text.includes('composer.modelPicker.power') || /model-picker-power-slider-impl/i.test(file))) {
+  process.stdout.write('already-patched');
+  process.exit(0);
+}
+
 const gateRe = /function ([$A-Za-z_][$\w]*)\(\{harborEnabled:([$A-Za-z_][$\w]*),isElectron:([$A-Za-z_][$\w]*),isEverydayWorkMode:([$A-Za-z_][$\w]*)\}\)\{return \4\|\|\3&&\2\}/;
 const match = text.match(gateRe);
 if (!match) {
@@ -653,6 +659,98 @@ if (!next.includes(marker)) {
   process.exit(2);
 }
 fs.writeFileSync(file, next);
+process.stdout.write('patched');
+'@
+
+  Set-Content -LiteralPath $ultraFullAccessPatcherPath -Encoding UTF8 -Value @'
+const fs = require('node:fs');
+const composerFile = process.argv[2];
+const permissionsFile = process.argv[3];
+const modelSettingsFile = process.argv[4];
+const marker = 'CODEX_ULTRA_FULL_ACCESS_V1';
+const composerMarker = 'CODEX_ULTRA_FULL_ACCESS_V1_COMPOSER';
+const permissionMarker = 'CODEX_ULTRA_FULL_ACCESS_V1_PERMISSION';
+const modelReadMarker = 'CODEX_ULTRA_FULL_ACCESS_V1_MODEL_READ';
+const modelSetMarker = 'CODEX_ULTRA_FULL_ACCESS_V1_MODEL_SET';
+
+if (!composerFile || !permissionsFile || !modelSettingsFile) {
+  process.stderr.write('ultra-full-access-targets-missing\n');
+  process.exit(2);
+}
+
+let composer = fs.readFileSync(composerFile, 'utf8');
+let permissions = fs.readFileSync(permissionsFile, 'utf8');
+let modelSettings = fs.readFileSync(modelSettingsFile, 'utf8');
+const composerPatched = composer.includes(composerMarker) || composer.includes(marker);
+const permissionsPatched = permissions.includes(permissionMarker) || (permissionsFile !== composerFile && permissions.includes(marker));
+const modelReadPatched = modelSettings.includes(modelReadMarker);
+const modelSetPatched = modelSettings.includes(modelSetMarker);
+
+if (composerPatched && permissionsPatched && modelReadPatched && modelSetPatched) {
+  process.stdout.write('already-patched');
+  process.exit(0);
+}
+
+if (!composerPatched) {
+  if (!composer.includes('ultraFullAccessConfirm.title') || !(composer.includes('ultraFullAccessConfirm.useUltra') || composer.includes('onContinueWithFullAccess:'))) {
+    process.stderr.write('ultra-full-access-dialog-anchor-not-found\n');
+    process.exit(2);
+  }
+  const dialogGateRe = /if\(!([$A-Za-z_][$\w]*)\|\|([$A-Za-z_][$\w]*)!==`ultra`(?:\|\|[$A-Za-z_][$\w]*\.reasoningEffort===`ultra`)?\)return/;
+  const dialogMatch = composer.match(dialogGateRe);
+  if (!dialogMatch) {
+    process.stderr.write('ultra-full-access-dialog-gate-not-found\n');
+    process.exit(2);
+  }
+  composer = composer.replace(dialogGateRe, `if(!${dialogMatch[1]}||${dialogMatch[2]}!==\`ultra\`||${dialogMatch[1]}/*${composerMarker}*/)return`);
+}
+
+if (!permissionsPatched) {
+  if (permissionsFile === composerFile) {
+    permissions = composer;
+  }
+  const fallbackGateRe = /([$A-Za-z_][$\w]*)=!([$A-Za-z_][$\w]*)&&([$A-Za-z_][$\w]*)\.reasoningEffort===`ultra`&&([$A-Za-z_][$\w]*)===`full-access`&&\(([$A-Za-z_][$\w]*)==null\|\|\5\.startsWith\(`:`\)\),([$A-Za-z_][$\w]*)=\1\?([$A-Za-z_][$\w]*)\(\):null/;
+  const fallbackMatch = permissions.match(fallbackGateRe);
+  if (fallbackMatch) {
+    permissions = permissions.replace(fallbackGateRe, `${fallbackMatch[1]}=!1/*${permissionMarker}*/,${fallbackMatch[6]}=null`);
+  } else if (permissions.includes('onContinueWithFullAccess:') && permissions.includes('ultraFullAccessConfirm.title')) {
+    permissions = permissions.replace('onContinueWithFullAccess:', `/*${permissionMarker}*/onContinueWithFullAccess:`);
+  } else {
+    process.stderr.write('ultra-full-access-permission-fallback-not-found\n');
+    process.exit(2);
+  }
+  if (permissionsFile === composerFile) {
+    composer = permissions;
+  }
+}
+
+if (!modelReadPatched) {
+  const modelReadRe = /([$A-Za-z_][$\w]*)=([$A-Za-z_][$\w]*)\?\.model_reasoning_effort===`ultra`\?null:\2\?\.model_reasoning_effort\?\?null/;
+  const modelReadMatch = modelSettings.match(modelReadRe);
+  if (!modelReadMatch) {
+    process.stderr.write('ultra-full-access-model-read-fallback-not-found\n');
+    process.exit(2);
+  }
+  modelSettings = modelSettings.replace(modelReadRe, `${modelReadMatch[1]}=${modelReadMatch[2]}?.model_reasoning_effort??null/*${modelReadMarker}*/`);
+}
+
+if (!modelSetPatched) {
+  const modelSetRe = /if\(([$A-Za-z_][$\w]*)\[0\]===(?:`default`|"default")&&([$A-Za-z_][$\w]*)===`ultra`\)\{/;
+  if (!modelSetRe.test(modelSettings)) {
+    process.stderr.write('ultra-full-access-model-set-fallback-not-found\n');
+    process.exit(2);
+  }
+  modelSettings = modelSettings.replace(modelSetRe, `if(!1/*${modelSetMarker}*/){`);
+}
+
+if (!(composer.includes(composerMarker) || composer.includes(marker)) || !(permissions.includes(permissionMarker) || (permissionsFile !== composerFile && permissions.includes(marker))) || !modelSettings.includes(modelReadMarker) || !modelSettings.includes(modelSetMarker)) {
+  process.stderr.write('ultra-full-access-patch-verification-failed\n');
+  process.exit(2);
+}
+
+fs.writeFileSync(composerFile, composer);
+fs.writeFileSync(permissionsFile, permissions);
+fs.writeFileSync(modelSettingsFile, modelSettings);
 process.stdout.write('patched');
 '@
 
@@ -1175,6 +1273,7 @@ if (changed) {
     FastUi = $fastUiPatcherPath
     CustomModels = $customModelsPatcherPath
     PowerSlider = $powerSliderPatcherPath
+    UltraFullAccess = $ultraFullAccessPatcherPath
     LocaleI18n = $localePatcherPath
     Plugins = $pluginsPatcherPath
     Goal = $goalPatcherPath
@@ -1246,7 +1345,64 @@ function Find-PatchTargets {
     }
   }
   if ([string]::IsNullOrWhiteSpace($powerSliderTarget)) {
+    foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter 'model-picker-power-slider-impl-*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
+      $text = Get-Content -Raw -LiteralPath $candidate
+      if ($text.Contains('PowerSlider')) {
+        $powerSliderTarget = $candidate
+        break
+      }
+    }
+  }
+  if ([string]::IsNullOrWhiteSpace($powerSliderTarget)) {
     Fail 'could not find compact Power slider harbor gate in extracted assets'
+  }
+  $ultraFullAccessComposerTarget = $null
+  foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter '*composer*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
+    $text = Get-Content -Raw -LiteralPath $candidate
+    if ($text.Contains('ultraFullAccessConfirm.title') -and
+        ($text.Contains('ultraFullAccessConfirm.useUltra') -or
+         $text.Contains('onContinueWithFullAccess:'))) {
+      $ultraFullAccessComposerTarget = $candidate
+      break
+    }
+  }
+  if ([string]::IsNullOrWhiteSpace($ultraFullAccessComposerTarget)) {
+    Fail 'could not find Ultra and Full access confirmation gate in extracted assets'
+  }
+  $ultraFullAccessPermissionsTarget = $null
+  foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter 'use-permissions-mode-*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
+    $text = Get-Content -Raw -LiteralPath $candidate
+    if ($text.Contains('CODEX_ULTRA_FULL_ACCESS_V1') -or
+        ($text.Contains('reasoningEffort===`ultra`') -and
+         $text.Contains('===`full-access`') -and
+         $text.Contains('getNonFullAccessFallbackMode'))) {
+      $ultraFullAccessPermissionsTarget = $candidate
+      break
+    }
+  }
+  if ([string]::IsNullOrWhiteSpace($ultraFullAccessPermissionsTarget)) {
+    $text = Get-Content -Raw -LiteralPath $ultraFullAccessComposerTarget
+    if ($text.Contains('onContinueWithFullAccess:') -and $text.Contains('ultraFullAccessConfirm.title')) {
+      $ultraFullAccessPermissionsTarget = $ultraFullAccessComposerTarget
+    }
+  }
+  if ([string]::IsNullOrWhiteSpace($ultraFullAccessPermissionsTarget)) {
+    Fail 'could not find Ultra permission fallback gate in extracted assets'
+  }
+  $ultraFullAccessModelSettingsTarget = $null
+  foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter 'use-model-settings-*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
+    $text = Get-Content -Raw -LiteralPath $candidate
+    if (($text.Contains('CODEX_ULTRA_FULL_ACCESS_V1_MODEL_READ') -and
+         $text.Contains('CODEX_ULTRA_FULL_ACCESS_V1_MODEL_SET')) -or
+        ($text.Contains('model_reasoning_effort===`ultra`?null:') -and
+         $text.Contains('[0]===') -and
+         $text.Contains('===`ultra`'))) {
+      $ultraFullAccessModelSettingsTarget = $candidate
+      break
+    }
+  }
+  if ([string]::IsNullOrWhiteSpace($ultraFullAccessModelSettingsTarget)) {
+    Fail 'could not find Ultra model settings fallback gate in extracted assets'
   }
   $localeI18nTarget = $null
   $localeCandidates = @(
@@ -1489,6 +1645,9 @@ function Find-PatchTargets {
   Write-Log "fast-mode UI patch target: $fastModeUiTarget"
   Write-Log "custom models patch target: $customModelsTarget"
   Write-Log "Power slider patch target: $powerSliderTarget"
+  Write-Log "Ultra Full access composer patch target: $ultraFullAccessComposerTarget"
+  Write-Log "Ultra Full access permission patch target: $ultraFullAccessPermissionsTarget"
+  Write-Log "Ultra Full access model settings patch target: $ultraFullAccessModelSettingsTarget"
   Write-Log "locale i18n patch target: $localeI18nTarget"
   Write-Log "plugin sidebar patch target: $pluginSidebarTarget"
   Write-Log "plugin skills-page patch target: $pluginSkillsTarget"
@@ -1510,6 +1669,9 @@ function Find-PatchTargets {
     FastModeUi = $fastModeUiTarget
     CustomModels = $customModelsTarget
     PowerSlider = $powerSliderTarget
+    UltraFullAccessComposer = $ultraFullAccessComposerTarget
+    UltraFullAccessPermissions = $ultraFullAccessPermissionsTarget
+    UltraFullAccessModelSettings = $ultraFullAccessModelSettingsTarget
     LocaleI18n = $localeI18nTarget
     PluginSidebar = $pluginSidebarTarget
     PluginSkills = $pluginSkillsTarget
@@ -1627,12 +1789,72 @@ function Invoke-PatchAppAsar {
       }
     }
     if ([string]::IsNullOrWhiteSpace($powerSliderTarget)) {
+      foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter 'model-picker-power-slider-impl-*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
+        $text = Get-Content -Raw -LiteralPath $candidate
+        if ($text.Contains('PowerSlider')) {
+          $powerSliderTarget = $candidate
+          break
+        }
+      }
+    }
+    if ([string]::IsNullOrWhiteSpace($powerSliderTarget)) {
       Fail 'could not find Model Experience compact Power slider harbor gate'
+    }
+    $ultraFullAccessComposerTarget = $null
+    foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter '*composer*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
+      $text = Get-Content -Raw -LiteralPath $candidate
+      if ($text.Contains('ultraFullAccessConfirm.title') -and
+          ($text.Contains('ultraFullAccessConfirm.useUltra') -or
+           $text.Contains('onContinueWithFullAccess:'))) {
+        $ultraFullAccessComposerTarget = $candidate
+        break
+      }
+    }
+    if ([string]::IsNullOrWhiteSpace($ultraFullAccessComposerTarget)) {
+      Fail 'could not find Model Experience Ultra and Full access confirmation gate'
+    }
+    $ultraFullAccessPermissionsTarget = $null
+    foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter 'use-permissions-mode-*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
+      $text = Get-Content -Raw -LiteralPath $candidate
+      if ($text.Contains('CODEX_ULTRA_FULL_ACCESS_V1') -or
+          ($text.Contains('reasoningEffort===`ultra`') -and
+           $text.Contains('===`full-access`') -and
+           $text.Contains('getNonFullAccessFallbackMode'))) {
+        $ultraFullAccessPermissionsTarget = $candidate
+        break
+      }
+    }
+    if ([string]::IsNullOrWhiteSpace($ultraFullAccessPermissionsTarget)) {
+      $text = Get-Content -Raw -LiteralPath $ultraFullAccessComposerTarget
+      if ($text.Contains('onContinueWithFullAccess:') -and $text.Contains('ultraFullAccessConfirm.title')) {
+        $ultraFullAccessPermissionsTarget = $ultraFullAccessComposerTarget
+      }
+    }
+    if ([string]::IsNullOrWhiteSpace($ultraFullAccessPermissionsTarget)) {
+      Fail 'could not find Model Experience Ultra permission fallback gate'
+    }
+    $ultraFullAccessModelSettingsTarget = $null
+    foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter 'use-model-settings-*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
+      $text = Get-Content -Raw -LiteralPath $candidate
+      if (($text.Contains('CODEX_ULTRA_FULL_ACCESS_V1_MODEL_READ') -and
+           $text.Contains('CODEX_ULTRA_FULL_ACCESS_V1_MODEL_SET')) -or
+          ($text.Contains('model_reasoning_effort===`ultra`?null:') -and
+           $text.Contains('[0]===') -and
+           $text.Contains('===`ultra`'))) {
+        $ultraFullAccessModelSettingsTarget = $candidate
+        break
+      }
+    }
+    if ([string]::IsNullOrWhiteSpace($ultraFullAccessModelSettingsTarget)) {
+      Fail 'could not find Model Experience Ultra model settings fallback gate'
     }
     Write-Log "Model Experience Fast Mode request target: $fastModeTarget"
     Write-Log "Model Experience Fast Mode UI target: $fastModeUiTarget"
     Write-Log "Model Experience custom models target: $customModelsTarget"
     Write-Log "Model Experience Power slider target: $powerSliderTarget"
+    Write-Log "Model Experience Ultra Full access composer target: $ultraFullAccessComposerTarget"
+    Write-Log "Model Experience Ultra Full access permission target: $ultraFullAccessPermissionsTarget"
+    Write-Log "Model Experience Ultra Full access model settings target: $ultraFullAccessModelSettingsTarget"
     $fastModeResult = Invoke-NodePatcher $nodePath $patchers.Fast @($fastModeTarget)
     Write-Log "Model Experience Fast Mode request result: $fastModeResult"
     $fastModeUiResult = Invoke-NodePatcher $nodePath $patchers.FastUi @($fastModeUiTarget)
@@ -1641,7 +1863,9 @@ function Invoke-PatchAppAsar {
     Write-Log "Model Experience custom models result: $customModelsResult ($($CustomModels -join ', '))"
     $powerSliderResult = Invoke-NodePatcher $nodePath $patchers.PowerSlider @($powerSliderTarget)
     Write-Log "Model Experience Power slider result: $powerSliderResult"
-    foreach ($syntaxTarget in @($fastModeTarget, $fastModeUiTarget, $customModelsTarget, $powerSliderTarget)) {
+    $ultraFullAccessResult = Invoke-NodePatcher $nodePath $patchers.UltraFullAccess @($ultraFullAccessComposerTarget, $ultraFullAccessPermissionsTarget, $ultraFullAccessModelSettingsTarget)
+    Write-Log "Model Experience Ultra Full access result: $ultraFullAccessResult"
+    foreach ($syntaxTarget in @($fastModeTarget, $fastModeUiTarget, $customModelsTarget, $powerSliderTarget, $ultraFullAccessComposerTarget, $ultraFullAccessPermissionsTarget, $ultraFullAccessModelSettingsTarget)) {
       & $nodePath --check $syntaxTarget
       if ($LASTEXITCODE -ne 0) {
         Fail "Model Experience patched asset failed node --check: $syntaxTarget"
@@ -1656,7 +1880,8 @@ function Invoke-PatchAppAsar {
     if ($fastModeResult -eq 'already-patched' -and
         $fastModeUiResult -eq 'already-patched' -and
         $customModelsResult -eq 'already-patched' -and
-        $powerSliderResult -eq 'already-patched') {
+        $powerSliderResult -eq 'already-patched' -and
+        $ultraFullAccessResult -eq 'already-patched') {
       Write-Log 'asar Model Experience patches already present'
       return $false
     }
@@ -1712,6 +1937,8 @@ function Invoke-PatchAppAsar {
   Write-Log "custom models patch result: $customModels ($($CustomModels -join ', '))"
   $powerSlider = Invoke-NodePatcher $nodePath $patchers.PowerSlider @($targets.PowerSlider)
   Write-Log "Power slider patch result: $powerSlider"
+  $ultraFullAccess = Invoke-NodePatcher $nodePath $patchers.UltraFullAccess @($targets.UltraFullAccessComposer, $targets.UltraFullAccessPermissions, $targets.UltraFullAccessModelSettings)
+  Write-Log "Ultra Full access patch result: $ultraFullAccess"
 
   $localeI18n = Invoke-NodePatcher $nodePath $patchers.LocaleI18n @($targets.LocaleI18n)
   Write-Log "locale i18n patch result: $localeI18n"
@@ -1750,6 +1977,7 @@ function Invoke-PatchAppAsar {
       $fastUi -eq 'already-patched' -and
       $customModels -eq 'already-patched' -and
       $powerSlider -eq 'already-patched' -and
+      $ultraFullAccess -eq 'already-patched' -and
       $localeI18n -eq 'already-patched' -and
       $plugins -eq 'already-patched' -and
       $goal -eq 'already-patched' -and
