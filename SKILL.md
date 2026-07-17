@@ -281,14 +281,14 @@ Read the dry-run output before selecting the write path:
 Provider sync write path:
 
 ```powershell
-Get-Process Codex -ErrorAction SilentlyContinue | Where-Object { $_.Path -like 'C:\Program Files\WindowsApps\OpenAI.Codex_*\app\Codex.exe' } | Stop-Process -Force
+Get-Process Codex,ChatGPT -ErrorAction SilentlyContinue | Where-Object { $_.Path -like 'C:\Program Files\WindowsApps\OpenAI.Codex_*\app\Codex.exe' -or $_.Path -like 'C:\Program Files\WindowsApps\OpenAI.Codex_*\app\ChatGPT.exe' } | Stop-Process -Force
 powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\sync-codex-provider-history.ps1"
 ```
 
 Missing cwd repair path:
 
 ```powershell
-Get-Process Codex -ErrorAction SilentlyContinue | Where-Object { $_.Path -like 'C:\Program Files\WindowsApps\OpenAI.Codex_*\app\Codex.exe' } | Stop-Process -Force
+Get-Process Codex,ChatGPT -ErrorAction SilentlyContinue | Where-Object { $_.Path -like 'C:\Program Files\WindowsApps\OpenAI.Codex_*\app\Codex.exe' -or $_.Path -like 'C:\Program Files\WindowsApps\OpenAI.Codex_*\app\ChatGPT.exe' } | Stop-Process -Force
 powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\sync-codex-provider-history.ps1" -RepairMissingCwdDirs
 ```
 
@@ -321,12 +321,14 @@ Success criteria:
 - Do not modify `C:\Program Files\WindowsApps` in place. Use the MSIX repack script.
 - Do not run the phone remote-control MSIX patch as a default repatch side effect. Use it only for phone remote-control tasks or when the user explicitly asks for that workflow.
 - Do not treat every `missing field inputSchema` as an MCP problem. If CLI smoke tests pass while Desktop UI fails and the dynamic-tools ASAR asset still returns a namespace wrapper, use the Dynamic Tools Schema workflow instead of disabling unrelated MCP servers.
-- Do not trust a response like `FAST_CHECK_OK` as proof of Fast Mode. Trust only the wrapper/script wire verification, which captures Codex's local `/v1/responses` HTTP body or WebSocket frame and checks `service_tier=priority`.
+- Do not trust a response like `FAST_CHECK_OK` as proof of Fast Mode. Trust only the wrapper/script wire verification, which runs with an isolated temporary `CODEX_HOME`, serves the CLI's `/v1/models` probe, then captures a `/v1/responses` HTTP body or WebSocket frame and checks `service_tier=priority`. A models-only request is not proof.
 - If the app launches then immediately exits, run Electron logging and check for ASAR integrity failures:
 
 ```powershell
 $pkg = Get-AppxPackage -Name OpenAI.Codex | Select-Object -First 1
-$exe = Join-Path $pkg.InstallLocation 'app\Codex.exe'
+$manifest = [xml](Get-Content -Raw -LiteralPath (Join-Path $pkg.InstallLocation 'AppxManifest.xml'))
+$desktopExecutable = [string](($manifest.Package.Applications.Application | Select-Object -First 1).Executable)
+$exe = Join-Path $pkg.InstallLocation $desktopExecutable
 $env:ELECTRON_ENABLE_LOGGING='1'
 Push-Location (Split-Path -Parent $exe)
 & $exe --enable-logging=stderr --v=1 2>&1 | Select-String -Pattern 'FATAL|Integrity|asar|ERROR'
@@ -439,7 +441,7 @@ After configuring `model_instructions_file`, restart Codex CLI/Desktop or start 
 
 ## Computer Use Only
 
-Use this path for local Computer Use plugin/runtime repair without repacking the MSIX. It rebuilds the local `openai-bundled` marketplace mirror, repairs stable `computer-use` / `browser` / `chrome` cache links, overlays the installed CUA `@oai/sky` runtime into the local Computer Use plugin, patches the Computer Use client import shape when needed, removes stale `SKY_CUA_NATIVE_PIPE` overrides from `config.toml`, updates the Chrome native messaging host to stable cache paths, and verifies both the client import and helper transport.
+Use this path for local Computer Use plugin/runtime repair without repacking the MSIX. It rebuilds the local `openai-bundled` marketplace mirror, repairs stable `computer-use` / `browser` / `chrome` / `sites` cache links from one pinned installed-package source, overlays the installed CUA `@oai/sky` runtime into the local Computer Use plugin, patches localized/default-value Chrome registry parsing and the Computer Use client import shape when needed, preserves a live `SKY_CUA_NATIVE_PIPE` configuration while removing stale overrides, updates the Chrome native messaging host to stable cache paths, and verifies both the client import and helper transport.
 
 To refresh only the local Windows Computer Use files and environment gate:
 
@@ -481,8 +483,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\ski
 - If an existing `config.toml` was modified, the log shows a timestamped backup under `.codex\backups\config\`.
 - `Get-AppxPackage -Name OpenAI.Codex` shows `SignatureKind = Developer`.
 - The install log launches the patched Desktop package through its AppUserModelId, avoiding direct-executable access failures under `WindowsApps`.
-- Codex Desktop processes stay alive from `...\WindowsApps\OpenAI.Codex_<version>...\app\Codex.exe`.
-- Fast Mode verification logs `request wire service_tier=priority`.
+- The manifest-declared Codex Desktop process stays alive from the installed package, currently `...\app\ChatGPT.exe` on newer builds and `...\app\Codex.exe` on older builds.
+- Fast Mode verification reaches `/v1/responses` and logs `request wire service_tier=priority`; `/v1/models` probes alone do not pass verification.
 - The patch log includes `fast-mode UI patch result` and `locale i18n patch result`, each either `patched` or `already-patched`.
 - The patch log includes `custom models patch result`, and the patched model filter contains all configured custom model IDs.
 - The patch log includes `browser-use gate patch result`, either `patched` or `already-patched`.

@@ -467,7 +467,29 @@ for ($patchAttempt = 1; $patchAttempt -le $maxPatchAttempts; $patchAttempt++) {
   }
   Write-Log "patch attempt $patchAttempt/$maxPatchAttempts source package: $($sourcePackage.PackageFullName) signature=$($sourcePackage.SignatureKind)"
 
-  Invoke-Checked 'powershell' (@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PatchScript) + $patchArgs) 'Codex MSIX patch failed'
+  try {
+    Invoke-Checked 'powershell' (@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PatchScript) + $patchArgs) 'Codex MSIX patch failed'
+  } catch {
+    $patchError = $_
+    if (-not $DryRun) {
+      $failedPackage = Get-InstalledCodexPackage
+      $failedInstallResult = Test-CodexPatchInstallResult $sourcePackage $failedPackage
+      $storeReplacementDetected = (
+        $failedPackage -and
+        [string]$failedPackage.SignatureKind -eq 'Store' -and
+        (
+          [string]$failedPackage.Version -ne [string]$sourcePackage.Version -or
+          [string]$sourcePackage.SignatureKind -ne 'Store'
+        )
+      )
+      if ($storeReplacementDetected -and $patchAttempt -lt $maxPatchAttempts) {
+        Write-Log "warning: patch subprocess failed while $($failedInstallResult.Reason)"
+        Write-Log 'warning: Store update or package replacement detected during repair; retrying once against the current package'
+        continue
+      }
+    }
+    throw $patchError
+  }
 
   if (-not $SkipMarketplace) {
     Register-LocalMarketplace $MarketplacePath

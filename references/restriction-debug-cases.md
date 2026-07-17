@@ -14,7 +14,7 @@ Symptoms:
 Checks:
 
 - Capture the actual `/v1/responses` request made by Codex Desktop and verify `service_tier=priority` on the wire.
-- If the bundled verifier reports that it did not find `service_tier`, check whether the current CLI removed `responses_websockets`. Newer CLIs can send the verification request over HTTP, so the capture helper must read the HTTP request body instead of treating an empty WebSocket log as a Fast Mode failure.
+- If the bundled verifier reports that it did not find `service_tier`, check whether the current CLI removed `responses_websockets`. Newer CLIs can probe `/v1/models` before sending the verification request over HTTP, so the capture helper must return a usable model list, read the later `/v1/responses` body, and reject a models-only capture instead of treating it as proof of Fast Mode.
 - If the upstream is CPA or another proxy, inspect the proxy-side override rules. Local capture only proves Codex sent the parameter; the proxy can still drop, rewrite, or ignore it.
 - In newer Codex builds, inspect `webview\assets\read-service-tier-for-request-*.js`. A shape like `return authMethod===\`chatgpt\` ? featureRequirements?.fast_mode !== false : false` means API-key/local requests are still forced out of Fast Mode.
 - Inspect `webview\assets\use-service-tier-settings-*.js` independently; Fast request wiring can be correct while the UI gate remains closed, or the UI can be open while request wiring is still wrong.
