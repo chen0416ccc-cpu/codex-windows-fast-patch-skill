@@ -112,7 +112,7 @@ The helper profile passed the following Windows 10 tests on Desktop `26.707.1270
 | Window enumeration | Explorer and Task Manager both returned by `list_windows`. |
 | Local plugin verification | `client import ok`, `helper transport ok`, and `verification ok`. |
 
-### Desktop 26.715.2305 repair regression
+### Desktop 26.715 upgrade-repair regressions
 
 The Store upgrade to Desktop `26.715.2305.0` (`codex-cli 0.145.0-alpha.18`) was also checked after a full MSIX repatch on Windows 10 build `19045`:
 
@@ -122,6 +122,13 @@ The Store upgrade to Desktop `26.715.2305.0` (`codex-cli 0.145.0-alpha.18`) was 
 - The selected `@oai/sky 0.4.20` runtime helper remained at the documented patched SHA-256; no binary rewrite or cross-version helper copy was needed.
 - `install-computer-use-local.ps1 -StrictVerifyOnly` passed with `client import ok`, `helper transport ok`, and a `1920x1080` screenshot transport.
 - Current-startup Desktop logs reported `computer-use native pipe startup ready`, browser availability as `reason=local-patched`, and all seven bundled plugins in the runtime marketplace, without the documented negative marketplace/helper-path markers.
+
+The later Store upgrade to Desktop `26.715.3651.0` (the same `codex-cli 0.145.0-alpha.18`) was rechecked on 2026-07-18. No new ASAR patch target was required:
+
+- The package was restored from `SignatureKind=Store` to `SignatureKind=Developer`; the signed patched MSIX SHA-256 was `3E010051AA8E21CF92E6531FE5EEE9B0941A890C8FB7AA5AFC639165E3D28A8C`, and a full idempotency dry run reported every target as `already-patched`.
+- A missing `computer-use` cache manifest and a five-plugin runtime marketplace were repaired locally. After restart, all seven bundled plugins were installed and enabled, browser availability reported `reason=local-patched`, the native pipe was ready, and no documented marketplace/helper-path/integrity failure marker appeared.
+- Fast wire verification again reached `/v1/responses` with `service_tier=priority`; strict Computer Use verification returned a `1920x1080` screenshot while the helper retained the documented patched SHA-256.
+- Chrome extension, native-host manifest, launch dry run, and the Windows sandbox smoke test passed.
 
 This is an upgrade-repair regression check. The repeated static captures, dynamic-frame checks, accessibility/window tests, and resource-stability run in the table above remain the deeper end-to-end helper validation performed on Desktop `26.707.12708.0`; the helper hash pair, not either Desktop version, remains the compatibility boundary.
 
