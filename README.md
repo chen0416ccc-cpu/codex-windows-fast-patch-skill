@@ -13,6 +13,7 @@
 - 修复插件入口、插件安装按钮、插件市场列表不可用的问题。
 - 修复内置浏览器、浏览器面板、Chrome / browser_use 不可用的问题。
 - 修复 Computer Use / 电脑操控 / Any App 不可用的问题。
+- 修复特定 Win10 CUA helper 在截图时因 `SetIsBorderRequired` 返回 `0x80004002`，以及绕过后 `FrameArrived` 同步等待死锁的问题；仅支持文档列出的精确 helper 哈希。
 - 修复手机远控入口不显示、二维码一直转圈、跳 ChatGPT 登录、点允许后失败、手机提示 Codex 版本过期等问题。(第三方api登录态下使用原生手机远控功能)
 - 修复 Goal 入口、部分设置入口、功能按钮在更新后消失或变灰的问题。
 - 修复切换 `model_provider` / API 配置后，旧会话仍在本地但官方侧边栏不显示的问题；如果恢复后的会话能显示但继续时报“当前工作目录缺失”，可按 rollout 原始 `cwd` 创建缺失空目录。
@@ -41,12 +42,14 @@
 - `scripts/patch-remote-control-asar.cjs`：手机远控 Electron bundle patcher。
 - `scripts/build-remote-control-native-replacement.ps1`：当 native app-server 因 API-key 主认证拒绝手机远控时，在指定工作目录下构建 patched `app\resources\codex.exe` replacement。默认从安装包副本自动识别原生版本；内置映射包括在 Desktop `26.715.2305.0` 上完成精确 tag 构建、安装和手机端到端实测的 `0.145.0-alpha.18`，在 Desktop `26.707.3748.0` 上完成同类验证的 `0.144.0-alpha.4`，以及仅通过 patch-apply 验证的历史 `0.142.4`。其他版本必须提供严格匹配的 `-CodexSourceRef`、`-AppServerVersion` 和已验证的 `-PatchPathOverride`。
 - `scripts/install-computer-use-local.ps1`：Windows Computer Use 本地兼容文件安装和校验参考实现。
+- `scripts/patch-computer-use-helper-win10.ps1`：为精确支持哈希的 `@oai/sky 0.4.20` helper 提供只读识别、安装和回滚；`26.707.12708.0` 是端到端验证基线，不是版本门槛。
 - `scripts/sync-codex-provider-history.ps1`：同步本地会话 provider 元数据，让切换 `model_provider` 后消失的会话重新出现在官方列表中；也可用 `-RepairMissingCwdDirs` 修复恢复后会话无法继续的缺失 `cwd` 目录。默认不改 `config.toml`，也不改 workspace/project roots。
 - `scripts/install-model-instructions-file.ps1`：可选安装内置 `model_instructions_file` 提示词资源。
 - `scripts/manage-codex-backups.ps1`：本地 Codex 配置、MCP、skills 和 marketplaces 的备份管理脚本。
 - `scripts/update-skill-from-github.ps1`：使用前尽力同步 GitHub 最新版本的自更新脚本。
 - `assets/system-prompt.md`：仅在用户明确要求可选提示词配置时使用的内置提示词资源。
 - `references/restriction-debug-cases.md`：限制解除、Chrome/browser_use、Computer Use 和 Fast Mode 的按需诊断案例。
+- `references/win10-computer-use-screenshot-backend.md`：Win10 原生截图 helper 的 `0x80004002`、`FrameArrived` 死锁、补丁边界和验收证据。
 - `references/remote-control-debug-cases.md`：手机远控配对、隔离授权、native app-server 网络、版本过期状态和配对后 API 地址诊断案例。
 - `references/remote-control-native-replacement.patch`：手机远控 native app-server replacement 使用的 Rust 源码参考补丁。
 - `references/remote-control-native-replacement-0.145.0-alpha.18.patch`：已在 Desktop `26.715.2305.0` 上完成构建、安装和手机端到端实测的 `rust-v0.145.0-alpha.18` 专用 Rust 源码补丁。
@@ -89,6 +92,7 @@ Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'assets') -Destination
 可以直接让当前 Codex Desktop 会话修复的问题：
 
 - Computer Use 提示插件不可用、`native pipe unavailable`、`missing-helper-path`、重启后又失效。
+- Computer Use 能列出窗口但 Win10 截图报 `SetIsBorderRequired ... 0x80004002`；此类只能对精确支持哈希运行 helper patcher，未知哈希停止。
 - Chrome / browser_use 的 helper 路径、缓存、native-host 文件损坏。
 - 插件市场配置损坏、`codex plugin list` 报 marketplace manifest 错误。
 - 本地 marketplace 缺 `.agents\plugins\marketplace.json`。
@@ -140,6 +144,7 @@ Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'assets') -Destination
 - 如果本次修复包含 bundled 插件，`codex plugin list` 应显示 `openai-bundled` 下的 `sites`、`browser`、`chrome`、`computer-use`、`latex` 都为 `installed, enabled`。
 - Desktop 日志应显示 bundled marketplace 保留 `pluginNames=["sites","browser","chrome","computer-use","latex"]`，且不再出现新的 `not_in_bundled_marketplace_plugin_names` / `sites`。
 - 如果本次修复包含浏览器能力，Desktop 日志里 `browser_use_availability_resolved` 显示 `available=true` 和 `reason=local-patched`。
+- 如果修复 Win10 截图 helper，patcher 应报告已验证 patched SHA-256；Explorer 首帧/连续帧、任务管理器动态帧、文字读取、窗口枚举和预热后资源稳定性都应通过。
 - 如果需要 Chrome 控制，`codex plugin list` 显示 `chrome@openai-bundled` 为 `installed, enabled`，native messaging host manifest 指向存在的文件，并且真实 smoke test 能读到受控标签页标题，例如 `Example Domain`。
 - 如果修复手机远控，连接页应显示手机/移动设备设置路径，二维码应出现，手机扫码不再提示 Codex 版本过期；按 WindowsApps native PID/路径关联的日志应出现 `remote_control_websocket_proxy_connected` 和 `Connected` 且没有重复 `os error 10060`，手机发送消息能到达 Desktop。部分 native 版本会静默处理 Ping/Pong，因此不得把帧日志文字当作唯一成功条件。
 - 如果修复会话消失，`sync-codex-provider-history.ps1` 应显示 App/legacy SQLite 和 readable rollout 的 provider 已对齐到当前 `model_provider`，`config.toml sha256 unchanged`，官方侧边栏能看到历史会话，并且不会新增空项目分组。如果修的是“恢复后无法继续”，`missing rollout cwd dirs after` 应为 0 或只剩已审查跳过的路径，受影响会话重启后能发送新消息。

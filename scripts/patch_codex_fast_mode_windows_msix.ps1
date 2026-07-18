@@ -2031,8 +2031,16 @@ function Find-CodexCli {
       return $hit.FullName
     }
   }
+
+  if (-not [string]::IsNullOrWhiteSpace($script:workApp)) {
+    $workCli = Join-Path $script:workApp 'resources\codex.exe'
+    if (Test-Path -LiteralPath $workCli -PathType Leaf) {
+      return $workCli
+    }
+  }
+
   $cmd = Get-Command codex.exe -ErrorAction SilentlyContinue | Select-Object -First 1
-  if ($cmd) {
+  if ($cmd -and $cmd.Source -notlike '*\WindowsApps\OpenAI.Codex_*\app\resources\codex.exe') {
     return $cmd.Source
   }
   return $null
@@ -2171,9 +2179,9 @@ function Patch-ChromePluginWindowsRegistryParsing {
 function Invoke-FastModeVerification {
   $codex = Find-CodexCli
   if (-not $codex) {
-    Write-Log 'fast verification skipped: codex CLI not found'
-    return
+    Fail 'fast verification requires a runnable codex CLI outside the protected WindowsApps package path'
   }
+  Write-Log "fast verification CLI: $codex"
 
   $node = (Get-RequiredCommand 'node').Source
   $captureDir = Join-Path $env:TEMP ('codex-fast-wire-' + [guid]::NewGuid().ToString('N'))
