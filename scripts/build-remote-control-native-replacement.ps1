@@ -25,6 +25,7 @@ $SkillRoot = Split-Path -Parent $ScriptRoot
 $NativePatchRelativePaths = @{
   '0.142.4' = 'references\remote-control-native-replacement-0.142.4.patch'
   '0.144.0-alpha.4' = 'references\remote-control-native-replacement.patch'
+  '0.145.0-alpha.18' = 'references\remote-control-native-replacement-0.145.0-alpha.18.patch'
 }
 $PatchPath = $null
 $WindowsSdkCppVersion = '10.0.26100.4188'
@@ -311,6 +312,37 @@ function Add-WindowsSdkBuildEnvironment {
   return (Test-WindowsSdkBuildEnvironmentAvailable)
 }
 
+function Add-NuGetWindowsSdkBuildEnvironment {
+  param([Parameter(Mandatory = $true)][string]$Root)
+
+  $kernel32 = Find-WindowsSdkFile -Root $Root -FileName 'kernel32.lib' -PathPattern '(?i)\\c\\um\\x64\\kernel32\.lib$'
+  $ucrt = Find-WindowsSdkFile -Root $Root -FileName 'ucrt.lib' -PathPattern '(?i)\\c\\ucrt\\x64\\ucrt\.lib$'
+  $windowsHeader = Find-WindowsSdkFile -Root $Root -FileName 'windows.h' -PathPattern '(?i)\\c\\Include\\[^\\]+\\um\\Windows\.h$'
+  if (-not ($kernel32 -and $ucrt -and $windowsHeader)) {
+    return $false
+  }
+
+  $includeRoot = Split-Path -Parent $windowsHeader.DirectoryName
+  $includePaths = @('ucrt', 'shared', 'um', 'winrt', 'cppwinrt') |
+    ForEach-Object { Join-Path $includeRoot $_ } |
+    Where-Object { Test-Path -LiteralPath $_ -PathType Container }
+  if ($includePaths.Count -eq 0) {
+    return $false
+  }
+
+  Add-ProcessEnvironmentPaths -Name 'LIB' -Paths @($kernel32.DirectoryName, $ucrt.DirectoryName)
+  Add-ProcessEnvironmentPaths -Name 'LIBPATH' -Paths @($kernel32.DirectoryName, $ucrt.DirectoryName)
+  Add-ProcessEnvironmentPaths -Name 'INCLUDE' -Paths $includePaths
+
+  $rc = Find-WindowsSdkFile -Root $Root -FileName 'rc.exe' -PathPattern '(?i)\\c\\bin\\[^\\]+\\x64\\rc\.exe$'
+  if ($rc) {
+    Add-ProcessEnvironmentPaths -Name 'PATH' -Paths @($rc.DirectoryName)
+  }
+
+  Write-Log "NuGet Windows SDK build environment ready: root=$Root kernel32=$($kernel32.FullName) ucrt=$($ucrt.FullName) windowsHeader=$($windowsHeader.FullName)"
+  return (Test-WindowsSdkBuildEnvironmentAvailable)
+}
+
 function Get-WindowsSdkDownloadProxy {
   foreach ($name in @('HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy')) {
     $value = [Environment]::GetEnvironmentVariable($name, 'Process')
@@ -461,6 +493,27 @@ function Save-NuGetPackage {
   }
 }
 
+function Expand-NuGetPackageArchive {
+  param(
+    [Parameter(Mandatory = $true)][string]$PackagePath,
+    [Parameter(Mandatory = $true)][string]$DestinationPath
+  )
+
+  $tar = Get-RequiredCommand 'tar.exe'
+  $result = Invoke-NativeProcess -FilePath $tar -Arguments @(
+    '-xf',
+    $PackagePath,
+    '-C',
+    $DestinationPath
+  ) -CaptureOutput
+  if ($result.ExitCode -ne 0) {
+    if (-not [string]::IsNullOrWhiteSpace($result.Output)) {
+      Write-Host $result.Output
+    }
+    Fail "failed to extract NuGet package with tar.exe: $PackagePath (exit code $($result.ExitCode))"
+  }
+}
+
 function Install-WindowsSdkCppViaNuGet {
   param([Parameter(Mandatory = $true)][string]$SdkCacheRoot)
 
@@ -483,13 +536,11 @@ function Install-WindowsSdkCppViaNuGet {
     $installed = $false
     for ($attempt = 1; $attempt -le 2 -and -not $installed; $attempt++) {
       $extractPartial = "$packageRoot.partial"
-      $zip = Join-Path $SdkCacheRoot "$lowerId.$WindowsSdkCppVersion.zip"
       try {
         Save-NuGetPackage -PackageId $packageId -Version $WindowsSdkCppVersion -Destination $nupkg -ExpectedPayloadNames $payloadNames
         Remove-Item -LiteralPath $extractPartial -Recurse -Force -ErrorAction SilentlyContinue
         New-Item -ItemType Directory -Force -Path $extractPartial | Out-Null
-        Copy-Item -LiteralPath $nupkg -Destination $zip -Force
-        Expand-Archive -LiteralPath $zip -DestinationPath $extractPartial -Force
+        Expand-NuGetPackageArchive -PackagePath $nupkg -DestinationPath $extractPartial
         $missingPayloads = @($payloadNames | Where-Object {
           $null -eq (Get-ChildItem -LiteralPath $extractPartial -Recurse -Filter $_ -File -ErrorAction SilentlyContinue | Select-Object -First 1)
         })
@@ -507,8 +558,6 @@ function Install-WindowsSdkCppViaNuGet {
           throw
         }
         Write-Log "cached/downloaded $PackageId package was unusable; deleting it and retrying once"
-      } finally {
-        Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
       }
     }
   }
@@ -537,7 +586,11 @@ function Initialize-WindowsSdkBuildEnvironment {
   $sdkCacheRoot = Join-Path $CacheRoot "windows-sdk-cpp\$WindowsSdkCppVersion"
   Write-Log "kernel32.lib is unavailable; bootstrapping Windows SDK C++ packages under WorkRoot: $sdkCacheRoot"
   $coherentSdkRoot = Install-WindowsSdkCppViaNuGet -SdkCacheRoot $sdkCacheRoot
-  if (-not (Add-WindowsSdkBuildEnvironment -SearchRoots @($coherentSdkRoot))) {
+  $sdkReady = Add-WindowsSdkBuildEnvironment -SearchRoots @($coherentSdkRoot)
+  if (-not $sdkReady) {
+    $sdkReady = Add-NuGetWindowsSdkBuildEnvironment -Root $coherentSdkRoot
+  }
+  if (-not $sdkReady) {
     Fail "NuGet Windows SDK C++ packages did not provide a usable x64 kernel32.lib/ucrt.lib/header environment: $sdkCacheRoot"
   }
 }

@@ -1,0 +1,357 @@
+diff --git a/codex-rs/app-server-transport/src/transport/remote_control/auth.rs b/codex-rs/app-server-transport/src/transport/remote_control/auth.rs
+index ec4eb81..fd9e396 100644
+--- a/codex-rs/app-server-transport/src/transport/remote_control/auth.rs
++++ b/codex-rs/app-server-transport/src/transport/remote_control/auth.rs
+@@ -3,8 +3,14 @@ use axum::http::HeaderValue;
+ use codex_api::SharedAuthProvider;
+ use codex_login::AuthManager;
+ use codex_login::UnauthorizedRecovery;
++use codex_model_provider::BearerAuthProvider;
++use serde_json::Value;
++use std::collections::BTreeSet;
++use std::env;
+ use std::io;
+ use std::io::ErrorKind;
++use std::path::Path;
++use std::path::PathBuf;
+ use std::sync::Arc;
+ use tokio::sync::watch;
+ use tracing::info;
+@@ -17,6 +23,12 @@ pub(super) struct RemoteControlConnectionAuth {
+     pub(super) account_id: String,
+ }
+ 
++struct IsolatedRemoteControlAuth {
++    auth_provider: SharedAuthProvider,
++    account_id: String,
++    source: PathBuf,
++}
++
+ impl RemoteControlConnectionAuth {
+     pub(super) fn request_headers(&self) -> io::Result<HeaderMap> {
+         let mut headers = HeaderMap::new();
+@@ -62,6 +74,18 @@ pub(super) async fn load_remote_control_auth(
+     };
+ 
+     if !auth.uses_codex_backend() {
++        if let Some(isolated_auth) = load_isolated_remote_control_auth(auth_manager).await? {
++            info!(
++                source = %isolated_auth.source.display(),
++                account_id = %isolated_auth.account_id,
++                marker = "remote_control_app_server_isolated_oauth_used",
++                "remote control native auth using isolated remote.json"
++            );
++            return Ok(RemoteControlConnectionAuth {
++                auth_provider: isolated_auth.auth_provider,
++                account_id: isolated_auth.account_id,
++            });
++        }
+         return Err(io::Error::new(
+             ErrorKind::PermissionDenied,
+             "remote control requires ChatGPT authentication; API key auth is not supported",
+@@ -79,6 +103,154 @@ pub(super) async fn load_remote_control_auth(
+     })
+ }
+ 
++async fn load_isolated_remote_control_auth(
++    auth_manager: &AuthManager,
++) -> io::Result<Option<IsolatedRemoteControlAuth>> {
++    let marker = "remote_control_native_remote_json_first";
++    for codex_home in isolated_remote_control_auth_home_candidates(auth_manager) {
++        let remote_json_path = codex_home.join("remote.json");
++        info!(
++            path = %remote_json_path.display(),
++            marker,
++            "checking isolated remote control auth"
++        );
++        match std::fs::read_to_string(&remote_json_path) {
++            Ok(raw) => {
++                let auth = parse_isolated_remote_control_auth(&remote_json_path, &raw)?;
++                if auth.is_some() {
++                    return Ok(auth);
++                }
++            }
++            Err(err) if err.kind() == ErrorKind::NotFound => {}
++            Err(err) => {
++                warn!(
++                    path = %remote_json_path.display(),
++                    marker,
++                    "failed reading isolated remote control auth: {err}"
++                );
++            }
++        }
++
++        let oauth_path = codex_home.join("remote-control-oauth.json");
++        info!(
++            path = %oauth_path.display(),
++            marker = "remote-control-oauth.json",
++            scope = "codex.remote_control.enroll",
++            "remote control enroll token is reserved for enrollment and MFA step-up"
++        );
++    }
++    Ok(None)
++}
++
++fn isolated_remote_control_auth_home_candidates(auth_manager: &AuthManager) -> Vec<PathBuf> {
++    let mut seen = BTreeSet::new();
++    let mut candidates = Vec::new();
++    let mut push = |path: Option<PathBuf>| {
++        let Some(path) = path else {
++            return;
++        };
++        if path.as_os_str().is_empty() {
++            return;
++        }
++        let key = path.to_string_lossy().to_ascii_lowercase();
++        if seen.insert(key) {
++            candidates.push(path);
++        }
++    };
++
++    push(Some(auth_manager.codex_home()));
++    push(env::var_os("CODEX_HOME").map(PathBuf::from));
++    push(env::var_os("USERPROFILE").map(|home| PathBuf::from(home).join(".codex")));
++    push(env::var_os("HOME").map(|home| PathBuf::from(home).join(".codex")));
++    candidates
++}
++
++fn parse_isolated_remote_control_auth(
++    source: &Path,
++    raw: &str,
++) -> io::Result<Option<IsolatedRemoteControlAuth>> {
++    let value: Value = serde_json::from_str(raw).map_err(|err| {
++        io::Error::new(
++            ErrorKind::InvalidData,
++            format!(
++                "failed to parse isolated remote control auth `{}`: {err}",
++                source.display()
++            ),
++        )
++    })?;
++
++    if json_bool(&value, "disabled").unwrap_or(false) {
++        warn!(
++            path = %source.display(),
++            marker = "remote_control_native_remote_json_first",
++            "isolated remote control auth is disabled"
++        );
++        return Ok(None);
++    }
++    if json_bool(&value, "expired").unwrap_or(false) {
++        warn!(
++            path = %source.display(),
++            marker = "remote_control_native_remote_json_first",
++            "isolated remote control auth is expired"
++        );
++        return Ok(None);
++    }
++
++    let access_token = json_string(&value, "access_token")
++        .or_else(|| nested_json_string(&value, "tokens", "access_token"))
++        .ok_or_else(|| {
++            io::Error::new(
++                ErrorKind::InvalidData,
++                format!(
++                    "isolated remote control auth `{}` is missing access_token",
++                    source.display()
++                ),
++            )
++        })?;
++    let account_id = json_string(&value, "account_id")
++        .or_else(|| nested_json_string(&value, "tokens", "account_id"))
++        .or_else(|| json_string(&value, "chatgpt_account_id"))
++        .or_else(|| nested_json_string(&value, "tokens", "chatgpt_account_id"))
++        .ok_or_else(|| {
++            io::Error::new(
++                ErrorKind::InvalidData,
++                format!(
++                    "isolated remote control auth `{}` is missing account_id",
++                    source.display()
++                ),
++            )
++        })?;
++
++    Ok(Some(IsolatedRemoteControlAuth {
++        auth_provider: Arc::new(BearerAuthProvider {
++            token: Some(access_token),
++            account_id: Some(account_id.clone()),
++            is_fedramp_account: json_bool(&value, "is_fedramp_account").unwrap_or(false),
++        }),
++        account_id,
++        source: source.to_path_buf(),
++    }))
++}
++
++fn json_string(value: &Value, key: &str) -> Option<String> {
++    value
++        .get(key)
++        .and_then(Value::as_str)
++        .map(str::trim)
++        .filter(|value| !value.is_empty())
++        .map(str::to_string)
++}
++
++fn nested_json_string(value: &Value, object_key: &str, key: &str) -> Option<String> {
++    value
++        .get(object_key)
++        .and_then(|nested| json_string(nested, key))
++}
++
++fn json_bool(value: &Value, key: &str) -> Option<bool> {
++    value.get(key).and_then(Value::as_bool)
++}
++
+ pub(super) async fn recover_remote_control_auth(
+     auth_recovery: &mut UnauthorizedRecovery,
+     auth_change_rx: &mut watch::Receiver<u64>,
+diff --git a/codex-rs/app-server-transport/src/transport/remote_control/websocket.rs b/codex-rs/app-server-transport/src/transport/remote_control/websocket.rs
+index 7434454..b345595 100644
+--- a/codex-rs/app-server-transport/src/transport/remote_control/websocket.rs
++++ b/codex-rs/app-server-transport/src/transport/remote_control/websocket.rs
+@@ -44,8 +44,10 @@ use futures::stream::SplitSink;
+ use futures::stream::SplitStream;
+ use std::collections::HashMap;
+ use std::collections::VecDeque;
++use std::env;
+ use std::io;
+ use std::io::ErrorKind;
++use std::net::SocketAddr;
+ use std::sync::Arc;
+ use tokio::net::TcpStream;
+ use tokio::sync::Mutex;
+@@ -83,6 +85,9 @@ const REMOTE_CONTROL_WEBSOCKET_CONNECT_TIMEOUT: std::time::Duration =
+ const REMOTE_CONTROL_CONNECTION_SHUTDOWN_TIMEOUT: std::time::Duration =
+     std::time::Duration::from_secs(5);
+ const REMOTE_APP_SERVER_NOT_FOUND_DETAIL: &str = "Remote app server not found";
++const REMOTE_CONTROL_V2RAYN_PROXY_FALLBACK: &str = "http://127.0.0.1:10808";
++const REMOTE_CONTROL_DISABLE_V2RAYN_PROXY_FALLBACK: &str =
++    "CODEX_REMOTE_CONTROL_DISABLE_V2RAYN_PROXY_FALLBACK";
+ 
+ struct BoundedOutboundBuffer {
+     buffer_by_stream: HashMap<(ClientId, StreamId), VecDeque<ServerEnvelope>>,
+@@ -1311,6 +1316,82 @@ fn next_reconnect_delay(reconnect_attempt: &mut u64) -> (std::time::Duration, bo
+     (reconnect_delay, reconnect_backoff_reset)
+ }
+ 
++fn remote_control_proxy_env_value() -> Option<(String, String)> {
++    [
++        "HTTPS_PROXY",
++        "https_proxy",
++        "HTTP_PROXY",
++        "http_proxy",
++        "ALL_PROXY",
++        "all_proxy",
++    ]
++    .into_iter()
++    .find_map(|name| {
++        env::var(name)
++            .ok()
++            .map(|value| value.trim().to_string())
++            .filter(|value| !value.is_empty())
++            .map(|value| (name.to_string(), value))
++    })
++}
++
++fn maybe_apply_remote_control_proxy_fallback(websocket_url: &str) -> Option<String> {
++    const MARKER: &str = "remote_control_websocket_proxy_attempt";
++    if let Some((name, value)) = remote_control_proxy_env_value() {
++        info!(
++            websocket_url,
++            proxy_env = %name,
++            marker = MARKER,
++            "remote control websocket proxy environment already configured"
++        );
++        return Some(value);
++    }
++
++    if env::var(REMOTE_CONTROL_DISABLE_V2RAYN_PROXY_FALLBACK)
++        .ok()
++        .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
++    {
++        info!(
++            websocket_url,
++            marker = MARKER,
++            "remote control websocket v2rayN proxy fallback disabled"
++        );
++        return None;
++    }
++
++    let fallback_addr = SocketAddr::from(([127, 0, 0, 1], 10808));
++    match std::net::TcpStream::connect_timeout(
++        &fallback_addr,
++        std::time::Duration::from_millis(300),
++    ) {
++        Ok(stream) => {
++            drop(stream);
++            // The patched tokio-tungstenite fork reads standard proxy env vars.
++            // Set them only for this process, immediately before the remote-control connect.
++            unsafe {
++                env::set_var("HTTPS_PROXY", REMOTE_CONTROL_V2RAYN_PROXY_FALLBACK);
++                env::set_var("HTTP_PROXY", REMOTE_CONTROL_V2RAYN_PROXY_FALLBACK);
++            }
++            info!(
++                websocket_url,
++                proxy = REMOTE_CONTROL_V2RAYN_PROXY_FALLBACK,
++                marker = MARKER,
++                "remote control websocket using local v2rayN proxy fallback"
++            );
++            Some(REMOTE_CONTROL_V2RAYN_PROXY_FALLBACK.to_string())
++        }
++        Err(err) => {
++            warn!(
++                websocket_url,
++                proxy = REMOTE_CONTROL_V2RAYN_PROXY_FALLBACK,
++                marker = MARKER,
++                "remote control websocket proxy fallback unavailable: {err}"
++            );
++            None
++        }
++    }
++}
++
+ pub(super) async fn connect_remote_control_websocket(
+     remote_control_target: &RemoteControlTarget,
+     state_db: Option<&StateRuntime>,
+@@ -1346,6 +1427,7 @@ pub(super) async fn connect_remote_control_websocket(
+         connect_options.installation_id,
+         connect_options.subscribe_cursor,
+     )?;
++    let proxy = maybe_apply_remote_control_proxy_fallback(&remote_control_target.websocket_url);
+ 
+     let websocket_connect_result = tokio::time::timeout(
+         REMOTE_CONTROL_WEBSOCKET_CONNECT_TIMEOUT,
+@@ -1363,7 +1445,17 @@ pub(super) async fn connect_remote_control_websocket(
+     })?;
+ 
+     match websocket_connect_result {
+-        Ok((websocket_stream, response)) => Ok((websocket_stream, response.map(|_| ()))),
++        Ok((websocket_stream, response)) => {
++            if proxy.is_some() {
++                info!(
++                    websocket_url = %remote_control_target.websocket_url,
++                    proxy_configured = true,
++                    marker = "remote_control_websocket_proxy_connected",
++                    "remote control websocket connected with proxy configuration"
++                );
++            }
++            Ok((websocket_stream, response.map(|_| ())))
++        }
+         Err(err) => {
+             match &err {
+                 tungstenite::Error::Http(response)
+diff --git a/codex-rs/login/src/auth/manager.rs b/codex-rs/login/src/auth/manager.rs
+index 8444108..685ce9b 100644
+--- a/codex-rs/login/src/auth/manager.rs
++++ b/codex-rs/login/src/auth/manager.rs
+@@ -1859,6 +1859,11 @@ fn default_agent_identity_authapi_base_url() -> Option<String> {
+ }
+ 
+ impl AuthManager {
++    /// Returns the Codex home directory used by this auth manager.
++    pub fn codex_home(&self) -> PathBuf {
++        self.codex_home.clone()
++    }
++
+     /// Create a new manager loading the initial auth using the provided
+     /// preferred auth method. Errors loading auth are swallowed; `auth()` will
+     /// simply return `None` in that case so callers can treat it as an
