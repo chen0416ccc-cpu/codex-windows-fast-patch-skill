@@ -38,7 +38,7 @@ Do not run it on macOS. A macOS version needs a separate workflow for the Codex 
 - `scripts/patch-dynamic-tools-schema.cjs`: Electron bundle patcher used by the dynamicTools MSIX script.
 - `scripts/patch-remote-control-windows-msix.ps1`: Phone remote-control MSIX / ASAR patch and marker verification reference implementation.
 - `scripts/patch-remote-control-asar.cjs`: Phone remote-control Electron bundle patcher used by the MSIX script.
-- `scripts/build-remote-control-native-replacement.ps1`: Builds the patched native `app\resources\codex.exe` replacement under a caller-selected work root when the native app-server rejects API-key main auth. By default it detects the installed native version from a copied executable; bundled mappings cover `0.144.0-alpha.4`, validated through build, install, and a phone-message round trip with Desktop `26.707.3748.0`, plus historical patch-apply-only validated `0.142.4`. Any other version requires an exact `-CodexSourceRef` / `-AppServerVersion` pair plus a validated `-PatchPathOverride`.
+- `scripts/build-remote-control-native-replacement.ps1`: Builds the patched native `app\resources\codex.exe` replacement under a caller-selected work root when the native app-server rejects API-key main auth. By default it detects the installed native version from a copied executable; bundled mappings cover `0.145.0-alpha.18`, exact-tag built, installed, and phone end-to-end validated with Desktop `26.715.2305.0`; `0.144.0-alpha.4`, equivalently validated with Desktop `26.707.3748.0`; and historical patch-apply-only validated `0.142.4`. Any other version requires an exact `-CodexSourceRef` / `-AppServerVersion` pair plus a validated `-PatchPathOverride`.
 - `scripts/install-computer-use-local.ps1`: Windows Computer Use local compatibility reference implementation.
 - `scripts/sync-codex-provider-history.ps1`: Sync local conversation provider metadata so conversations hidden after a `model_provider` switch reappear in the official list; `-RepairMissingCwdDirs` can also repair restored conversations that cannot continue because the recorded `cwd` directory is missing. It does not modify `config.toml` or workspace/project roots by default.
 - `scripts/install-model-instructions-file.ps1`: Optional installer for the bundled `model_instructions_file` prompt asset.
@@ -48,6 +48,7 @@ Do not run it on macOS. A macOS version needs a separate workflow for the Codex 
 - `references/restriction-debug-cases.md`: On-demand cases for restriction gates, Chrome/browser_use, Computer Use, and Fast Mode.
 - `references/remote-control-debug-cases.md`: On-demand cases for phone remote-control pairing, isolated auth, native app-server networking, version-expired state, and post-pairing API endpoint diagnosis.
 - `references/remote-control-native-replacement.patch`: Reference Rust source patch for the phone remote-control native app-server replacement.
+- `references/remote-control-native-replacement-0.145.0-alpha.18.patch`: `rust-v0.145.0-alpha.18`-specific Rust patch built, installed, and phone end-to-end validated with Desktop `26.715.2305.0`.
 - `references/remote-control-native-replacement-0.142.4.patch`: Historical `rust-v0.142.4`-specific Rust patch with clean patch-apply validation only; it is not claimed as fully compiled or end-to-end validated.
 
 ## Install
@@ -117,6 +118,8 @@ Before starting from the external executor, confirm there is no global `CODEX_HO
 
 The phone remote-control install path downloads Windows SDK BuildTools from NuGet when `makeappx.exe` / `signtool.exe` are missing and keeps the cache under `-OutputRoot\.remote-control-temp`; a D-drive output root no longer falls back to `%TEMP%`. It does not force a local proxy by default; if the machine must use one, pass `-BuildToolsProxy "http://127.0.0.1:10808"` or set `CODEX_WINDOWS_SDK_BUILDTOOLS_PROXY`. Proxy URIs and credentials are not logged. If `curl download failed with exit code 7` appears, first check whether an explicitly configured local proxy is not listening.
 
+Keep the native replacement `-WorkRoot` on the requested large non-system drive and prefer a short root. During the validated `26.715.2305.0 / 0.145.0-alpha.18` build, a long D-drive root caused a Windows path-too-long failure while Cargo checked out a Git dependency; shortening the root to a shape such as `D:\CodexData\rc145` fixed the build. On PowerShell 5.1, the helper extracts SDK NuGet packages with checked `tar.exe` and supports the actual split `c\um\x64`, `c\ucrt\x64`, `c\Include\<version>`, and `c\bin\<version>\x64` layouts.
+
 Example request: `Use the codex-windows-fast-patch skill to inspect and repair Codex Desktop Fast Mode, language/locale, Chrome browser_use, plugin marketplace, and Computer Use availability on this Windows machine.`
 
 Phone remote-control example request: `Use the codex-windows-fast-patch skill to repair Windows Codex Desktop phone remote control while preserving my third-party API provider and current conversation history. If large build artifacts are needed, keep them on D:\ or another non-system drive.`
@@ -129,7 +132,7 @@ Expected verification after a full run:
 - Desktop logs show the bundled marketplace retaining `pluginNames=["sites","browser","chrome","computer-use","latex"]` and no new `not_in_bundled_marketplace_plugin_names` entry for `sites`.
 - Desktop logs show `browser_use_availability_resolved` with `available=true` and `reason=local-patched` when browser use is part of the repair.
 - If Chrome control is required, `codex plugin list` shows `chrome@openai-bundled` as `installed, enabled`, the native messaging host manifest points to existing files, and a smoke test can read a controlled tab title such as `Example Domain`.
-- If phone remote control is repaired, Connections shows the phone setup path, QR appears, phone scan does not report an expired Codex environment, native logs show remote-control WebSocket ping/pong/ack, and phone-created turns reach Desktop.
+- If phone remote control is repaired, Connections shows the phone setup path, QR appears, phone scan does not report an expired Codex environment, WindowsApps PID/path-correlated native logs show `remote_control_websocket_proxy_connected` and `Connected` without repeated `os error 10060`, and phone-created turns reach Desktop. Some native versions handle Ping/Pong silently, so frame log text is not the sole success criterion.
 - If conversation visibility is repaired, `sync-codex-provider-history.ps1` shows App/legacy SQLite stores and readable rollouts aligned to the current `model_provider`, logs `config.toml sha256 unchanged`, official Desktop conversations reappear, and no empty project groups are introduced. If repairing visible-but-uncontinuable conversations, `missing rollout cwd dirs after` is zero or contains only reviewed skipped paths, and the affected conversation can send a new message after Desktop restart.
 
 ## Backup Management
