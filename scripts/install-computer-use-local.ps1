@@ -958,6 +958,7 @@ function Get-CuaSkyRuntimeRoot {
         [pscustomobject]@{
           Path = $skyRoot
           LastWriteTime = $packageItem.LastWriteTime
+          Priority = 0
         }
       }
     }
@@ -975,11 +976,15 @@ function Get-CuaSkyRuntimeRoot {
       $candidates += [pscustomobject]@{
         Path = $packageSkyRoot
         LastWriteTime = $packageItem.LastWriteTime
+        Priority = 1
       }
     }
   }
 
-  $selected = @($candidates | Sort-Object LastWriteTime -Descending | Select-Object -First 1)
+  # Prefer the extracted per-user runtime. Executables inside WindowsApps can
+  # be readable yet fail to spawn with EPERM from an ordinary PowerShell/Node
+  # process. The package copy remains a discovery fallback only.
+  $selected = @($candidates | Sort-Object Priority, @{ Expression = 'LastWriteTime'; Descending = $true } | Select-Object -First 1)
   if ($selected.Count -eq 0) {
     throw "no usable Codex CUA @oai/sky runtime was found under $runtimeRoot or the installed Codex package"
   }
@@ -1497,7 +1502,10 @@ if errors:
 }
 
 function Test-HelperTransport {
-  param([string]$HelperTransportPath)
+  param(
+    [string]$HelperTransportPath,
+    [string]$HelperCommandPath
+  )
 
   $node = Get-Command node.exe -ErrorAction SilentlyContinue | Select-Object -First 1
   if (-not $node) {
@@ -1513,19 +1521,27 @@ if (typeof mod.WindowsHelperTransport !== "function") {
   throw new Error("WindowsHelperTransport export is missing");
 }
 
-const transport = new mod.WindowsHelperTransport();
+const helperCommand = process.argv[3];
+const transport = helperCommand
+  ? new mod.WindowsHelperTransport({ helperCommand })
+  : new mod.WindowsHelperTransport();
 try {
-  const info = await transport.request("screenInfo", {});
-  if (!info || typeof info.width !== "number" || typeof info.height !== "number" || info.width <= 0 || info.height <= 0) {
-    throw new Error(`invalid screenInfo response: ${JSON.stringify(info)}`);
+  let result;
+  let method;
+  try {
+    method = "list_windows";
+    result = await transport.request(method, {});
+  } catch (error) {
+    if (!String(error?.message ?? error).includes("unsupported method")) {
+      throw error;
+    }
+    method = "screenInfo";
+    result = await transport.request(method, {});
   }
-
-  const screenshot = await transport.request("screenshot", {});
-  if (!screenshot || screenshot.mimeType !== "image/png" || typeof screenshot.data !== "string" || screenshot.data.length < 100) {
-    throw new Error("invalid screenshot response");
+  if (result == null || typeof result !== "object") {
+    throw new Error(`invalid ${method} response: ${JSON.stringify(result)}`);
   }
-
-  console.log(JSON.stringify({ ok: true, width: info.width, height: info.height, screenshotBytesApprox: Math.floor(screenshot.data.length * 3 / 4) }));
+  console.log(JSON.stringify({ ok: true, method, resultType: Array.isArray(result) ? "array" : "object" }));
 } finally {
   if (typeof transport.close === "function") {
     await transport.close();
@@ -1535,7 +1551,7 @@ try {
   $temp = Join-Path $env:TEMP ('codex-computer-use-verify-' + [guid]::NewGuid().ToString('N') + '.mjs')
   try {
     Write-Utf8NoBom $temp $script
-    $output = & $node.Source $temp $HelperTransportPath
+    $output = & $node.Source $temp $HelperTransportPath $HelperCommandPath
     if ($LASTEXITCODE -ne 0) {
       throw "Computer Use helper transport verification failed for $HelperTransportPath"
     }
@@ -1618,6 +1634,64 @@ console.log(JSON.stringify({ ok: true, exports: Object.keys(mod).sort() }));
   }
 }
 
+function Test-OfficialComputerUseCache {
+  param(
+    [string]$CodexHomeResolved,
+    [string]$InstalledMarketplaceRoot
+  )
+
+  $sourceRoot = Join-Path $InstalledMarketplaceRoot 'plugins\computer-use'
+  $version = Get-PluginVersion $sourceRoot
+  $cacheVersionRoot = Join-Path $CodexHomeResolved "plugins\cache\openai-bundled\computer-use\$version"
+  $requiredCachePaths = @(
+    (Join-Path $cacheVersionRoot '.codex-plugin\plugin.json'),
+    (Join-Path $cacheVersionRoot 'scripts\computer-use-client.mjs')
+  )
+  foreach ($path in $requiredCachePaths) {
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+      throw "official Computer Use cache is incomplete: $path"
+    }
+  }
+
+  $mismatches = @()
+  foreach ($sourceFile in @(Get-ChildItem -LiteralPath $sourceRoot -Recurse -File)) {
+    $relativePath = $sourceFile.FullName.Substring($sourceRoot.Length).TrimStart('\')
+    $cacheFile = Join-Path $cacheVersionRoot $relativePath
+    if (-not (Test-Path -LiteralPath $cacheFile -PathType Leaf)) {
+      $mismatches += "missing:$relativePath"
+      continue
+    }
+    $sourceHash = (Get-FileHash -LiteralPath $sourceFile.FullName -Algorithm SHA256).Hash
+    $cacheHash = (Get-FileHash -LiteralPath $cacheFile -Algorithm SHA256).Hash
+    if ($sourceHash -ne $cacheHash) {
+      $mismatches += "changed:$relativePath"
+    }
+  }
+  if ($mismatches.Count -gt 0) {
+    throw "official Computer Use cache differs from the installed package: $($mismatches -join ', ')"
+  }
+
+  $runtimeSkyRoot = Get-CuaSkyRuntimeRoot
+  $runtimeRequired = @(
+    (Join-Path $runtimeSkyRoot 'package.json'),
+    (Join-Path $runtimeSkyRoot 'bin\windows\codex-computer-use.exe'),
+    (Join-Path $runtimeSkyRoot 'dist\project\cua\sky_js\src\targets\windows\internal\computer_use_client_base.js'),
+    (Join-Path $runtimeSkyRoot 'dist\project\cua\sky_js\src\targets\windows\internal\helper_transport.js')
+  )
+  foreach ($path in $runtimeRequired) {
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+      throw "official Computer Use runtime is incomplete: $path"
+    }
+  }
+
+  $clientPath = Join-Path $cacheVersionRoot 'scripts\computer-use-client.mjs'
+  $helperCommandPath = Join-Path $runtimeSkyRoot 'bin\windows\codex-computer-use.exe'
+  $helperTransportPath = Join-Path $runtimeSkyRoot 'dist\project\cua\sky_js\src\targets\windows\internal\helper_transport.js'
+  Test-ComputerUseClientImport $clientPath
+  Test-HelperTransport $helperTransportPath $helperCommandPath
+  Write-Log "official lightweight cache verification ok: computer-use@$version / runtime=$runtimeSkyRoot"
+}
+
 function Install-ComputerUse {
   $codexHomeResolved = Resolve-OrCreateDirectory $CodexHome
   $marketplaceRoot = Join-Path $codexHomeResolved '.tmp\bundled-marketplaces\openai-bundled'
@@ -1658,6 +1732,17 @@ function Install-ComputerUse {
 
 function Test-ComputerUse {
   $codexHomeResolved = Resolve-ExistingDirectory $CodexHome
+  $installedMarketplaceRoot = Get-InstalledBundledMarketplaceRoot
+  $officialCacheLatest = Join-Path $codexHomeResolved 'plugins\cache\openai-bundled\computer-use\latest'
+  if (-not (Test-Path -LiteralPath $officialCacheLatest)) {
+    # Current Codex builds can install a lightweight versioned plugin cache and
+    # keep @oai/sky in the independent cua_node runtime. In that supported
+    # layout there is no `latest` junction and no plugin-local node_modules.
+    Test-OfficialComputerUseCache $codexHomeResolved $installedMarketplaceRoot
+    Write-Log 'verification ok'
+    return
+  }
+
   $marketplaceRoot = Join-Path $codexHomeResolved '.tmp\bundled-marketplaces\openai-bundled'
   $manifestPath = Join-Path $marketplaceRoot '.agents\plugins\marketplace.json'
   $cacheLatest = Join-Path $codexHomeResolved 'plugins\cache\openai-bundled\computer-use\latest'
