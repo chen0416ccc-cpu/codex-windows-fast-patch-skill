@@ -327,7 +327,7 @@ Success criteria:
 - Do not solve a Windows 10 `SetIsBorderRequired` / `0x80004002` screenshot failure by restoring an older Codex Desktop package or copying a helper from another runtime. The bundled helper patch profile is limited to one exact input/output hash pair, backs up the original, and refuses unknown binaries.
 - Do not run the phone remote-control MSIX patch as a default repatch side effect. Use it only for phone remote-control tasks or when the user explicitly asks for that workflow.
 - Do not treat every `missing field inputSchema` as an MCP problem. If CLI smoke tests pass while Desktop UI fails and the dynamic-tools ASAR asset still returns a namespace wrapper, use the Dynamic Tools Schema workflow instead of disabling unrelated MCP servers.
-- Do not trust a response like `FAST_CHECK_OK` as proof of Fast Mode. Trust only the wrapper/script wire verification, which runs with an isolated temporary `CODEX_HOME`, serves the CLI's `/v1/models` probe, then captures a `/v1/responses` HTTP body or WebSocket frame and checks `service_tier=priority`. A models-only request is not proof. If `PATH` resolves only to the protected WindowsApps CLI, the patcher must use the copied work-package CLI; an explicit verification request must fail instead of silently skipping when no runnable CLI exists.
+- Do not trust a response like `FAST_CHECK_OK` as proof of Fast Mode. Trust only the wrapper/script wire verification, which runs with an isolated temporary `CODEX_HOME`, serves the CLI's `/v1/models` probe, then captures a `/v1/responses` HTTP body or WebSocket frame and checks `service_tier=priority`. A models-only request is not proof. If `codex exec` exits or crashes before sending that request, the verifier falls back to `codex debug app-server send-message-v2` and must also observe `thread/start serviceTier=priority`; the wire capture remains mandatory. If `PATH` resolves only to the protected WindowsApps CLI, the patcher must use the copied work-package CLI; an explicit verification request must fail instead of silently skipping when no runnable CLI exists.
 - If the app launches then immediately exits, run Electron logging and check for ASAR integrity failures:
 
 ```powershell
@@ -505,7 +505,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\ski
 - `Get-AppxPackage -Name OpenAI.Codex` shows `SignatureKind = Developer`.
 - The install log launches the patched Desktop package through its AppUserModelId, avoiding direct-executable access failures under `WindowsApps`.
 - The manifest-declared Codex Desktop process stays alive from the installed package, currently `...\app\ChatGPT.exe` on newer builds and `...\app\Codex.exe` on older builds.
-- Fast Mode verification reaches `/v1/responses` and logs `request wire service_tier=priority`; `/v1/models` probes alone do not pass verification.
+- Fast Mode verification reaches `/v1/responses` and logs `request wire service_tier=priority`; `/v1/models` probes alone do not pass verification. When the app-server fallback is used, it also logs `thread/start serviceTier=priority`.
 - The patch log includes `fast-mode UI patch result` and `locale i18n patch result`, each either `patched` or `already-patched`.
 - The patch log includes `custom models patch result`, and the patched model filter contains all configured custom model IDs.
 - The patch log includes `browser-use gate patch result`, either `patched` or `already-patched`.

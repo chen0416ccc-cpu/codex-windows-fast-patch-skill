@@ -2330,7 +2330,7 @@ server.listen(port, "127.0.0.1", () => {
   fs.writeFileSync(outPath + ".ready", "ready");
 });
 
-setTimeout(() => server.close(() => process.exit(0)), 15000).unref();
+setTimeout(() => server.close(() => process.exit(0)), 45000).unref();
 '@
 
   Set-Content -LiteralPath $serverPath -Value $serverSource -Encoding ASCII
@@ -2359,56 +2359,125 @@ setTimeout(() => server.close(() => process.exit(0)), 15000).unref();
     $wireApiConfig = 'model_providers.' + $providerId + '.wire_api="responses"'
     $providerEnvKeyConfig = 'model_providers.' + $providerId + '.env_key="OPENAI_API_KEY"'
     $providerConfig = 'model_provider="' + $providerId + '"'
-    $wireTier = $null
-    $codexJob = Start-Job -ScriptBlock {
+    $startVerificationJob = {
       param(
-        [string]$CodexPath,
-        [string]$ProviderConfig,
-        [string]$ProviderNameConfig,
-        [string]$BaseUrlConfig,
-        [string]$WireApiConfig,
-        [string]$ProviderEnvKeyConfig,
-        [string]$VerificationCodexHome
+        [ValidateSet('exec', 'app-server')]
+        [string]$Mode,
+        [string]$OutputPath
       )
-      $env:CODEX_HOME = $VerificationCodexHome
-      $env:OPENAI_API_KEY = 'codex-fast-wire-verification'
-      & $CodexPath exec --ignore-user-config --ephemeral --json --skip-git-repo-check -c $ProviderConfig -c $ProviderNameConfig -c $BaseUrlConfig -c $WireApiConfig -c $ProviderEnvKeyConfig -c 'service_tier="fast"' -c 'model_reasoning_effort="low"' -c 'model="gpt-5.6-sol"' -c 'features.enable_request_compression=false' 'wire capture only' 2>&1 | Out-Null
-    } -ArgumentList $codex, $providerConfig, $providerNameConfig, $baseUrlConfig, $wireApiConfig, $providerEnvKeyConfig, $verificationCodexHome
 
-    $requestDeadline = (Get-Date).AddSeconds(25)
-    while ((Get-Date) -lt $requestDeadline -and -not $wireTier) {
-      Start-Sleep -Milliseconds 200
-      if (-not (Test-Path -LiteralPath $logPath)) {
-        continue
-      }
-      foreach ($line in (Get-Content -LiteralPath $logPath)) {
-        try {
-          $entry = $line | ConvertFrom-Json -ErrorAction Stop
-        } catch {
-          continue
+      Start-Job -ScriptBlock {
+        param(
+          [string]$CodexPath,
+          [string]$ProviderConfig,
+          [string]$ProviderNameConfig,
+          [string]$BaseUrlConfig,
+          [string]$WireApiConfig,
+          [string]$ProviderEnvKeyConfig,
+          [string]$VerificationCodexHome,
+          [string]$Mode,
+          [string]$OutputPath
+        )
+        $env:CODEX_HOME = $VerificationCodexHome
+        $env:OPENAI_API_KEY = 'codex-fast-wire-verification'
+        if ($Mode -eq 'app-server') {
+          & $CodexPath debug app-server send-message-v2 'wire capture only' 2>&1 |
+            Out-File -LiteralPath $OutputPath -Encoding utf8
+        } else {
+          & $CodexPath exec --ignore-user-config --ephemeral --json --skip-git-repo-check -c $ProviderConfig -c $ProviderNameConfig -c $BaseUrlConfig -c $WireApiConfig -c $ProviderEnvKeyConfig -c 'service_tier="fast"' -c 'model_reasoning_effort="low"' -c 'model="gpt-5.6-sol"' -c 'features.enable_request_compression=false' 'wire capture only' 2>&1 |
+            Out-File -LiteralPath $OutputPath -Encoding utf8
         }
-        if ($entry.kind -notin @('frame', 'http')) {
-          continue
+      } -ArgumentList $codex, $providerConfig, $providerNameConfig, $baseUrlConfig, $wireApiConfig, $providerEnvKeyConfig, $verificationCodexHome, $Mode, $OutputPath
+    }
+
+    $waitForWireTier = {
+      param(
+        [object]$Job,
+        [int]$TimeoutSeconds
+      )
+
+      $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+      while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 200
+        if (Test-Path -LiteralPath $logPath) {
+          foreach ($line in (Get-Content -LiteralPath $logPath)) {
+            try {
+              $entry = $line | ConvertFrom-Json -ErrorAction Stop
+            } catch {
+              continue
+            }
+            if ($entry.kind -notin @('frame', 'http')) {
+              continue
+            }
+            if ([string]$entry.url -notmatch '^/v1/responses(?:\?|$)') {
+              continue
+            }
+            if (-not [string]::IsNullOrWhiteSpace([string]$entry.service_tier)) {
+              return [string]$entry.service_tier
+            }
+          }
         }
-        if ([string]$entry.url -notmatch '^/v1/responses(?:\?|$)') {
-          continue
-        }
-        if (-not [string]::IsNullOrWhiteSpace([string]$entry.service_tier)) {
-          $wireTier = [string]$entry.service_tier
+        if ($Job.State -in @('Completed', 'Failed', 'Stopped')) {
+          Start-Sleep -Milliseconds 300
           break
         }
       }
-      if ($codexJob.State -in @('Completed', 'Failed', 'Stopped') -and -not $wireTier) {
-        Start-Sleep -Milliseconds 300
-        if ((Get-Date) -lt $requestDeadline) {
-          continue
-        }
-        break
+      return $null
+    }
+
+    $verificationMode = 'exec'
+    $execOutputPath = Join-Path $captureDir 'codex-exec.log'
+    $codexJob = & $startVerificationJob $verificationMode $execOutputPath
+    $wireTier = & $waitForWireTier $codexJob 12
+
+    if (-not $wireTier) {
+      $execState = [string]$codexJob.State
+      if ($codexJob.State -eq 'Running') {
+        Stop-Job -Job $codexJob -ErrorAction SilentlyContinue
       }
+      Remove-Job -Job $codexJob -Force -ErrorAction SilentlyContinue
+
+      $verificationMode = 'app-server'
+      $appServerOutputPath = Join-Path $captureDir 'app-server.log'
+      $appServerConfigPath = Join-Path $verificationCodexHome 'config.toml'
+      $appServerConfig = @"
+model_provider = "$providerId"
+service_tier = "fast"
+model_reasoning_effort = "low"
+model = "gpt-5.6-sol"
+
+[features]
+enable_request_compression = false
+
+[model_providers.$providerId]
+name = "Codex Fast Wire Capture"
+base_url = "http://127.0.0.1:$port/v1"
+wire_api = "responses"
+env_key = "OPENAI_API_KEY"
+"@
+      [System.IO.File]::WriteAllText($appServerConfigPath, $appServerConfig.TrimStart(), [System.Text.UTF8Encoding]::new($false))
+      Write-Log "warning: codex exec fast verification produced no wire request (state=$execState); trying app-server fallback"
+      $codexJob = & $startVerificationJob $verificationMode $appServerOutputPath
+      $wireTier = & $waitForWireTier $codexJob 25
     }
 
     if ($codexJob -and $codexJob.State -eq 'Running') {
-      Stop-Job -Job $codexJob -ErrorAction SilentlyContinue
+      Wait-Job -Job $codexJob -Timeout 5 | Out-Null
+    }
+    if ($verificationMode -eq 'app-server') {
+      $appServerOutput = if (Test-Path -LiteralPath $appServerOutputPath) {
+        Get-Content -Raw -LiteralPath $appServerOutputPath
+      } else {
+        ''
+      }
+      $threadTierMatches = [regex]::Matches($appServerOutput, '(?i)(?:\\?["'']?(?:serviceTier|service_tier)\\?["'']?)\s*[:=]\s*\\?["'']?(?<tier>[A-Za-z0-9_-]+)')
+      $threadTiers = @($threadTierMatches | ForEach-Object { $_.Groups['tier'].Value } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+      $threadTier = $threadTiers | Where-Object { $_ -eq 'priority' } | Select-Object -First 1
+      if (-not $threadTier) {
+        $observedTiers = if ($threadTiers.Count -gt 0) { $threadTiers -join ',' } else { '<none>' }
+        Fail "fast verification app-server fallback did not report thread/start serviceTier=priority (observed=$observedTiers)"
+      }
+      Write-Log 'fast verification fallback: thread/start serviceTier=priority (app-server)'
     }
     if (-not $wireTier) {
       Fail 'fast verification did not find service_tier in the captured request'

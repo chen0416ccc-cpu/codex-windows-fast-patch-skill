@@ -140,7 +140,7 @@ Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'assets') -Destination
 ## 预期验证
 
 - 补丁日志包含 `fast-mode UI patch result`、`locale i18n patch result` 和 `browser-use gate patch result`，结果为 `patched` 或 `already-patched`。
-- Fast Mode 本地线缆验证能在 `/v1/responses` 的 HTTP 请求体或 WebSocket 帧里捕获 `service_tier=priority`。
+- Fast Mode 本地线缆验证能在 `/v1/responses` 的 HTTP 请求体或 WebSocket 帧里捕获 `service_tier=priority`；如果 `codex exec` 未发出请求，验证器会回退到 app-server，并额外确认 `thread/start serviceTier=priority`。
 - 如果本次修复包含 bundled 插件，`codex plugin list` 应显示 `openai-bundled` 下的 `sites`、`browser`、`chrome`、`computer-use`、`latex` 都为 `installed, enabled`。
 - Desktop 日志应显示 bundled marketplace 保留 `pluginNames=["sites","browser","chrome","computer-use","latex"]`，且不再出现新的 `not_in_bundled_marketplace_plugin_names` / `sites`。
 - 如果本次修复包含浏览器能力，Desktop 日志里 `browser_use_availability_resolved` 显示 `available=true` 和 `reason=local-patched`。
