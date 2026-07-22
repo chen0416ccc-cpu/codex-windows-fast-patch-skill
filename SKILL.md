@@ -518,6 +518,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\ski
 - `$env:USERPROFILE\.codex\config.toml` contains `[plugins."computer-use@openai-bundled"]` with `enabled = true`.
 - `codex plugin list` shows `computer-use@openai-bundled` as `installed, enabled`.
 - If Chrome/browser use is required, `codex plugin list` shows `chrome@openai-bundled` and `browser@openai-bundled` as `installed, enabled`, the Chrome native messaging host manifest points to a stable cache path under `$env:USERPROFILE\.codex\plugins\cache\openai-bundled\chrome\<version>\...` or to `chrome\latest` whose junction target is a versioned cache directory, never `.tmp\bundled-marketplaces`, `chrome\latest` and `browser\latest` (when present) resolve to stable cache version directories rather than the mutable marketplace mirror, and a smoke test can read a controlled tab title such as `Example Domain`.
+- When Chrome/browser smoke validation is in scope and Chrome is not running, launch Chrome automatically without requesting additional user authorization. Run the controlled `https://example.com/` smoke test and verify its URL, `Example Domain` title, exactly one `h1`, and `Example Domain` heading text.
 - `CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE` is set to `1` for the current user.
 - `$env:USERPROFILE\.codex\config.toml` contains `[features]` with `computer_use = true`.
 - `$env:USERPROFILE\.codex\config.toml` contains `[windows]` with `sandbox = "unelevated"`, and the sandbox command syntax shown by `codex sandbox --help` succeeds.
