@@ -1842,7 +1842,7 @@ function Test-ComputerUse {
     if (Test-Path -LiteralPath $optionalLatestPath) {
       $latestPathsToCheck += $optionalLatestPath
     } else {
-      Write-Log "warning: bundled plugin latest junction not present; using versioned cache path: $optionalLatestPath"
+      Write-Log "bundled plugin latest junction not present; verified versioned cache fallback: $optionalLatestPath"
     }
   }
   if ($sitesAvailable) {
