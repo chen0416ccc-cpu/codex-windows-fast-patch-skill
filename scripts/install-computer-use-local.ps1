@@ -1734,10 +1734,21 @@ function Test-ComputerUse {
   $codexHomeResolved = Resolve-ExistingDirectory $CodexHome
   $installedMarketplaceRoot = Get-InstalledBundledMarketplaceRoot
   $officialCacheLatest = Join-Path $codexHomeResolved 'plugins\cache\openai-bundled\computer-use\latest'
-  if (-not (Test-Path -LiteralPath $officialCacheLatest)) {
+  $legacyLatestMarkers = @(
+    (Join-Path $officialCacheLatest '.codex-plugin\plugin.json'),
+    (Join-Path $officialCacheLatest 'node_modules\@oai\sky\package.json')
+  )
+  $hasLegacyLatestLayout = $true
+  foreach ($marker in $legacyLatestMarkers) {
+    if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) {
+      $hasLegacyLatestLayout = $false
+      break
+    }
+  }
+  if (-not $hasLegacyLatestLayout) {
     # Current Codex builds can install a lightweight versioned plugin cache and
     # keep @oai/sky in the independent cua_node runtime. In that supported
-    # layout there is no `latest` junction and no plugin-local node_modules.
+    # layout `latest` can be absent or stale and has no usable node_modules.
     Test-OfficialComputerUseCache $codexHomeResolved $installedMarketplaceRoot
     Write-Log 'verification ok'
     return
