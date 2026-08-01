@@ -846,8 +846,46 @@ function Update-BundledMarketplaceManifest {
   }
 
   $plugins = @($json.plugins | Where-Object { $_.name -ne 'computer-use' })
+  $pluginNames = @{}
+  foreach ($plugin in $plugins) {
+    $pluginNames[[string]$plugin.name] = $true
+  }
+
+  $sourceRoot = Get-InstalledBundledMarketplaceRoot
+  $sourceManifestPath = Join-Path $sourceRoot '.agents\plugins\marketplace.json'
+  $sourceManifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $sourceManifestPath | ConvertFrom-Json
+  foreach ($sourcePlugin in @($sourceManifest.plugins)) {
+    $name = [string]$sourcePlugin.name
+    if ($name -ne 'computer-use' -and -not $pluginNames.ContainsKey($name)) {
+      $plugins += $sourcePlugin
+      $pluginNames[$name] = $true
+      Write-Log "restored bundled marketplace entry from installed package: $name"
+    }
+  }
+
   $json.plugins = @($entry) + $plugins
   ConvertTo-JsonFile $manifestPath $json
+}
+
+function Get-StableBundledMarketplaceRoot {
+  param([string]$CodexHomeResolved)
+
+  $tmpRoot = Join-Path $CodexHomeResolved '.tmp'
+  if (Test-Path -LiteralPath $tmpRoot -PathType Container) {
+    $tmpItem = Get-Item -LiteralPath $tmpRoot -Force
+    if (($tmpItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+      $target = [string](@($tmpItem.Target) | Select-Object -First 1)
+      if (-not [string]::IsNullOrWhiteSpace($target)) {
+        if (-not [System.IO.Path]::IsPathRooted($target)) {
+          $target = Join-Path (Split-Path -Parent $tmpRoot) $target
+        }
+        $target = [System.IO.Path]::GetFullPath($target)
+        return Join-Path (Split-Path -Parent $target) 'openai-bundled-marketplace'
+      }
+    }
+  }
+
+  return Join-Path $CodexHomeResolved 'marketplaces\openai-bundled-local'
 }
 
 function Get-ComputerUsePipeConfigState {
@@ -958,6 +996,7 @@ function Get-CuaSkyRuntimeRoot {
         [pscustomobject]@{
           Path = $skyRoot
           LastWriteTime = $packageItem.LastWriteTime
+          Priority = 0
         }
       }
     }
@@ -975,11 +1014,15 @@ function Get-CuaSkyRuntimeRoot {
       $candidates += [pscustomobject]@{
         Path = $packageSkyRoot
         LastWriteTime = $packageItem.LastWriteTime
+        Priority = 1
       }
     }
   }
 
-  $selected = @($candidates | Sort-Object LastWriteTime -Descending | Select-Object -First 1)
+  # Prefer the extracted per-user runtime. Executables inside WindowsApps can
+  # be readable yet fail to spawn with EPERM from an ordinary PowerShell/Node
+  # process. The package copy remains a discovery fallback only.
+  $selected = @($candidates | Sort-Object Priority, @{ Expression = 'LastWriteTime'; Descending = $true } | Select-Object -First 1)
   if ($selected.Count -eq 0) {
     throw "no usable Codex CUA @oai/sky runtime was found under $runtimeRoot or the installed Codex package"
   }
@@ -1119,7 +1162,62 @@ function Test-BundledMarketplacePluginAvailable {
   )
 
   $pluginJson = Join-Path $MarketplaceRoot "plugins\$PluginName\.codex-plugin\plugin.json"
-  return Test-Path -LiteralPath $pluginJson -PathType Leaf
+  if (-not (Test-Path -LiteralPath $pluginJson -PathType Leaf)) {
+    return $false
+  }
+
+  $manifestPath = Join-Path $MarketplaceRoot '.agents\plugins\marketplace.json'
+  if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+    return $false
+  }
+  try {
+    $manifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $manifestPath | ConvertFrom-Json
+    return @($manifest.plugins | Where-Object { [string]$_.name -eq $PluginName }).Count -gt 0
+  } catch {
+    return $false
+  }
+}
+
+function Install-BundledMarketplacePluginWithCodexCli {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$PluginName
+  )
+
+  $candidates = @(Get-Command codex -All -ErrorAction SilentlyContinue | Where-Object {
+    $_.Source -and $_.Source -notmatch '(?i)\\WindowsApps\\'
+  })
+  $codex = $candidates | Where-Object { $_.Source.EndsWith('.cmd', [StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1
+  if (-not $codex) {
+    $codex = $candidates | Where-Object { $_.Source.EndsWith('.ps1', [StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1
+  }
+  if (-not $codex) {
+    $codex = $candidates | Where-Object { $_.Source.EndsWith('.exe', [StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1
+  }
+  $codexPath = if ($codex) { [string]$codex.Source } else { '' }
+  if ([string]::IsNullOrWhiteSpace($codexPath)) {
+    $localBinRoot = Join-Path $env:LOCALAPPDATA 'OpenAI\Codex\bin'
+    if (Test-Path -LiteralPath $localBinRoot -PathType Container) {
+      $codexPath = [string](Get-ChildItem -LiteralPath $localBinRoot -Recurse -Filter 'codex.exe' -File -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTimeUtc -Descending |
+        Select-Object -First 1 -ExpandProperty FullName)
+      if (-not [string]::IsNullOrWhiteSpace($codexPath)) {
+        Write-Log "using user-local Codex CLI: $codexPath"
+      }
+    }
+  }
+  if ([string]::IsNullOrWhiteSpace($codexPath)) {
+    throw "Codex CLI not found; cannot register $PluginName@openai-bundled"
+  }
+
+  $selector = "$PluginName@openai-bundled"
+  $output = @(& $codexPath plugin add $selector --json 2>&1)
+  if ($LASTEXITCODE -ne 0) {
+    $detail = ($output | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
+    throw "Codex CLI failed to register ${selector}: $detail"
+  }
+
+  Write-Log "registered bundled plugin with Codex CLI: $selector"
 }
 
 function Sync-OpenAiBundledPluginCache {
@@ -1497,7 +1595,10 @@ if errors:
 }
 
 function Test-HelperTransport {
-  param([string]$HelperTransportPath)
+  param(
+    [string]$HelperTransportPath,
+    [string]$HelperCommandPath
+  )
 
   $node = Get-Command node.exe -ErrorAction SilentlyContinue | Select-Object -First 1
   if (-not $node) {
@@ -1513,19 +1614,27 @@ if (typeof mod.WindowsHelperTransport !== "function") {
   throw new Error("WindowsHelperTransport export is missing");
 }
 
-const transport = new mod.WindowsHelperTransport();
+const helperCommand = process.argv[3];
+const transport = helperCommand
+  ? new mod.WindowsHelperTransport({ helperCommand })
+  : new mod.WindowsHelperTransport();
 try {
-  const info = await transport.request("screenInfo", {});
-  if (!info || typeof info.width !== "number" || typeof info.height !== "number" || info.width <= 0 || info.height <= 0) {
-    throw new Error(`invalid screenInfo response: ${JSON.stringify(info)}`);
+  let result;
+  let method;
+  try {
+    method = "list_windows";
+    result = await transport.request(method, {});
+  } catch (error) {
+    if (!/unsupported.*method/i.test(String(error?.message ?? error))) {
+      throw error;
+    }
+    method = "screenInfo";
+    result = await transport.request(method, {});
   }
-
-  const screenshot = await transport.request("screenshot", {});
-  if (!screenshot || screenshot.mimeType !== "image/png" || typeof screenshot.data !== "string" || screenshot.data.length < 100) {
-    throw new Error("invalid screenshot response");
+  if (result == null || typeof result !== "object") {
+    throw new Error(`invalid ${method} response: ${JSON.stringify(result)}`);
   }
-
-  console.log(JSON.stringify({ ok: true, width: info.width, height: info.height, screenshotBytesApprox: Math.floor(screenshot.data.length * 3 / 4) }));
+  console.log(JSON.stringify({ ok: true, method, resultType: Array.isArray(result) ? "array" : "object" }));
 } finally {
   if (typeof transport.close === "function") {
     await transport.close();
@@ -1535,7 +1644,7 @@ try {
   $temp = Join-Path $env:TEMP ('codex-computer-use-verify-' + [guid]::NewGuid().ToString('N') + '.mjs')
   try {
     Write-Utf8NoBom $temp $script
-    $output = & $node.Source $temp $HelperTransportPath
+    $output = & $node.Source $temp $HelperTransportPath $HelperCommandPath
     if ($LASTEXITCODE -ne 0) {
       throw "Computer Use helper transport verification failed for $HelperTransportPath"
     }
@@ -1618,9 +1727,67 @@ console.log(JSON.stringify({ ok: true, exports: Object.keys(mod).sort() }));
   }
 }
 
+function Test-OfficialComputerUseCache {
+  param(
+    [string]$CodexHomeResolved,
+    [string]$InstalledMarketplaceRoot
+  )
+
+  $sourceRoot = Join-Path $InstalledMarketplaceRoot 'plugins\computer-use'
+  $version = Get-PluginVersion $sourceRoot
+  $cacheVersionRoot = Join-Path $CodexHomeResolved "plugins\cache\openai-bundled\computer-use\$version"
+  $requiredCachePaths = @(
+    (Join-Path $cacheVersionRoot '.codex-plugin\plugin.json'),
+    (Join-Path $cacheVersionRoot 'scripts\computer-use-client.mjs')
+  )
+  foreach ($path in $requiredCachePaths) {
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+      throw "official Computer Use cache is incomplete: $path"
+    }
+  }
+
+  $mismatches = @()
+  foreach ($sourceFile in @(Get-ChildItem -LiteralPath $sourceRoot -Recurse -File)) {
+    $relativePath = $sourceFile.FullName.Substring($sourceRoot.Length).TrimStart('\')
+    $cacheFile = Join-Path $cacheVersionRoot $relativePath
+    if (-not (Test-Path -LiteralPath $cacheFile -PathType Leaf)) {
+      $mismatches += "missing:$relativePath"
+      continue
+    }
+    $sourceHash = (Get-FileHash -LiteralPath $sourceFile.FullName -Algorithm SHA256).Hash
+    $cacheHash = (Get-FileHash -LiteralPath $cacheFile -Algorithm SHA256).Hash
+    if ($sourceHash -ne $cacheHash) {
+      $mismatches += "changed:$relativePath"
+    }
+  }
+  if ($mismatches.Count -gt 0) {
+    throw "official Computer Use cache differs from the installed package: $($mismatches -join ', ')"
+  }
+
+  $runtimeSkyRoot = Get-CuaSkyRuntimeRoot
+  $runtimeRequired = @(
+    (Join-Path $runtimeSkyRoot 'package.json'),
+    (Join-Path $runtimeSkyRoot 'bin\windows\codex-computer-use.exe'),
+    (Join-Path $runtimeSkyRoot 'dist\project\cua\sky_js\src\targets\windows\internal\computer_use_client_base.js'),
+    (Join-Path $runtimeSkyRoot 'dist\project\cua\sky_js\src\targets\windows\internal\helper_transport.js')
+  )
+  foreach ($path in $runtimeRequired) {
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+      throw "official Computer Use runtime is incomplete: $path"
+    }
+  }
+
+  $clientPath = Join-Path $cacheVersionRoot 'scripts\computer-use-client.mjs'
+  $helperCommandPath = Join-Path $runtimeSkyRoot 'bin\windows\codex-computer-use.exe'
+  $helperTransportPath = Join-Path $runtimeSkyRoot 'dist\project\cua\sky_js\src\targets\windows\internal\helper_transport.js'
+  Test-ComputerUseClientImport $clientPath
+  Test-HelperTransport $helperTransportPath $helperCommandPath
+  Write-Log "official lightweight cache verification ok: computer-use@$version / runtime=$runtimeSkyRoot"
+}
+
 function Install-ComputerUse {
   $codexHomeResolved = Resolve-OrCreateDirectory $CodexHome
-  $marketplaceRoot = Join-Path $codexHomeResolved '.tmp\bundled-marketplaces\openai-bundled'
+  $marketplaceRoot = Get-StableBundledMarketplaceRoot $codexHomeResolved
   $pluginSourceRoot = Join-Path $marketplaceRoot 'plugins\computer-use'
   $cacheRoot = Join-Path $codexHomeResolved 'plugins\cache\openai-bundled\computer-use'
   $latestPath = Join-Path $cacheRoot 'latest'
@@ -1651,6 +1818,17 @@ function Install-ComputerUse {
 
   Update-ChromeNativeMessagingManifest $chromeCacheRoot
 
+  # Desktop can reconcile the mutable mirror while caches are being copied.
+  # Re-merge shipped descriptors immediately before final verification.
+  Update-BundledMarketplaceManifest $marketplaceRoot
+  Update-CodexConfig $marketplaceRoot
+
+  # A cache plus a hand-written enabled entry is not an installed plugin to the
+  # current CLI. Register browser through the supported command so Desktop does
+  # not prune its config entry during marketplace reconciliation.
+  Install-BundledMarketplacePluginWithCodexCli 'browser'
+  Update-CodexConfig $marketplaceRoot
+
   Write-Log "installed marketplace plugin: $pluginSourceRoot"
   Write-Log "installed cached plugin: $computerUseCacheRoot"
   Write-Log "updated latest junction: $latestPath"
@@ -1658,7 +1836,29 @@ function Install-ComputerUse {
 
 function Test-ComputerUse {
   $codexHomeResolved = Resolve-ExistingDirectory $CodexHome
-  $marketplaceRoot = Join-Path $codexHomeResolved '.tmp\bundled-marketplaces\openai-bundled'
+  $installedMarketplaceRoot = Get-InstalledBundledMarketplaceRoot
+  $officialCacheLatest = Join-Path $codexHomeResolved 'plugins\cache\openai-bundled\computer-use\latest'
+  $legacyLatestMarkers = @(
+    (Join-Path $officialCacheLatest '.codex-plugin\plugin.json'),
+    (Join-Path $officialCacheLatest 'node_modules\@oai\sky\package.json')
+  )
+  $hasLegacyLatestLayout = $true
+  foreach ($marker in $legacyLatestMarkers) {
+    if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) {
+      $hasLegacyLatestLayout = $false
+      break
+    }
+  }
+  if (-not $hasLegacyLatestLayout) {
+    # Current Codex builds can install a lightweight versioned plugin cache and
+    # keep @oai/sky in the independent cua_node runtime. In that supported
+    # layout `latest` can be absent or stale and has no usable node_modules.
+    Test-OfficialComputerUseCache $codexHomeResolved $installedMarketplaceRoot
+    Write-Log 'verification ok'
+    return
+  }
+
+  $marketplaceRoot = Get-StableBundledMarketplaceRoot $codexHomeResolved
   $manifestPath = Join-Path $marketplaceRoot '.agents\plugins\marketplace.json'
   $cacheLatest = Join-Path $codexHomeResolved 'plugins\cache\openai-bundled\computer-use\latest'
   $browserPluginRoot = Join-Path $marketplaceRoot 'plugins\browser'

@@ -492,6 +492,22 @@ function Invoke-RgList {
   return @($output | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 }
 
+function Find-UltraSliderTarget {
+  param(
+    [string]$RgPath,
+    [string]$AssetsDir
+  )
+  foreach ($candidate in (Invoke-RgList $RgPath 'model_picker_persists_ultra_effort' $AssetsDir)) {
+    $text = Get-Content -Raw -LiteralPath $candidate
+    if ($text.Contains('chatgpt-user-settings') -and
+        $text.Contains('showUltraInModelPickerSlider') -and
+        ($text.Contains('setUltraEffortEnabled') -or $text.Contains('CODEX_ULTRA_LOCAL_FALLBACK_V1'))) {
+      return $candidate
+    }
+  }
+  return $null
+}
+
 function Write-PatcherFiles {
   param([string]$WorkDir)
 
@@ -499,6 +515,7 @@ function Write-PatcherFiles {
   $fastUiPatcherPath = Join-Path $WorkDir 'PatchFastModeUi.cjs'
   $customModelsPatcherPath = Join-Path $WorkDir 'PatchCustomModels.cjs'
   $powerSliderPatcherPath = Join-Path $WorkDir 'PatchPowerSlider.cjs'
+  $ultraSliderPatcherPath = Join-Path $WorkDir 'PatchUltraSliderLocalFallback.cjs'
   $localePatcherPath = Join-Path $WorkDir 'PatchLocaleI18n.cjs'
   $pluginsPatcherPath = Join-Path $WorkDir 'PatchPlugins.cjs'
   $goalPatcherPath = Join-Path $WorkDir 'PatchGoal.cjs'
@@ -622,16 +639,41 @@ if (text.includes(marker) && models.every((model) => text.includes(model))) {
   process.exit(0);
 }
 
-const visibilityRe = /if\(([$A-Za-z_][$\w]*)\?([$A-Za-z_][$\w]*)\.has\(([$A-Za-z_][$\w]*)\.model\):!\3\.hidden\)\{/;
-const match = text.match(visibilityRe);
+const visibilityPatterns = [
+  {
+    re: /if\(([$A-Za-z_][$\w]*)\?([$A-Za-z_][$\w]*)\.has\(([$A-Za-z_][$\w]*)\.model\):!\3\.hidden\)\{/,
+    modelGroup: 3,
+  },
+  {
+    re: /if\(([$A-Za-z_][$\w]*)\?\.has\(([$A-Za-z_][$\w]*)\.model\)===!0\|\|\(([$A-Za-z_][$\w]*)\?([$A-Za-z_][$\w]*)\.has\(\2\.model\):!\2\.hidden\)\)\{/,
+    modelGroup: 2,
+  },
+  {
+    re: /return ([$A-Za-z_][$\w]*)\?\.has\(([$A-Za-z_][$\w]*)\.model\)===!0\|\|\(([$A-Za-z_][$\w]*)(?:&&[$A-Za-z_][$\w]*!==`amazonBedrock`)?\?([$A-Za-z_][$\w]*)\.has\(\2\.model\):!\2\.hidden\)\}/,
+    modelGroup: 2,
+    isReturn: true,
+  },
+];
+const target = visibilityPatterns
+  .map(({ re, modelGroup, isReturn }) => ({ match: text.match(re), modelGroup, isReturn }))
+  .find(({ match }) => match != null);
+const match = target?.match;
 if (!match) {
   process.stderr.write('custom-model-visibility-target-not-found\n');
   process.exit(2);
 }
 
 const forced = JSON.stringify(models);
-const replacement = `if(/*${marker}*/${forced}.includes(${match[3]}.model)||(${match[1]}?${match[2]}.has(${match[3]}.model):!${match[3]}.hidden)){`;
-const next = text.replace(visibilityRe, replacement);
+const modelVar = match[target.modelGroup];
+let replacement;
+if (target.isReturn) {
+  const originalCondition = match[0].slice('return '.length, -1);
+  replacement = `return/*${marker}*/${forced}.includes(${modelVar}.model)||(${originalCondition})}`;
+} else {
+  const originalCondition = match[0].slice(3, -2);
+  replacement = `if(/*${marker}*/${forced}.includes(${modelVar}.model)||(${originalCondition})){`;
+}
+const next = text.replace(match[0], replacement);
 if (!next.includes(marker) || !models.every((model) => next.includes(model))) {
   process.stderr.write('custom-model-patch-verification-failed\n');
   process.exit(2);
@@ -668,6 +710,77 @@ const replacement = `function ${fn}({harborEnabled:${harborEnabled},isElectron:$
 const next = text.replace(gateRe, replacement);
 if (!next.includes(marker)) {
   process.stderr.write('power-slider-patch-verification-failed\n');
+  process.exit(2);
+}
+fs.writeFileSync(file, next);
+process.stdout.write('patched');
+'@
+
+  Set-Content -LiteralPath $ultraSliderPatcherPath -Encoding UTF8 -Value @'
+const fs = require('node:fs');
+const file = process.argv[2];
+const marker = 'CODEX_ULTRA_LOCAL_FALLBACK_V1';
+const migrationMarker = 'CODEX_ULTRA_LOCAL_FALLBACK_V1_MIGRATION';
+
+if (!file || file === '__none__') {
+  process.stdout.write('not-applicable');
+  process.exit(0);
+}
+
+const text = fs.readFileSync(file, 'utf8');
+if (text.includes(marker) && text.includes(migrationMarker) && text.includes('ultraEffortLocalFallback')) {
+  process.stdout.write('already-patched');
+  process.exit(0);
+}
+
+const readConfigMatch = text.match(/([$A-Za-z_][$\w]*)\(([$A-Za-z_][$\w]*)\.showUltraInModelPickerSlider\)\.catch\(\(\)=>!1\)/);
+const writeConfigMatch = text.match(/await ([$A-Za-z_][$\w]*)\(([$A-Za-z_][$\w]*),([$A-Za-z_][$\w]*)\.showUltraInModelPickerSlider,!1\)\.catch\(\(\)=>\{\}\)/);
+if (!readConfigMatch || !writeConfigMatch || readConfigMatch[2] !== writeConfigMatch[3]) {
+  process.stderr.write('ultra-local-config-helper-target-not-found\n');
+  process.exit(2);
+}
+const readConfig = readConfigMatch[1];
+const settings = readConfigMatch[2];
+const writeConfig = writeConfigMatch[1];
+
+const mutationRe = /async function ([$A-Za-z_][$\w]*)\(([$A-Za-z_][$\w]*),([$A-Za-z_][$\w]*)\)\{let ([$A-Za-z_][$\w]*)=\2\.query\.snapshot\(([$A-Za-z_][$\w]*)\),([$A-Za-z_][$\w]*)=\4\.getData\(\);\4\.setData\(([$A-Za-z_][$\w]*)=>\7==null\?\7:\{\.\.\.\7,ultraEffortEnabled:\3\}\);try\{await \2\.get\(([$A-Za-z_][$\w]*)\)\.setUltraEffortEnabled\(\3\),await Promise\.all\(\[\4\.invalidate\(\),\2\.query\.snapshot\(([$A-Za-z_][$\w]*)\)\.invalidate\(\)\]\)\}catch\(([$A-Za-z_][$\w]*)\)\{throw \4\.setData\(\6\),\10\}\}/;
+const mutationMatch = text.match(mutationRe);
+if (!mutationMatch) {
+  process.stderr.write('ultra-mutation-target-not-found\n');
+  process.exit(2);
+}
+const [, mutationFn, mutationScope, enabled, snapshot, userSettingsQuery, previous, cached, client, tppQuery] = mutationMatch;
+const mutationReplacement = `async function ${mutationFn}(${mutationScope},${enabled}){let ${snapshot}=${mutationScope}.query.snapshot(${userSettingsQuery}),${previous}=${snapshot}.getData();${snapshot}.setData(${cached}=>${cached}==null?${cached}:{...${cached},ultraEffortEnabled:${enabled}});if(${previous}?.ultraEffortLocalFallback===!0){try{await ${writeConfig}(${mutationScope},${settings}.showUltraInModelPickerSlider,${enabled});return}catch(codexUltraLocalError){throw ${snapshot}.setData(${previous}),codexUltraLocalError}}try{await ${mutationScope}.get(${client}).setUltraEffortEnabled(${enabled}),await Promise.all([${snapshot}.invalidate(),${mutationScope}.query.snapshot(${tppQuery}).invalidate()])}catch(codexUltraRemoteError){throw ${snapshot}.setData(${previous}),codexUltraRemoteError}}`;
+let next = text.replace(mutationRe, mutationReplacement);
+
+const queryRe = /queryFn:async\(\)=>\{let ([$A-Za-z_][$\w]*)=([$A-Za-z_][$\w]*)\.parse\(await ([$A-Za-z_][$\w]*)\.get\(([$A-Za-z_][$\w]*)\)\.userSettings\(\)\);return\{lockdownModeEnabled:\1\.settings\?\.lockdown_mode_enabled===!0,ultraEffortEnabled:\1\.settings\?\.model_picker_persists_ultra_effort===!0\}\}/;
+const queryMatch = next.match(queryRe);
+if (!queryMatch) {
+  process.stderr.write('ultra-user-settings-query-target-not-found\n');
+  process.exit(2);
+}
+const [, parsed, schema, queryScope, queryClient] = queryMatch;
+const queryReplacement = `queryFn:async()=>{try{let ${parsed}=${schema}.parse(await ${queryScope}.get(${queryClient}).userSettings());return{lockdownModeEnabled:${parsed}.settings?.lockdown_mode_enabled===!0,ultraEffortEnabled:${parsed}.settings?.model_picker_persists_ultra_effort===!0}}catch{return{lockdownModeEnabled:!1,ultraEffortEnabled:await ${readConfig}(${settings}.showUltraInModelPickerSlider).catch(()=>!1)===!0,ultraEffortLocalFallback:!0/*${marker}*/}}}`;
+next = next.replace(queryRe, queryReplacement);
+
+const migrationKey = 'queryKey:[`chatgpt-ultra-effort-migration`]';
+const migrationKeyIndex = next.indexOf(migrationKey);
+if (migrationKeyIndex < 0) {
+  process.stderr.write('ultra-migration-query-target-not-found\n');
+  process.exit(2);
+}
+const migrationStart = Math.max(0, migrationKeyIndex - 1200);
+const migrationPrefix = next.slice(0, migrationStart);
+const migrationSegment = next.slice(migrationStart, migrationKeyIndex + migrationKey.length);
+const migrationOriginal = '.setUltraEffortEnabled(!0).catch(()=>{})';
+if (!migrationSegment.includes(migrationOriginal)) {
+  process.stderr.write('ultra-migration-swallowed-error-target-not-found\n');
+  process.exit(2);
+}
+next = migrationPrefix + migrationSegment.replace(migrationOriginal, `.setUltraEffortEnabled(!0)/*${migrationMarker}*/`) + next.slice(migrationKeyIndex + migrationKey.length);
+
+if (!next.includes(marker) || !next.includes(migrationMarker) || !next.includes('ultraEffortLocalFallback')) {
+  process.stderr.write('ultra-local-fallback-patch-verification-failed\n');
   process.exit(2);
 }
 fs.writeFileSync(file, next);
@@ -832,6 +945,10 @@ if (!nextSlash.includes(slashPatched) && !slashPatchedRe.test(nextSlash)) {
     changedSlash = true;
   } else if (cmdkSlashRe.test(nextSlash) && (cmdkKeywordSearchRe.test(nextSlash) || nextSlash.includes('keywords:r'))) {
     // Codex 26.519+ moved slash filtering to cmdk keywords; command id matching is already handled there.
+  } else if (nextSlash.includes('id:`goal`') &&
+             nextSlash.includes('getSearchQuery') &&
+             /Math\.max\([A-Za-z_$][\w$]*\(e\.title,[A-Za-z_$][\w$]*\),[A-Za-z_$][\w$]*\(e\.id,[A-Za-z_$][\w$]*\),\.\.\.\(e\.searchAliases\?\?\[\]\)\.map/.test(nextSlash)) {
+    // Current unified command registry scores title, id, and aliases, so /goal is already searchable by id.
   } else if (nextSlash.includes('sourceMappingURL=slash-command-item') &&
              !nextSlash.includes('score:') &&
              !nextSlash.includes('e.command.group??null')) {
@@ -1074,15 +1191,15 @@ function patchSidebarAvailability(file) {
 function patchDesktopFeatureSender(file) {
   const before = read(file);
   const patchedSenderFragment = 'inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,browserPane:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0,computerUse:';
-  const patchedSenderPattern = /inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,(defaultLinkOpenTargetPreference:[^,}]+,)?(linksDefaultInAppBrowser:[^,}]+,)?(localBackend:[^,}]+,)?browserPane:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0,(findShortcuts:[^,}]+,)?computerUse:/;
+  const patchedSenderPattern = /inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,((?:[A-Za-z_$][\w$]*:[^,}]+,){0,10}?)browserPane:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0,((?:[A-Za-z_$][\w$]*:[^,}]+,){0,6}?)computerUse:/;
   if (!before.includes('browser_use_availability_resolved') || !before.includes('electron-desktop-features-changed')) {
     process.stderr.write('browser-use-desktop-feature-sender-target-not-found\n');
     process.exit(2);
   }
 
   let after = before.replace(
-    /inAppBrowserUse:[^,}]+,inAppBrowserUseAllowed:[^,}]+,(defaultLinkOpenTargetPreference:[^,}]+,)?(linksDefaultInAppBrowser:[^,}]+,)?(localBackend:[^,}]+,)?browserPane:[^,}]+,externalBrowserUse:[^,}]+,externalBrowserUseAllowed:[^,}]+,(findShortcuts:[^,}]+,)?computerUse:/,
-    'inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,$1$2$3browserPane:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0,$4computerUse:'
+    /inAppBrowserUse:[^,}]+,inAppBrowserUseAllowed:[^,}]+,((?:[A-Za-z_$][\w$]*:[^,}]+,){0,10}?)browserPane:[^,}]+,externalBrowserUse:[^,}]+,externalBrowserUseAllowed:[^,}]+,((?:[A-Za-z_$][\w$]*:[^,}]+,){0,6}?)computerUse:/,
+    'inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,$1browserPane:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0,$2computerUse:'
   );
   after = after.replace(
     /browser_use_availability_resolved`,\{safe:\{available:[^,]+,platform:([^,]+),reason:[^,]+,release:([^}]+)\},sensitive:\{browserPane:[^}]+\}\}\)/,
@@ -1210,6 +1327,7 @@ if (changed) {
     FastUi = $fastUiPatcherPath
     CustomModels = $customModelsPatcherPath
     PowerSlider = $powerSliderPatcherPath
+    UltraSlider = $ultraSliderPatcherPath
     LocaleI18n = $localePatcherPath
     Plugins = $pluginsPatcherPath
     Goal = $goalPatcherPath
@@ -1257,6 +1375,18 @@ function Find-PatchTargets {
       break
     }
   }
+  if ([string]::IsNullOrWhiteSpace($fastModeUiTarget)) {
+    foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter 'app-initial-*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
+      $text = Get-Content -Raw -LiteralPath $candidate
+      if ($text.Contains('isServiceTierAllowed') -and
+          $text.Contains('featureRequirements?.fast_mode') -and
+          (($text -match '=!!\w+\?\.isLoading\|\|\w+&&\w+,\w+=\w+&&!\w+&&\w+!=null&&\w+\?\.requirements\?\.featureRequirements\?\.fast_mode!==!1') -or
+           ($text -match '=!!\w+\?\.isLoading\|\|\w+,\w+=!\w+&&\w+!=null&&\w+\?\.requirements\?\.featureRequirements\?\.fast_mode!==!1'))) {
+        $fastModeUiTarget = $candidate
+        break
+      }
+    }
+  }
   $customModelsTarget = $null
   foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter 'model-list-filter-*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
     $text = Get-Content -Raw -LiteralPath $candidate
@@ -1264,6 +1394,19 @@ function Find-PatchTargets {
         $text.Contains('supportedReasoningEfforts')) {
       $customModelsTarget = $candidate
       break
+    }
+  }
+  if ([string]::IsNullOrWhiteSpace($customModelsTarget)) {
+    foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter 'app-initial-*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
+      $text = Get-Content -Raw -LiteralPath $candidate
+      if ($text.Contains('available_models') -and
+          $text.Contains('useHiddenModels') -and
+          $text.Contains('supportedReasoningEfforts') -and
+          (($text -match '\?\.has\(\w+\.model\)===!0\|\|\(\w+(?:&&\w+!==`amazonBedrock`)?\?\w+\.has\(\w+\.model\):!\w+\.hidden\)') -or
+           $text.Contains('CODEX_CUSTOM_MODELS_V1'))) {
+        $customModelsTarget = $candidate
+        break
+      }
     }
   }
   if ([string]::IsNullOrWhiteSpace($customModelsTarget)) {
@@ -1292,6 +1435,7 @@ function Find-PatchTargets {
   if ([string]::IsNullOrWhiteSpace($powerSliderTarget)) {
     Fail 'could not find compact Power slider harbor gate in extracted assets'
   }
+  $ultraSliderTarget = Find-UltraSliderTarget $RgPath $assetsDir
   $localeI18nTarget = $null
   $localeCandidates = @(
     Invoke-RgList $RgPath 'enable_i18n' $assetsDir
@@ -1322,6 +1466,18 @@ function Find-PatchTargets {
       break
     }
   }
+  if ([string]::IsNullOrWhiteSpace($browserSidebarAvailabilityTarget)) {
+    foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter 'app-initial-*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
+      $text = Get-Content -Raw -LiteralPath $candidate
+      if ($text.Contains('in_app_browser') -and
+          $text.Contains('experimental-features') -and
+          (($text -match '`in_app_browser`,\w+=\w+\(\w+,\(\{get:\w+\}\)=>\{let\{data:\w+\}=.+?;return \w+!=null&&\w+\?\.enabled!==!1\}\)') -or
+           ($text -match '`in_app_browser`,\w+=\w+\(\w+,\(\)=>!0\)'))) {
+        $browserSidebarAvailabilityTarget = $candidate
+        break
+      }
+    }
+  }
   $desktopFeatureSenderTarget = $null
   $desktopFeatureSenderCandidates = @(
     Invoke-RgList $RgPath 'browser_use_availability_resolved' $assetsDir
@@ -1330,8 +1486,8 @@ function Find-PatchTargets {
   foreach ($candidate in $desktopFeatureSenderCandidates) {
     $text = Get-Content -Raw -LiteralPath $candidate
     if ($text.Contains('electron-desktop-features-changed') -and
-        (($text -match 'inAppBrowserUse:[^,}]+,inAppBrowserUseAllowed:[^,}]+,(defaultLinkOpenTargetPreference:[^,}]+,)?(linksDefaultInAppBrowser:[^,}]+,)?(localBackend:[^,}]+,)?browserPane:[^,}]+,externalBrowserUse:[^,}]+,externalBrowserUseAllowed:[^,}]+,(findShortcuts:[^,}]+,)?computerUse:[^,}]+') -or
-         ($text -match 'inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,(defaultLinkOpenTargetPreference:[^,}]+,)?(linksDefaultInAppBrowser:[^,}]+,)?(localBackend:[^,}]+,)?browserPane:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0'))) {
+        (($text -match 'inAppBrowserUse:[^,}]+,inAppBrowserUseAllowed:[^,}]+,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?browserPane:[^,}]+,externalBrowserUse:[^,}]+,externalBrowserUseAllowed:[^,}]+,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?computerUse:[^,}]+') -or
+         ($text -match 'inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,(?:[A-Za-z_$][\w$]*:[^,}]+,)*?browserPane:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0'))) {
       $desktopFeatureSenderTarget = $candidate
       break
     }
@@ -1463,6 +1619,17 @@ function Find-PatchTargets {
     }
   }
   if ([string]::IsNullOrWhiteSpace($goalSlashTarget)) {
+    foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter 'app-initial-*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
+      $text = Get-Content -Raw -LiteralPath $candidate
+      if ($text.Contains('id:`goal`') -and
+          $text.Contains('getSearchQuery') -and
+          $text -match 'Math\.max\([A-Za-z_$][\w$]*\(e\.title,[A-Za-z_$][\w$]*\),[A-Za-z_$][\w$]*\(e\.id,[A-Za-z_$][\w$]*\),\.\.\.\(e\.searchAliases\?\?\[\]\)\.map') {
+        $goalSlashTarget = $candidate
+        break
+      }
+    }
+  }
+  if ([string]::IsNullOrWhiteSpace($goalSlashTarget)) {
     Fail 'could not find goal slash-command matcher in extracted assets'
   }
 
@@ -1533,6 +1700,7 @@ function Find-PatchTargets {
   Write-Log "fast-mode UI patch target: $fastModeUiTarget"
   Write-Log "custom models patch target: $customModelsTarget"
   Write-Log "Power slider patch target: $powerSliderTarget"
+  Write-Log "Ultra slider local-fallback patch target: $ultraSliderTarget"
   Write-Log "locale i18n patch target: $localeI18nTarget"
   Write-Log "plugin sidebar patch target: $pluginSidebarTarget"
   Write-Log "plugin skills-page patch target: $pluginSkillsTarget"
@@ -1554,6 +1722,7 @@ function Find-PatchTargets {
     FastModeUi = $fastModeUiTarget
     CustomModels = $customModelsTarget
     PowerSlider = $powerSliderTarget
+    UltraSlider = $ultraSliderTarget
     LocaleI18n = $localeI18nTarget
     PluginSidebar = $pluginSidebarTarget
     PluginSkills = $pluginSkillsTarget
@@ -1644,6 +1813,18 @@ function Invoke-PatchAppAsar {
       }
     }
     if ([string]::IsNullOrWhiteSpace($fastModeUiTarget)) {
+      foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter 'app-initial-*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
+        $text = Get-Content -Raw -LiteralPath $candidate
+        if ($text.Contains('isServiceTierAllowed') -and
+            $text.Contains('featureRequirements?.fast_mode') -and
+            (($text -match '=!!\w+\?\.isLoading\|\|\w+&&\w+,\w+=\w+&&!\w+&&\w+!=null&&\w+\?\.requirements\?\.featureRequirements\?\.fast_mode!==!1') -or
+             ($text -match '=!!\w+\?\.isLoading\|\|\w+,\w+=!\w+&&\w+!=null&&\w+\?\.requirements\?\.featureRequirements\?\.fast_mode!==!1'))) {
+          $fastModeUiTarget = $candidate
+          break
+        }
+      }
+    }
+    if ([string]::IsNullOrWhiteSpace($fastModeUiTarget)) {
       Fail 'could not find Model Experience Fast Mode UI target'
     }
 
@@ -1654,6 +1835,19 @@ function Invoke-PatchAppAsar {
           $text.Contains('supportedReasoningEfforts')) {
         $customModelsTarget = $candidate
         break
+      }
+    }
+    if ([string]::IsNullOrWhiteSpace($customModelsTarget)) {
+      foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter 'app-initial-*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
+        $text = Get-Content -Raw -LiteralPath $candidate
+        if ($text.Contains('available_models') -and
+            $text.Contains('useHiddenModels') -and
+            $text.Contains('supportedReasoningEfforts') -and
+            (($text -match '\?\.has\(\w+\.model\)===!0\|\|\(\w+(?:&&\w+!==`amazonBedrock`)?\?\w+\.has\(\w+\.model\):!\w+\.hidden\)') -or
+             $text.Contains('CODEX_CUSTOM_MODELS_V1'))) {
+          $customModelsTarget = $candidate
+          break
+        }
       }
     }
     if ([string]::IsNullOrWhiteSpace($customModelsTarget)) {
@@ -1682,10 +1876,12 @@ function Invoke-PatchAppAsar {
     if ([string]::IsNullOrWhiteSpace($powerSliderTarget)) {
       Fail 'could not find Model Experience compact Power slider harbor gate'
     }
+    $ultraSliderTarget = Find-UltraSliderTarget $rgPath $assetsDir
     Write-Log "Model Experience Fast Mode request target: $fastModeTarget"
     Write-Log "Model Experience Fast Mode UI target: $fastModeUiTarget"
     Write-Log "Model Experience custom models target: $customModelsTarget"
     Write-Log "Model Experience Power slider target: $powerSliderTarget"
+    Write-Log "Model Experience Ultra slider local-fallback target: $ultraSliderTarget"
     $fastModeResult = Invoke-NodePatcher $nodePath $patchers.Fast @($fastModeTarget)
     Write-Log "Model Experience Fast Mode request result: $fastModeResult"
     $fastModeUiResult = Invoke-NodePatcher $nodePath $patchers.FastUi @($fastModeUiTarget)
@@ -1694,7 +1890,9 @@ function Invoke-PatchAppAsar {
     Write-Log "Model Experience custom models result: $customModelsResult ($($CustomModels -join ', '))"
     $powerSliderResult = Invoke-NodePatcher $nodePath $patchers.PowerSlider @($powerSliderTarget)
     Write-Log "Model Experience Power slider result: $powerSliderResult"
-    foreach ($syntaxTarget in @($fastModeTarget, $fastModeUiTarget, $customModelsTarget, $powerSliderTarget)) {
+    $ultraSliderResult = Invoke-NodePatcher $nodePath $patchers.UltraSlider @($(if ([string]::IsNullOrWhiteSpace($ultraSliderTarget)) { '__none__' } else { $ultraSliderTarget }))
+    Write-Log "Model Experience Ultra slider local-fallback result: $ultraSliderResult"
+    foreach ($syntaxTarget in @($fastModeTarget, $fastModeUiTarget, $customModelsTarget, $powerSliderTarget, $ultraSliderTarget) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique) {
       & $nodePath --check $syntaxTarget
       if ($LASTEXITCODE -ne 0) {
         Fail "Model Experience patched asset failed node --check: $syntaxTarget"
@@ -1709,7 +1907,8 @@ function Invoke-PatchAppAsar {
     if ($fastModeResult -eq 'already-patched' -and
         $fastModeUiResult -eq 'already-patched' -and
         $customModelsResult -eq 'already-patched' -and
-        $powerSliderResult -eq 'already-patched') {
+        $powerSliderResult -eq 'already-patched' -and
+        $ultraSliderResult -in @('already-patched', 'not-applicable')) {
       Write-Log 'asar Model Experience patches already present'
       return $false
     }
@@ -1765,6 +1964,8 @@ function Invoke-PatchAppAsar {
   Write-Log "custom models patch result: $customModels ($($CustomModels -join ', '))"
   $powerSlider = Invoke-NodePatcher $nodePath $patchers.PowerSlider @($targets.PowerSlider)
   Write-Log "Power slider patch result: $powerSlider"
+  $ultraSlider = Invoke-NodePatcher $nodePath $patchers.UltraSlider @($(if ([string]::IsNullOrWhiteSpace($targets.UltraSlider)) { '__none__' } else { [string]$targets.UltraSlider }))
+  Write-Log "Ultra slider local-fallback patch result: $ultraSlider"
 
   $localeI18n = Invoke-NodePatcher $nodePath $patchers.LocaleI18n @($targets.LocaleI18n)
   Write-Log "locale i18n patch result: $localeI18n"
@@ -1803,6 +2004,7 @@ function Invoke-PatchAppAsar {
       $fastUi -eq 'already-patched' -and
       $customModels -eq 'already-patched' -and
       $powerSlider -eq 'already-patched' -and
+      $ultraSlider -in @('already-patched', 'not-applicable') -and
       $localeI18n -eq 'already-patched' -and
       $plugins -eq 'already-patched' -and
       $goal -eq 'already-patched' -and

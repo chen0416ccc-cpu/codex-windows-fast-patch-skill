@@ -1,6 +1,6 @@
 # Windows 10 Computer Use Screenshot Backend
 
-> This is a hash-specific native helper compatibility profile, not a generic binary patch. It supports only `@oai/sky 0.4.20` with the exact original helper SHA-256 listed below. Unknown hashes must remain untouched.
+> These are hash-specific native helper compatibility profiles, not a generic binary patch. They support only the exact `@oai/sky` helper SHA-256 pairs listed below. Unknown hashes must remain untouched.
 
 ## When to use this profile
 
@@ -11,14 +11,12 @@ Use this profile only when all of the following are true:
 - The selected runtime helper is `codex-computer-use.exe` from the user-level CUA runtime, not a file under `C:\Program Files\WindowsApps`.
 - Its SHA-256 is either the supported original hash or the already-patched hash. The Desktop package number is evidence, but the complete helper hash is the compatibility boundary.
 
-| Field | Value |
-| --- | --- |
-| End-to-end validated Desktop | `26.707.12708.0` |
-| Same original helper observed in | `26.715.2305.0` (package inspection only; not a new end-to-end claim) |
-| `@oai/sky` | `0.4.20` |
-| Original SHA-256 | `F2B2F56FCD1699B0FA32DEC3214A56A1D36B937A2ECF58CC822AB4A904551E03` |
-| Patched SHA-256 | `71A13CBC4BB333F0707D2311C99DBA54D8B24D1BBB9F7CE25C3B9386577FFDDA` |
-| Patcher | `scripts/patch-computer-use-helper-win10.ps1` |
+| `@oai/sky` | End-to-end validated Desktop | Original SHA-256 | Patched SHA-256 |
+| --- | --- | --- | --- |
+| `0.4.20` | `26.707.12708.0` | `F2B2F56FCD1699B0FA32DEC3214A56A1D36B937A2ECF58CC822AB4A904551E03` | `71A13CBC4BB333F0707D2311C99DBA54D8B24D1BBB9F7CE25C3B9386577FFDDA` |
+| `0.5.2` | `26.721.4979.0` | `2C4CAC168200520C2752058177EA9FE7D1CCF9A26B7287DDDFF669D41CA9AF16` | `D816B14A80370697380BA702863DA9528AA5B73ED34C2B189ACE2BF9E103BEFF` |
+
+The `0.4.20` original helper was also observed in Desktop `26.715.2305.0` by package inspection. That observation did not create a separate end-to-end profile. The patcher is `scripts/patch-computer-use-helper-win10.ps1`.
 
 Do not use this profile for a plugin import error, missing helper path, stale native-host manifest, disabled Desktop feature gate, or an unsupported helper hash. Those cases still follow the normal Computer Use Only or MSIX routing in `SKILL.md`.
 
@@ -43,13 +41,18 @@ The patch keeps the existing frame acquisition, SoftwareBitmap conversion, JPEG 
 
 No executable is stored in this repository. The patcher reconstructs the validated result from guarded byte ranges and refuses to write unless the complete input and output hashes match the profile.
 
-| File offset | Virtual address | Purpose |
-| --- | --- | --- |
-| `0x000BB5D1` | `0x1400BC1D1` | Skip the optional border-interface failure path. |
-| `0x000BFA4F` | `0x1400C064F` | Send the busy/re-entry branch to the normal return tail. |
-| `0x000BFA60` | `0x1400C0660` | Continue after the existing one-shot flag check. |
-| `0x0012C94E-0x0012C9FC` | `0x14012D54E-0x14012D5FC` | Wrapper, thread creation/failure cleanup, and MTA worker. |
-| `0x0013C050` | `0x14013D650` | Redirect the `FrameArrived` delegate vtable entry to the wrapper. |
+| `@oai/sky` | File offset | Virtual address | Purpose |
+| --- | --- | --- | --- |
+| `0.4.20` | `0x000BB5D1` | `0x1400BC1D1` | Skip the optional border-interface failure path. |
+| `0.4.20` | `0x000BFA4F` | `0x1400C064F` | Send the busy/re-entry branch to the normal return tail. |
+| `0.4.20` | `0x000BFA60` | `0x1400C0660` | Continue after the existing one-shot flag check. |
+| `0.4.20` | `0x0012C94E-0x0012C9FC` | `0x14012D54E-0x14012D5FC` | Wrapper, thread creation/failure cleanup, and MTA worker. |
+| `0.4.20` | `0x0013C050` | `0x14013D650` | Redirect the `FrameArrived` delegate vtable entry to the wrapper. |
+| `0.5.2` | `0x000BC7C1` | `0x1400BD3C1` | Skip the optional border-interface failure path. |
+| `0.5.2` | `0x000C0C3F` | `0x1400C183F` | Send the busy/re-entry branch to the normal return tail. |
+| `0.5.2` | `0x000C0C50` | `0x1400C1850` | Continue after the existing one-shot flag check. |
+| `0.5.2` | `0x0012DF37-0x0012DFE5` | `0x14012EB37-0x14012EBE5` | Wrapper, thread creation/failure cleanup, and MTA worker. |
+| `0.5.2` | `0x0013D918` | `0x14013E918` | Redirect the `FrameArrived` delegate vtable entry to the wrapper. |
 
 ## Apply and verify
 
@@ -69,7 +72,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File $patcher -Install
 The installer writes a verified original backup under:
 
 ```text
-%USERPROFILE%\.codex\backups\computer-use-helper\<desktop-version>-sky-0.4.20-F2B2F56F\codex-computer-use.exe.original
+%USERPROFILE%\.codex\backups\computer-use-helper\<desktop-version>-sky-<sky-version>-<original-hash-prefix>\codex-computer-use.exe.original
 ```
 
 Then run the existing local plugin checks:
@@ -108,9 +111,31 @@ The helper profile passed the following Windows 10 tests on Desktop `26.707.1270
 | Repeated static capture | Two batches of ten, all successful; subsequent captures about `31-96 ms`. |
 | Resource stability | Warm-up baseline `24` threads / `506` handles; batches settled at `18/501` and `19/503`, with no linear growth. |
 | Dynamic capture | Three Task Manager performance frames two seconds apart produced three distinct image-data hashes. |
-| Accessibility | Explorer tree length `8708`, including `Antigravity`. |
+| Accessibility | Explorer tree length `8708`, including the expected folder name. |
 | Window enumeration | Explorer and Task Manager both returned by `list_windows`. |
 | Local plugin verification | `client import ok`, `helper transport ok`, and `verification ok`. |
+
+### `@oai/sky 0.5.2` / Desktop 26.721 validation
+
+Desktop `26.721.4979.0` introduced `@oai/sky 0.5.2` with original helper SHA-256 `2C4CAC168200520C2752058177EA9FE7D1CCF9A26B7287DDDFF669D41CA9AF16`. The old offsets were not reused. Migration evidence was rebuilt on Windows 10 build `19045`:
+
+- The exact `0.4.20` original/patched pair differed by `169` bytes. The `0.5.2` `FrameArrived` callback and normal-return tail matched the old implementation and moved by `+0x11F0`; the vtable uniquely pointed to the new callback.
+- The optional-interface path, callback guards, import slots, and executable tail padding were independently located in `0.5.2`. The reconstructed offline result remained a valid x64 PE, differed by the same `169` bytes, and produced complete output SHA-256 `D816B14A80370697380BA702863DA9528AA5B73ED34C2B189ACE2BF9E103BEFF`.
+- Disassembly of the reconstructed wrapper resolved to the new `CreateThread`, `CloseHandle`, `RoInitialize`, and `RoUninitialize` IAT slots and the new original callback address. No `WindowsApps` file was edited in place.
+- An isolated lifecycle test passed `original -> patched -> idempotent install -> rollback -> idempotent rollback`. The live install stored the original at `.codex\backups\computer-use-helper\26.721.4979.0-sky-0.5.2-2C4CAC16\codex-computer-use.exe.original`, then verified the complete patched hash. A transient first install attempt encountered a still-closing helper image lock and left the live hash unchanged; the patcher now waits up to five seconds for each stopped helper process before replacement.
+- `install-computer-use-local.ps1 -VerifyOnly` and `-StrictVerifyOnly` both returned `client import ok`, `helper transport ok`, and `verification ok`, without replacing the patched helper.
+
+| Test | Result |
+| --- | --- |
+| Cold Explorer capture | Passed through the plugin's `computer-use-client.mjs`; `945x639` image returned and the previous `SetIsBorderRequired / 0x80004002` error disappeared. |
+| Repeated static capture | Two batches of ten succeeded. Captures were about `25-50 ms`; all ten data URLs within each unchanged foreground batch had an identical SHA-256. |
+| Screenshot resource stability | Main helper baseline after the first capture was `59` threads / `658` handles, plus the expected one-thread cursor-manager child at `162` handles. After twenty static captures and a two-second settle it was `55/665` plus `1/162`, with no linear growth. |
+| Dynamic capture | Three Task Manager performance frames spaced two seconds apart completed in `32-39 ms` and produced three distinct SHA-256 values. A further ten screenshot-only captures completed in `24-37 ms`. |
+| Accessibility | Explorer tree length `5723`, including the expected folder name. |
+| Window enumeration | Explorer and Task Manager were returned by `list_windows`; the test-created Task Manager window was closed afterward. |
+| Session cleanup | Both the main helper and cursor-manager child exited when the Computer Use validation session ended; no helper process remained. |
+
+The helper captures a monitor-backed window region on this Windows 10 route. Activate the target before deterministic content validation; if another foreground window overlaps it, the returned region can contain that occluder even though transport itself remains healthy.
 
 ### Desktop 26.715 upgrade-repair regressions
 
@@ -130,6 +155,6 @@ The later Store upgrade to Desktop `26.715.3651.0` (the same `codex-cli 0.145.0-
 - Fast wire verification again reached `/v1/responses` with `service_tier=priority`; strict Computer Use verification returned a `1920x1080` screenshot while the helper retained the documented patched SHA-256.
 - Chrome extension, native-host manifest, launch dry run, and the Windows sandbox smoke test passed.
 
-This is an upgrade-repair regression check. The repeated static captures, dynamic-frame checks, accessibility/window tests, and resource-stability run in the table above remain the deeper end-to-end helper validation performed on Desktop `26.707.12708.0`; the helper hash pair, not either Desktop version, remains the compatibility boundary.
+These are upgrade-repair regression checks for the `0.4.20` profile. The deeper end-to-end helper validations were performed on Desktop `26.707.12708.0` for `0.4.20` and Desktop `26.721.4979.0` for `0.5.2`; each complete helper hash pair, not a Desktop version by itself, remains the compatibility boundary.
 
 Repeated static captures can appear as alternating complete/black composites in the conversation renderer. In the validated run, every underlying static image data URL had the same length and SHA-256, so that presentation artifact was not a corrupted helper frame.

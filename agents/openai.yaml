@@ -2,7 +2,7 @@ interface:
   display_name: "Codex Windows Fast Patch"
   short_description: "Repair Model Experience, Desktop gates, plugins, Computer Use, remote control, and local history."
   brand_color: "#2563EB"
-  default_prompt: "Use $codex-windows-fast-patch to inspect and selectively repair the Codex Desktop Model Experience group (Fast Mode request/UI, custom provider models hidden from the picker, and the dependent blue-purple Power slider), plus locale, Chrome/browser_use, plugin marketplace, Computer Use gates/runtime, phone remote-control setup, missing inputSchema/dynamicTools thread-start failures, local conversation provider/cwd recovery, and optional model_instructions_file setup on Windows."
+  default_prompt: "Use $codex-windows-fast-patch to inspect and selectively repair the Codex Desktop Model Experience group (Fast Mode request/UI, custom provider models hidden from the picker, the dependent blue-purple Power slider, and its Ultra toggle), plus locale, Chrome/browser_use, plugin marketplace, Computer Use gates/runtime, phone remote-control setup, missing inputSchema/dynamicTools thread-start failures, local conversation provider/cwd recovery, and optional model_instructions_file setup on Windows."
 
 policy:
   allow_implicit_invocation: true

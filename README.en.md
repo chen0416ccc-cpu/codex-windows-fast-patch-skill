@@ -8,7 +8,7 @@ This is the public version of the `codex-windows-fast-patch` skill. It helps Age
 
 Use this skill when Windows Codex Desktop updates cause issues like these:
 
-- Fix missing Fast Mode, gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna models, and the blue-purple Power slider.
+- Fix missing Fast Mode, gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna models, the blue-purple Power slider, and its disabled Ultra toggle under custom providers.
 - Repair the UI language resetting to English after restart.
 - Repair plugin entries, plugin install buttons, and plugin marketplace lists.
 - Repair the in-app browser, browser pane, Chrome, or browser_use when they are unavailable.
@@ -40,8 +40,8 @@ Do not run it on macOS. A macOS version needs a separate workflow for the Codex 
 - `scripts/patch-remote-control-windows-msix.ps1`: Phone remote-control MSIX / ASAR patch and marker verification reference implementation.
 - `scripts/patch-remote-control-asar.cjs`: Phone remote-control Electron bundle patcher used by the MSIX script.
 - `scripts/build-remote-control-native-replacement.ps1`: Builds the patched native `app\resources\codex.exe` replacement under a caller-selected work root when the native app-server rejects API-key main auth. By default it detects the installed native version from a copied executable; bundled mappings cover `0.145.0-alpha.18`, exact-tag built, installed, and phone end-to-end validated with Desktop `26.715.2305.0`; `0.144.0-alpha.4`, equivalently validated with Desktop `26.707.3748.0`; and historical patch-apply-only validated `0.142.4`. Any other version requires an exact `-CodexSourceRef` / `-AppServerVersion` pair plus a validated `-PatchPathOverride`.
-- `scripts/install-computer-use-local.ps1`: Windows Computer Use local compatibility reference implementation.
-- `scripts/patch-computer-use-helper-win10.ps1`: Read-only classification, exact-hash installation, and rollback for the supported `@oai/sky 0.4.20` helper hash; `26.707.12708.0` is the end-to-end validation baseline, not a version gate.
+- `scripts/install-computer-use-local.ps1`: Windows Computer Use local compatibility reference implementation. It supports both the legacy `latest` plus plugin-local `node_modules` layout and the current versioned cache plus independent `%LOCALAPPDATA%` `cua_node` runtime, avoiding false corruption reports on current builds.
+- `scripts/patch-computer-use-helper-win10.ps1`: Read-only classification, exact-hash installation, and rollback for the supported `@oai/sky 0.4.20` and `0.5.2` helper hashes; `26.707.12708.0` and `26.721.4979.0` are their end-to-end validation baselines, not version gates.
 - `scripts/sync-codex-provider-history.ps1`: Sync local conversation provider metadata so conversations hidden after a `model_provider` switch reappear in the official list; `-RepairMissingCwdDirs` can also repair restored conversations that cannot continue because the recorded `cwd` directory is missing. It does not modify `config.toml` or workspace/project roots by default.
 - `scripts/install-model-instructions-file.ps1`: Optional installer for the bundled `model_instructions_file` prompt asset.
 - `scripts/manage-codex-backups.ps1`: Backup manager for local Codex config, MCP, skills, and marketplaces.

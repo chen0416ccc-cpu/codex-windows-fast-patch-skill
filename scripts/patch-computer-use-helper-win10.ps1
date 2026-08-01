@@ -9,45 +9,86 @@ param(
 $ErrorActionPreference = 'Stop'
 $LogPrefix = '[codex-cua-win10-screenshot-helper]'
 
-$PatchProfile = [ordered]@{
-  Name = '@oai/sky 0.4.20 helper F2B2F56F / Windows 10 screenshot backend'
-  ValidatedDesktopVersion = '26.707.12708.0'
-  SkyVersion = '0.4.20'
-  OriginalSha256 = 'F2B2F56FCD1699B0FA32DEC3214A56A1D36B937A2ECF58CC822AB4A904551E03'
-  PatchedSha256 = '71A13CBC4BB333F0707D2311C99DBA54D8B24D1BBB9F7CE25C3B9386577FFDDA'
-  Regions = @(
-    [ordered]@{
-      Name = 'optional-border-interface'
-      Offset = 0x000BB5D1
-      OriginalHex = '4889c689d3eb4f'
-      PatchedHex = 'e97d0000009090'
-    },
-    [ordered]@{
-      Name = 'frame-arrived-busy-return'
-      Offset = 0x000BFA4F
-      OriginalHex = '0f85c3340000'
-      PatchedHex = '0f85a6340000'
-    },
-    [ordered]@{
-      Name = 'frame-arrived-once-flag'
-      Offset = 0x000BFA60
-      OriginalHex = '740d'
-      PatchedHex = 'eb0d'
-    },
-    [ordered]@{
-      Name = 'mta-worker-wrapper'
-      Offset = 0x0012C94E
-      OriginalHex = ('cc' + (('00' * 174) -join ''))
-      PatchedHex = '4883ec3848894c24304c8b510831c0b201f0410fb052117536488b01ff500831c931d24c8d05490000004c8b4c2430488364242000488364242800ff15610f00004885c074104889c1ff15330e000031c04883c438c3488b4c2430488b4108c6401100488b01ff5010b8054000804883c438c34883ec3848894c2428b901000000ff150b0c0000488b4c2428e82d30f9ffff15eb0b0000488b4c2428488b01ff501031c04883c438c3c04883c438c3'
-    },
-    [ordered]@{
-      Name = 'frame-arrived-vtable'
-      Offset = 0x0013C050
-      OriginalHex = '0c060c4001000000'
-      PatchedHex = '4ed5124001000000'
-    }
-  )
-}
+$PatchProfiles = @(
+  [ordered]@{
+    Name = '@oai/sky 0.4.20 helper F2B2F56F / Windows 10 screenshot backend'
+    ValidatedDesktopVersion = '26.707.12708.0'
+    SkyVersion = '0.4.20'
+    OriginalSha256 = 'F2B2F56FCD1699B0FA32DEC3214A56A1D36B937A2ECF58CC822AB4A904551E03'
+    PatchedSha256 = '71A13CBC4BB333F0707D2311C99DBA54D8B24D1BBB9F7CE25C3B9386577FFDDA'
+    Regions = @(
+      [ordered]@{
+        Name = 'optional-border-interface'
+        Offset = 0x000BB5D1
+        OriginalHex = '4889c689d3eb4f'
+        PatchedHex = 'e97d0000009090'
+      },
+      [ordered]@{
+        Name = 'frame-arrived-busy-return'
+        Offset = 0x000BFA4F
+        OriginalHex = '0f85c3340000'
+        PatchedHex = '0f85a6340000'
+      },
+      [ordered]@{
+        Name = 'frame-arrived-once-flag'
+        Offset = 0x000BFA60
+        OriginalHex = '740d'
+        PatchedHex = 'eb0d'
+      },
+      [ordered]@{
+        Name = 'mta-worker-wrapper'
+        Offset = 0x0012C94E
+        OriginalHex = ('cc' + (('00' * 174) -join ''))
+        PatchedHex = '4883ec3848894c24304c8b510831c0b201f0410fb052117536488b01ff500831c931d24c8d05490000004c8b4c2430488364242000488364242800ff15610f00004885c074104889c1ff15330e000031c04883c438c3488b4c2430488b4108c6401100488b01ff5010b8054000804883c438c34883ec3848894c2428b901000000ff150b0c0000488b4c2428e82d30f9ffff15eb0b0000488b4c2428488b01ff501031c04883c438c3c04883c438c3'
+      },
+      [ordered]@{
+        Name = 'frame-arrived-vtable'
+        Offset = 0x0013C050
+        OriginalHex = '0c060c4001000000'
+        PatchedHex = '4ed5124001000000'
+      }
+    )
+  },
+  [ordered]@{
+    Name = '@oai/sky 0.5.2 helper 2C4CAC16 / Windows 10 screenshot backend'
+    ValidatedDesktopVersion = '26.721.4979.0'
+    SkyVersion = '0.5.2'
+    OriginalSha256 = '2C4CAC168200520C2752058177EA9FE7D1CCF9A26B7287DDDFF669D41CA9AF16'
+    PatchedSha256 = 'D816B14A80370697380BA702863DA9528AA5B73ED34C2B189ACE2BF9E103BEFF'
+    Regions = @(
+      [ordered]@{
+        Name = 'optional-border-interface'
+        Offset = 0x000BC7C1
+        OriginalHex = '4889c689d3eb4f'
+        PatchedHex = 'e97d0000009090'
+      },
+      [ordered]@{
+        Name = 'frame-arrived-busy-return'
+        Offset = 0x000C0C3F
+        OriginalHex = '0f85c3340000'
+        PatchedHex = '0f85a6340000'
+      },
+      [ordered]@{
+        Name = 'frame-arrived-once-flag'
+        Offset = 0x000C0C50
+        OriginalHex = '740d'
+        PatchedHex = 'eb0d'
+      },
+      [ordered]@{
+        Name = 'mta-worker-wrapper'
+        Offset = 0x0012DF37
+        OriginalHex = ('cc' + (('00' * 174) -join ''))
+        PatchedHex = '4883ec3848894c24304c8b510831c0b201f0410fb052117536488b01ff500831c931d24c8d05490000004c8b4c2430488364242000488364242800ff15980900004885c074104889c1ff15a208000031c04883c438c3488b4c2430488b4108c6401100488b01ff5010b8054000804883c438c34883ec3848894c2428b901000000ff1502060000488b4c2428e8342cf9ffff1502060000488b4c2428488b01ff501031c04883c438c3c04883c438c3'
+      },
+      [ordered]@{
+        Name = 'frame-arrived-vtable'
+        Offset = 0x0013D918
+        OriginalHex = 'fc170c4001000000'
+        PatchedHex = '37eb124001000000'
+      }
+    )
+  }
+)
 
 function Write-Log {
   param([string]$Message)
@@ -75,7 +116,15 @@ function Convert-BytesToHex {
 
 function Get-Sha256 {
   param([string]$Path)
-  return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToUpperInvariant()
+
+  $stream = [System.IO.File]::OpenRead($Path)
+  $sha256 = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    return ([BitConverter]::ToString($sha256.ComputeHash($stream)) -replace '-', '')
+  } finally {
+    $sha256.Dispose()
+    $stream.Dispose()
+  }
 }
 
 function Resolve-HelperPath {
@@ -85,7 +134,7 @@ function Resolve-HelperPath {
     if (-not (Test-Path -LiteralPath $RequestedPath -PathType Leaf)) {
       throw "Computer Use helper not found: $RequestedPath"
     }
-    return (Resolve-Path -LiteralPath $RequestedPath).Path
+    return [System.IO.Path]::GetFullPath($RequestedPath)
   }
 
   $runtimeRoot = Join-Path $env:LOCALAPPDATA 'OpenAI\Codex\runtimes\cua_node'
@@ -205,6 +254,11 @@ function Stop-RunningHelper {
   if ($processes.Count -gt 0) {
     Write-Log "stopping helper processes: $($processes.Id -join ', ')"
     $processes | Stop-Process -Force
+    foreach ($process in $processes) {
+      if (-not $process.WaitForExit(5000)) {
+        throw "helper process did not exit: $($process.Id)"
+      }
+    }
   }
 }
 
@@ -217,15 +271,26 @@ $skyVersion = Get-SkyVersion $resolvedHelperPath
 $windowsBuild = Get-WindowsBuild
 $desktopVersion = Get-DesktopVersion
 $currentHash = Get-Sha256 $resolvedHelperPath
-$preferredBackupPath = Get-BackupPath $skyVersion $PatchProfile.OriginalSha256 $desktopVersion
-$state = if ($currentHash -eq $PatchProfile.OriginalSha256) {
+$PatchProfile = $PatchProfiles | Where-Object {
+  $currentHash -eq $_.OriginalSha256 -or $currentHash -eq $_.PatchedSha256
+} | Select-Object -First 1
+$preferredBackupPath = if ($PatchProfile) {
+  Get-BackupPath $skyVersion $PatchProfile.OriginalSha256 $desktopVersion
+} else {
+  $null
+}
+$state = if (-not $PatchProfile) {
+  'unsupported'
+} elseif ($currentHash -eq $PatchProfile.OriginalSha256) {
   'original-patchable'
 } elseif ($currentHash -eq $PatchProfile.PatchedSha256) {
   'patched'
 } else {
   'unsupported'
 }
-$backupPath = if ($state -eq 'patched') {
+$backupPath = if (-not $PatchProfile) {
+  $null
+} elseif ($state -eq 'patched') {
   Resolve-OriginalBackupPath $preferredBackupPath
 } else {
   $preferredBackupPath
@@ -233,10 +298,10 @@ $backupPath = if ($state -eq 'patched') {
 
 if (-not $Install -and -not $Rollback) {
   [pscustomobject]@{
-    Profile = $PatchProfile.Name
+    Profile = if ($PatchProfile) { $PatchProfile.Name } else { 'unrecognized helper' }
     HelperPath = $resolvedHelperPath
     CurrentDesktopVersion = $desktopVersion
-    EndToEndValidatedDesktopVersion = $PatchProfile.ValidatedDesktopVersion
+    EndToEndValidatedDesktopVersion = if ($PatchProfile) { $PatchProfile.ValidatedDesktopVersion } else { $null }
     SkyVersion = $skyVersion
     WindowsBuild = $windowsBuild
     State = $state
@@ -299,7 +364,7 @@ if ($Install) {
     }
     Write-Log "installed and verified: $resolvedHelperPath"
   } finally {
-    Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue -WhatIf:$false
   }
   return
 }

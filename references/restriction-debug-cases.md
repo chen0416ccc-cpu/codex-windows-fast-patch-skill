@@ -10,6 +10,7 @@ Symptoms:
 - A local smoke test returns an answer such as `FAST_CHECK_OK`.
 - CLI or `/v1/models` exposes a model, but the Desktop picker still hides it.
 - The compact blue-purple Power slider falls back to the legacy Model / Reasoning / Speed picker because the required Sol/Terra model and reasoning combinations were filtered out.
+- The compact slider is present and models advertise Ultra, but Settings -> Configuration -> "Ultra in model picker slider" is disabled under `openai-custom`. In current builds the control can still depend on ChatGPT `userSettings()` and `setUltraEffortEnabled()` even though the models themselves come from the local app-server.
 
 Checks:
 
@@ -19,11 +20,14 @@ Checks:
 - In newer Codex builds, inspect `webview\assets\read-service-tier-for-request-*.js`. A shape like `return authMethod===\`chatgpt\` ? featureRequirements?.fast_mode !== false : false` means API-key/local requests are still forced out of Fast Mode.
 - Inspect `webview\assets\use-service-tier-settings-*.js` independently; Fast request wiring can be correct while the UI gate remains closed, or the UI can be open while request wiring is still wrong.
 - Inspect `webview\assets\model-list-filter-*.js` for Statsig-driven `available_models` filtering. Provider discovery can succeed while the frontend still removes the model before the Power slider calculates its available combinations.
+- Inspect the asset containing `chatgpt-user-settings`, `model_picker_persists_ultra_effort`, and `showUltraInModelPickerSlider`. A settings control shaped like `disabled: data == null || mutation.isPending` is permanently disabled when a custom provider has no ChatGPT account user-settings response. The local TOML key alone is not enough if the build uses it only as a one-time migration flag.
+- Codex Desktop `26.721.3996.0` can merge the Fast UI gate and model-list filter into `webview\assets\app-initial-*.js`. Match the same stable behavior (`isServiceTierAllowed`, `available_models`, `useHiddenModels`, and `supportedReasoningEfforts`) before concluding that the gate was removed.
 
 Action:
 
 - For CPA, add an override rule for the Codex-facing model names and force `service_tier` as a string value of `priority`.
 - Patch the Fast Mode gate by removing the `chatgpt`-only branch while preserving the feature-requirement lookup, then rerun wire capture.
+- Patch Ultra persistence with a guarded fallback: keep the official account API for successful ChatGPT user-settings queries, but on query failure return a local-backed state, write `show-ultra-in-model-picker-slider` locally, and do not let the one-time migration clear that local value after a failed remote write. Verify both the toggle state after restart and Ultra's presence in the actual compact slider.
 - Run the unified Model Experience dry run so the request gate, UI gate, and model filter are checked separately and only broken components are changed:
 
 ```powershell
@@ -43,6 +47,7 @@ Symptoms:
 Checks:
 
 - Search extracted ASAR webview assets by stable code behavior instead of fixed filenames.
+- In Codex Desktop `26.721.3996.0`, Browser sidebar availability can also move into `webview\assets\app-initial-*.js`; identify it by `in_app_browser`, the experimental-features query, and the `enabled !== false` result rather than by the old `browser-sidebar-availability-*` filename.
 - For Computer Use, relevant patterns include `featureName:\`computer_use\``, Statsig gate `1506311413`, `installPlugin:async`, and `openPluginInstall`.
 - If old plugin gate markers such as `533078438` or `pluginDeepLinkAuthBlocked` are gone, inspect `webview\assets\plugins-page-*.js` for `openPluginInstall`, `authMethod:`, and an auth-blocked assignment shaped like `{authMethod:x}=..., y=authBlocked(x),`.
 
@@ -51,6 +56,7 @@ Action:
 - Patch the extracted ASAR through the MSIX repack workflow.
 - Do not edit `C:\Program Files\WindowsApps` in place.
 - Update script search logic when asset filenames drift between Codex Desktop versions.
+- If the unified command registry scores `title`, `id`, and `searchAliases`, `/goal` already matches the Goal command id and the legacy slash-command scorer does not need patching.
 - For the newer plugin page auth shape, force only the local auth-blocked variable to `false`; do not require the old sidebar, skills-page, and detail-page chunks to exist.
 
 ## New Chat Fails With Missing inputSchema
@@ -131,16 +137,18 @@ Checks:
 
 - Run `codex plugin list` before package operations. If `sites@openai-bundled`, `chrome@openai-bundled`, `browser@openai-bundled`, or `computer-use@openai-bundled` are missing, disabled, or blocked by a marketplace snapshot error, treat that as local bundled marketplace evidence first.
 - Run `scripts\install-computer-use-local.ps1 -StrictVerifyOnly` before package operations. A failure on a stale Chrome native messaging manifest, missing `latest` link, missing helper path, missing plugin file, or `@oai/sky` import/runtime path is local repair evidence.
-- Inspect `%USERPROFILE%\.codex\.tmp\bundled-marketplaces\openai-bundled\.agents\plugins\marketplace.json`; in current Windows builds it should retain `sites`, `browser`, `chrome`, `computer-use`, and `latex`.
-- Inspect `%USERPROFILE%\.codex\.tmp\bundled-marketplaces\openai-bundled\plugins\computer-use`.
+- Read `[marketplaces.openai-bundled].source` from `config.toml`, then inspect `.agents\plugins\marketplace.json` under that stable root; in current Windows builds it should retain `sites`, `browser`, `chrome`, `computer-use`, and `latex`.
+- Inspect `plugins\computer-use` under the configured stable marketplace. Do not use the Desktop-owned `.tmp\bundled-marketplaces` copy as the final configured source.
 - Inspect running `extension-host` processes whose paths are under `%USERPROFILE%\.codex\plugins\cache\openai-bundled`.
 - Inspect `%USERPROFILE%\.codex\chrome-native-hosts.json`; remove stale entries whose `extensionHostPath` or `browserClientPath` points to a missing file.
+- If the browser files and versioned cache exist but `codex plugin list` still reports `browser@openai-bundled` as `not installed`, do not treat another direct TOML write as a durable install. Desktop reconciliation can prune that enabled entry again because the CLI install record was never created.
 
 Action:
 
 - Do not start with the full MSIX repack for this symptom class. The full repack removes and reinstalls the `OpenAI.Codex` package and can make the running Desktop app disappear; use it only after evidence shows a Desktop ASAR/UI gate is still closed.
 - Stop only those bundled `extension-host` processes when they are locking the bundled marketplace mirror.
 - Rerun `scripts\install-computer-use-local.ps1`.
+- Let the repair register `browser@openai-bundled` through `codex plugin add ... --json` after the local marketplace is complete. On Windows, invoke a user-accessible CLI shim such as the npm `codex.cmd`; do not execute the protected `WindowsApps\...\resources\codex.exe` path directly.
 - If the copy fails because a file under `.tmp\bundled-marketplaces\openai-bundled` disappears mid-read, treat it as Desktop reconciliation racing the repair. Stable plugin caches must be sourced from the installed package; only the locally modified Computer Use runtime is overlaid afterward.
 - Restart Codex Desktop.
 - Confirm the latest Desktop log ends with `computer-use native pipe startup ready`.
@@ -172,7 +180,7 @@ Get-ChildItem -LiteralPath $root -Recurse -File |
 ```
 
 - Inspect the extracted main bundle or live ASAR for `isAvailable:({features:e})=>e.sites` near the bundled plugin descriptors. That shape means package resources can contain `sites`, but runtime filtering can still remove it when `features.sites` is false.
-- Confirm that the local mirror under `%USERPROFILE%\.codex\.tmp\bundled-marketplaces\openai-bundled` has five plugin directories after repair: `sites`, `browser`, `chrome`, `computer-use`, and `latex`.
+- Confirm that the stable root configured under `[marketplaces.openai-bundled]` has at least the five required plugin directories after repair: `sites`, `browser`, `chrome`, `computer-use`, and `latex`.
 
 Action:
 
@@ -227,7 +235,7 @@ Checks:
 Action:
 
 - Read `references/win10-computer-use-screenshot-backend.md` before writing the helper.
-- For the exact documented `@oai/sky 0.4.20` original helper hash, run the hash-guarded patcher with `-Install`, then rerun `install-computer-use-local.ps1 -VerifyOnly` and `-StrictVerifyOnly`. Desktop `26.707.12708.0` is the end-to-end validation baseline, not the compatibility boundary.
+- For an exact documented original helper hash (`@oai/sky 0.4.20` or `0.5.2`), run the hash-guarded patcher with `-Install`, then rerun `install-computer-use-local.ps1 -VerifyOnly` and `-StrictVerifyOnly`. Desktop `26.707.12708.0` and `26.721.4979.0` are the respective end-to-end validation baselines, not the compatibility boundary.
 - Validate through the real Computer Use client with a first screenshot, repeated static captures, dynamic captures spaced about two seconds apart, accessibility text, `list_windows`, and post-warm-up resource counts.
 - Use the patcher's `-Rollback` mode to restore the verified original backup.
 - If the helper hash is unknown, stop. Do not reuse offsets, restore an older Codex Desktop package, copy a helper from another version, or edit `C:\Program Files\WindowsApps`.
