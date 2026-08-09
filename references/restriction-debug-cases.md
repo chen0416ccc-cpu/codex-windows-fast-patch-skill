@@ -218,6 +218,27 @@ Action:
 - If verification succeeds but Desktop still reports native pipe unavailable, fully quit and relaunch Codex Desktop, then inspect the newest Desktop log for `computer-use native pipe startup ready`.
 - Only consider a full MSIX repack when Desktop logs or UI evidence show a closed feature gate. Do not patch `resources\codex.exe` or the ASAR just because the immediate failure is an `@oai/sky` package export/import error.
 
+## Bundled Computer Use Skill Calls A Missing Sky Documentation API
+
+Symptoms:
+
+- A new Computer Use task stops at its initialization guidance before it reads or controls a window.
+- The bundled `computer-use` skill tells the agent to call a Sky documentation helper, but the JavaScript call reports that the method is not a function or undefined.
+- The installed descriptor-only plugin has a working `sky.list_windows()` export while its bundled skill names a different, unavailable method.
+
+Checks:
+
+- Import the current `@oai/sky` package from `%LOCALAPPDATA%\OpenAI\Codex\runtimes\cua_node\*\bin\node_modules` and enumerate the actual `sky` methods. Do not infer the API from a cached skill alone.
+- For the documented `@oai/sky` 0.6.2 Window2 profile, the supported read path is `sky.list_windows()` followed by `sky.get_window_state({ window, include_screenshot, include_text })`; `window` is the object returned by `list_windows`, not just its id.
+- Read `dist\project\cua\sky_js\src\targets\windows\internal\computer_use_client_base.d.ts` when the runtime API is uncertain. It is the local contract for `activate_window`, `get_window_state`, and `list_windows` in this profile.
+- Keep this distinct from `node_repl exec context not found`, native-pipe startup, screenshot-helper, or Chrome native-host failures. A stale skill can block an agent before any of those runtime paths are exercised.
+
+Action:
+
+- Run `scripts\install-computer-use-local.ps1 -VerifyOnly`. For the exact recognized `@oai/sky` 0.6.2 type profile, it applies a local skill overlay in the stable marketplace and versioned cache that uses the real Window2 calls. The overlay is not applied to an unknown future profile or a skill that no longer contains the recognized stale prompt.
+- Run `scripts\install-computer-use-local.ps1 -StrictVerifyOnly` afterward. Strict verification permits only this one intentional cache difference from the installed package and requires the current `list_windows`, `get_window_state`, and `activate_window` workflow; a future upstream skill that already has that workflow is accepted without a local marker.
+- Do not edit the protected WindowsApps copy. The next local repair rebuilds the stable cache from the package and reapplies the guarded overlay.
+
 ## Computer Use Cross-Call Approval Loses Node REPL Context
 
 Symptoms:

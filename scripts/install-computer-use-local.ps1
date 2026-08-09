@@ -401,6 +401,154 @@ The Desktop app must be launched with `CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_US
 '@
 }
 
+function Get-ComputerUseSkillDocumentationProfile {
+  param([string]$SkyRoot)
+
+  $packagePath = Join-Path $SkyRoot 'package.json'
+  $clientTypePath = Join-Path $SkyRoot 'dist\project\cua\sky_js\src\targets\windows\internal\computer_use_client_base.d.ts'
+  if (-not (Test-Path -LiteralPath $packagePath -PathType Leaf) -or
+      -not (Test-Path -LiteralPath $clientTypePath -PathType Leaf)) {
+    return $null
+  }
+
+  try {
+    $package = Get-Content -Raw -Encoding UTF8 -LiteralPath $packagePath | ConvertFrom-Json
+  } catch {
+    return $null
+  }
+  if ([string]$package.version -ne '0.6.2') {
+    return $null
+  }
+
+  $clientTypes = [System.IO.File]::ReadAllText($clientTypePath, [System.Text.UTF8Encoding]::new($false))
+  $requiredSignatures = @(
+    'activate_window: ({ window }: T.Window2.ActivateWindow.Input)',
+    'get_window_state: ({ include_screenshot, include_text, window, }: T.Window2.GetWindowState.Input)',
+    'list_windows: () => Promise<T.Window2.Window[]>;'
+  )
+  foreach ($signature in $requiredSignatures) {
+    if (-not $clientTypes.Contains($signature)) {
+      return $null
+    }
+  }
+
+  return [pscustomobject]@{
+    Name = 'sky-0.6.2-window2-api'
+    Marker = '<!-- codex-windows-fast-patch: sky-0.6.2-window2-api -->'
+  }
+}
+
+function Get-ComputerUseSkillCompatibilityMarkdown {
+  return @'
+---
+name: computer-use
+description: Control Windows apps from ChatGPT
+---
+
+# Computer Use
+
+<!-- codex-windows-fast-patch: sky-0.6.2-window2-api -->
+
+Use this skill to automate Windows apps through the bundled `@oai/sky` runtime. This local compatibility overlay applies only to the recognized `@oai/sky` 0.6.2 Window2 API profile.
+
+The runtime exposes `sky` with `list_windows`, `get_window`, `get_window_state`, `activate_window`, and interaction methods. It does not provide an in-process documentation method in this profile. Use the concrete calls below rather than probing undocumented method names.
+
+## Initialize
+
+Run this once in a fresh `node_repl` JavaScript session:
+
+```js
+if (!globalThis.sky) {
+  const { sky } = await import("@oai/sky");
+  globalThis.sky = sky;
+}
+```
+
+## Read A Window
+
+Start with the current targetable windows, then pass the returned `Window` object, not just its numeric id, to state and action methods:
+
+```js
+const windows = await sky.list_windows();
+const target = windows.find((window) => window.title);
+if (!target) throw new Error("No targetable window is available");
+
+const state = await sky.get_window_state({
+  window: target,
+  include_screenshot: true,
+  include_text: true,
+});
+```
+
+`get_window_state` returns `window`, `screenshots`, and `accessibility`. To refresh a retained target after the UI changes, call `sky.get_window({ id: target.id, app: target.app })` or list the windows again before acting.
+
+## Interact Safely
+
+Use the same window object with object-shaped inputs, for example `await sky.activate_window({ window: target })` or `await sky.click({ window: target, element_index })`. Re-read state after navigation, dialog changes, or focus changes. Immediately before a capture, revalidate and activate the intended window, then inspect the returned image content rather than treating a screenshot record or PNG alone as success.
+'@
+}
+
+function Patch-ComputerUseSkillDocumentation {
+  param(
+    [string]$SkillPath,
+    [string]$RuntimeSkyRoot
+  )
+
+  $profile = Get-ComputerUseSkillDocumentationProfile $RuntimeSkyRoot
+  if (-not $profile) {
+    return
+  }
+
+  $content = if (Test-Path -LiteralPath $SkillPath -PathType Leaf) {
+    [System.IO.File]::ReadAllText($SkillPath, [System.Text.UTF8Encoding]::new($false))
+  } else {
+    ''
+  }
+  if ($content.Contains($profile.Marker)) {
+    return
+  }
+
+  # Preserve a future upstream skill unless it still contains the known stale API prompt.
+  $knownStalePrompt = $content.Contains('sky.documentation(') -or
+    $content.Contains('sky.document_info(')
+  if ($content.Length -gt 0 -and -not $knownStalePrompt) {
+    Write-Log "Computer Use skill has no known stale runtime-doc prompt; leaving it unchanged: $SkillPath"
+    return
+  }
+
+  Write-Utf8NoBom $SkillPath ((Get-ComputerUseSkillCompatibilityMarkdown) + "`n")
+  Write-Log "applied Computer Use Sky API documentation overlay: $SkillPath"
+}
+
+function Test-ComputerUseSkillDocumentation {
+  param(
+    [string]$SkillPath,
+    [string]$RuntimeSkyRoot
+  )
+
+  $profile = Get-ComputerUseSkillDocumentationProfile $RuntimeSkyRoot
+  if (-not $profile) {
+    return
+  }
+  if (-not (Test-Path -LiteralPath $SkillPath -PathType Leaf)) {
+    throw "Computer Use skill documentation is missing: $SkillPath"
+  }
+
+  $content = [System.IO.File]::ReadAllText($SkillPath, [System.Text.UTF8Encoding]::new($false))
+  foreach ($stalePrompt in @('sky.documentation(', 'sky.document_info(')) {
+    if ($content.Contains($stalePrompt)) {
+      throw "Computer Use skill documentation still calls a missing Sky documentation API: $SkillPath"
+    }
+  }
+  foreach ($requiredApi in @('sky.list_windows()', 'sky.get_window_state({', 'sky.activate_window({ window: target })')) {
+    if (-not $content.Contains($requiredApi)) {
+      throw "Computer Use skill documentation is missing its current Sky API workflow ($requiredApi): $SkillPath"
+    }
+  }
+  $source = if ($content.Contains($profile.Marker)) { 'local-overlay' } else { 'upstream-current-api' }
+  Write-Log "Computer Use Sky API documentation verification ok: source=$source path=$SkillPath"
+}
+
 function Get-HelperTransportJs {
   return @'
 import { execFile } from "node:child_process";
@@ -747,6 +895,7 @@ function Write-PluginTree {
   if (-not (Test-Path -LiteralPath $skillPath -PathType Leaf)) {
     Write-Utf8NoBom $skillPath ((Get-SkillMarkdown) + "`n")
   }
+  Patch-ComputerUseSkillDocumentation $skillPath $runtimeSkyRoot
   if (-not (Test-Path -LiteralPath $clientPath -PathType Leaf)) {
     Write-Log "descriptor-only Computer Use plugin uses the independent cua_node runtime: $Root"
     return
@@ -2953,6 +3102,8 @@ function Test-OfficialComputerUseCache {
   $sourceRoot = Join-Path $InstalledMarketplaceRoot 'plugins\computer-use'
   $version = Get-PluginVersion $sourceRoot
   $cacheVersionRoot = Join-Path $CodexHomeResolved "plugins\cache\openai-bundled\computer-use\$version"
+  $runtimeSkyRoot = Get-CuaSkyRuntimeRoot
+  $skillDocumentationProfile = Get-ComputerUseSkillDocumentationProfile $runtimeSkyRoot
   $sourceClientPath = Join-Path $sourceRoot 'scripts\computer-use-client.mjs'
   $cachedClientPath = Join-Path $cacheVersionRoot 'scripts\computer-use-client.mjs'
   $requiredCachePaths = @(
@@ -2970,6 +3121,10 @@ function Test-OfficialComputerUseCache {
   $mismatches = @()
   foreach ($sourceFile in @(Get-ChildItem -LiteralPath $sourceRoot -Recurse -File)) {
     $relativePath = $sourceFile.FullName.Substring($sourceRoot.Length).TrimStart('\')
+    if ($skillDocumentationProfile -and $relativePath -ieq 'skills\computer-use\SKILL.md') {
+      # The local cache deliberately overlays this one stale upstream document.
+      continue
+    }
     $cacheFile = Join-Path $cacheVersionRoot $relativePath
     if (-not (Test-Path -LiteralPath $cacheFile -PathType Leaf)) {
       $mismatches += "missing:$relativePath"
@@ -2985,7 +3140,6 @@ function Test-OfficialComputerUseCache {
     throw "official Computer Use cache differs from the installed package: $($mismatches -join ', ')"
   }
 
-  $runtimeSkyRoot = Get-CuaSkyRuntimeRoot
   $runtimeHelperTransportPath = Join-Path $runtimeSkyRoot 'dist\project\cua\sky_js\src\targets\windows\internal\helper_transport.js'
   $runtimeRequired = @(
     (Join-Path $runtimeSkyRoot 'package.json'),
@@ -3017,6 +3171,8 @@ function Test-OfficialComputerUseCache {
   }
 
   $stableMarketplaceRoot = Get-StableBundledMarketplaceRoot $codexHomeResolved
+  Test-ComputerUseSkillDocumentation (Join-Path $stableMarketplaceRoot 'plugins\computer-use\skills\computer-use\SKILL.md') $runtimeSkyRoot
+  Test-ComputerUseSkillDocumentation (Join-Path $cacheVersionRoot 'skills\computer-use\SKILL.md') $runtimeSkyRoot
   $installedChromeRoot = Join-Path $InstalledMarketplaceRoot 'plugins\chrome'
   $chromeVersion = Get-PluginVersion $installedChromeRoot
   $chromeBrowserClientPaths = @(
@@ -3152,6 +3308,7 @@ function Test-ComputerUse {
   $marketplaceBrowserClientPath = Join-Path $chromePluginRoot 'scripts\browser-client.mjs'
   $cachedBrowserClientPath = Join-Path $chromeCacheVersionRoot 'scripts\browser-client.mjs'
   $computerUseClientPath = Join-Path $cacheLatest 'scripts\computer-use-client.mjs'
+  $runtimeSkyRoot = Get-CuaSkyRuntimeRoot
   $computerUseBasePath = Join-Path $cacheLatest 'node_modules\@oai\sky\dist\project\cua\sky_js\src\targets\windows\internal\computer_use_client_base.js'
   $helperTransportPath = Join-Path $cacheLatest 'node_modules\@oai\sky\dist\project\cua\sky_js\src\targets\windows\internal\helper_transport.js'
   $required = @(
@@ -3242,6 +3399,8 @@ function Test-ComputerUse {
   }
 
   Test-BundledMarketplaceMirror $marketplaceRoot
+  Test-ComputerUseSkillDocumentation (Join-Path $marketplaceRoot 'plugins\computer-use\skills\computer-use\SKILL.md') $runtimeSkyRoot
+  Test-ComputerUseSkillDocumentation (Join-Path $cacheLatest 'skills\computer-use\SKILL.md') $runtimeSkyRoot
 
   $userEnv = [Environment]::GetEnvironmentVariable('CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE', 'User')
   if ($userEnv -ne '1') {

@@ -68,4 +68,23 @@ if ((Get-FileHash -LiteralPath $descriptor -Algorithm SHA256).Hash -ne
   throw "descriptor-only cache does not match the installed package: $cacheDescriptor"
 }
 
+$cacheSkill = Join-Path $env:USERPROFILE ".codex\plugins\cache\openai-bundled\computer-use\$pluginVersion\skills\computer-use\SKILL.md"
+if (-not (Test-Path -LiteralPath $cacheSkill -PathType Leaf)) {
+  throw "descriptor-only repair did not create the current Computer Use skill: $cacheSkill"
+}
+$skillContent = Get-Content -Raw -Encoding UTF8 -LiteralPath $cacheSkill
+foreach ($stalePrompt in @('sky.documentation(', 'sky.document_info(')) {
+  if ($skillContent.Contains($stalePrompt)) {
+    throw "descriptor-only repair retained a missing Sky documentation API prompt: $cacheSkill"
+  }
+}
+foreach ($requiredApi in @('sky.list_windows()', 'sky.get_window_state({', 'sky.activate_window({ window: target })')) {
+  if (-not $skillContent.Contains($requiredApi)) {
+    throw "descriptor-only repair omitted the current Sky API workflow ($requiredApi): $cacheSkill"
+  }
+}
+if (-not $skillContent.Contains('<!-- codex-windows-fast-patch: sky-0.6.2-window2-api -->')) {
+  Write-Warning "descriptor-only repair is using an upstream Computer Use skill that already matches the current Sky API: $cacheSkill"
+}
+
 Write-Output 'descriptor-only Computer Use repair passed'
