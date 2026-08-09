@@ -985,6 +985,72 @@ function Get-CuaSkyRuntimeRoot {
   return $selected[0].Path
 }
 
+function Get-ComputerUseNodeReplContextPatchStatus {
+  param([string]$HelperTransportPath)
+
+  $patcher = Join-Path $PSScriptRoot 'patch-computer-use-node-repl-context.ps1'
+  if (-not (Test-Path -LiteralPath $patcher -PathType Leaf)) {
+    throw "Computer Use node_repl context patcher is missing: $patcher"
+  }
+
+  $statusOutput = @(& $patcher -HelperTransportPath $HelperTransportPath -CodexHome $CodexHome -Json)
+  $statusJson = [string]($statusOutput | Select-Object -Last 1)
+  if ([string]::IsNullOrWhiteSpace($statusJson)) {
+    throw "Computer Use node_repl context patcher returned no status: $HelperTransportPath"
+  }
+  return $statusJson | ConvertFrom-Json
+}
+
+function Repair-ComputerUseNodeReplContext {
+  $runtimeSkyRoot = Get-CuaSkyRuntimeRoot
+  $helperTransportPath = Join-Path $runtimeSkyRoot 'dist\project\cua\sky_js\src\targets\windows\internal\helper_transport.js'
+  $status = Get-ComputerUseNodeReplContextPatchStatus $helperTransportPath
+  $patcher = Join-Path $PSScriptRoot 'patch-computer-use-node-repl-context.ps1'
+
+  if ($status.State -eq 'patched') {
+    Write-Log "Computer Use node_repl request-context patch already installed: $($status.Sha256)"
+    return
+  }
+  if ($status.State -eq 'original-patchable') {
+    & $patcher -HelperTransportPath $helperTransportPath -CodexHome $CodexHome -Install
+    $verified = Get-ComputerUseNodeReplContextPatchStatus $helperTransportPath
+    if ($verified.State -ne 'patched') {
+      throw "Computer Use node_repl request-context patch did not reach patched state: $($verified.State)"
+    }
+    Write-Log "Computer Use node_repl request-context patch installed: $($verified.Sha256)"
+    return
+  }
+  if ($status.State -eq 'unsupported-modified') {
+    throw "Computer Use helper transport contains an unrecognized request-context patch: $helperTransportPath / $($status.Sha256)"
+  }
+  if ($status.State -like 'patched-backup-*') {
+    throw "Computer Use helper transport patch does not have its verified original backup: state=$($status.State) path=$($status.BackupPath)"
+  }
+
+  Write-Log "Computer Use node_repl request-context patch is not applicable to this runtime: sky=$($status.SkyVersion) sha256=$($status.Sha256)"
+}
+
+function Test-ComputerUseNodeReplContextPatch {
+  param([string]$HelperTransportPath)
+
+  $status = Get-ComputerUseNodeReplContextPatchStatus $HelperTransportPath
+  if ($status.State -eq 'patched') {
+    Write-Log "Computer Use node_repl request-context patch verification ok: $($status.Sha256)"
+    return
+  }
+  if ($status.State -eq 'original-patchable') {
+    throw "known Computer Use cross-call approval failure is unpatched: $HelperTransportPath / run -VerifyOnly to repair it"
+  }
+  if ($status.State -eq 'unsupported-modified') {
+    throw "Computer Use helper transport has an unrecognized request-context patch: $HelperTransportPath / $($status.Sha256)"
+  }
+  if ($status.State -like 'patched-backup-*') {
+    throw "Computer Use helper transport patch backup is missing or invalid: state=$($status.State) path=$($status.BackupPath)"
+  }
+
+  Write-Log "Computer Use node_repl request-context patch profile is not required for this runtime: sky=$($status.SkyVersion) sha256=$($status.Sha256)"
+}
+
 function Get-InstalledBundledMarketplaceRoot {
   $pkg = Get-AppxPackage -Name OpenAI.Codex -ErrorAction SilentlyContinue |
     Sort-Object Version -Descending |
@@ -2920,9 +2986,11 @@ function Test-OfficialComputerUseCache {
   }
 
   $runtimeSkyRoot = Get-CuaSkyRuntimeRoot
+  $runtimeHelperTransportPath = Join-Path $runtimeSkyRoot 'dist\project\cua\sky_js\src\targets\windows\internal\helper_transport.js'
   $runtimeRequired = @(
     (Join-Path $runtimeSkyRoot 'package.json'),
-    (Join-Path $runtimeSkyRoot 'dist\project\cua\sky_js\src\index.js')
+    (Join-Path $runtimeSkyRoot 'dist\project\cua\sky_js\src\index.js'),
+    $runtimeHelperTransportPath
   )
   if (Test-Path -LiteralPath $sourceClientPath -PathType Leaf) {
     $runtimeRequired += @(
@@ -2936,6 +3004,8 @@ function Test-OfficialComputerUseCache {
       throw "official Computer Use runtime is incomplete: $path"
     }
   }
+
+  Test-ComputerUseNodeReplContextPatch $runtimeHelperTransportPath
 
   if (Test-Path -LiteralPath $sourceClientPath -PathType Leaf) {
     $helperCommandPath = Join-Path $runtimeSkyRoot 'bin\windows\codex-computer-use.exe'
@@ -2980,6 +3050,7 @@ function Install-ComputerUse {
   Remove-StaleChromeNativeHostEntries
   $installedMarketplaceRoot = Get-InstalledBundledMarketplaceRoot
   Sync-BundledMarketplaceFromInstalledApp $marketplaceRoot $installedMarketplaceRoot
+  Repair-ComputerUseNodeReplContext
   Patch-ChromeWindowsRegistryParsing (Join-Path $marketplaceRoot 'plugins\chrome')
   Write-PluginTree $pluginSourceRoot
   Update-BundledMarketplaceManifest $marketplaceRoot
@@ -3189,6 +3260,7 @@ function Test-ComputerUse {
   Test-CodexConfig (Join-Path $codexHomeResolved 'config.toml') $marketplaceRoot
   Test-ComputerUseClientImport $computerUseClientPath
   Test-HelperTransport $helperTransportPath
+  Test-ComputerUseNodeReplContextPatch $helperTransportPath
   Write-Log 'verification ok'
 }
 

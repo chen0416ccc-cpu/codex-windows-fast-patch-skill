@@ -218,6 +218,31 @@ Action:
 - If verification succeeds but Desktop still reports native pipe unavailable, fully quit and relaunch Codex Desktop, then inspect the newest Desktop log for `computer-use native pipe startup ready`.
 - Only consider a full MSIX repack when Desktop logs or UI evidence show a closed feature gate. Do not patch `resources\codex.exe` or the ASAR just because the immediate failure is an `@oai/sky` package export/import error.
 
+## Computer Use Cross-Call Approval Loses Node REPL Context
+
+Symptoms:
+
+- `sky.list_windows()` succeeds, but a later `sky.get_window_state()` or `sky.activate_window()` call fails with `Error: node_repl exec context not found`.
+- Resetting the JavaScript kernel appears ineffective when the agent again enumerates windows in one `node_repl` call and captures the selected window in a later call.
+- A fresh kernel can enumerate and capture in one combined call, while the same persistent helper fails when capture or app approval moves to the next call.
+- `include_screenshot:false, include_text:true` can fail with the same error, so this is not necessarily image decoding, PNG writing, or the Windows Graphics Capture backend.
+
+Checks:
+
+- Reproduce against a stable, visible, restored window and record its current HWND owner, title, process ID, and non-trivial bounds. Do not use an exited process, a stale handle, or a minimized `160x28` window as the deciding test.
+- Compare a combined `list_windows` plus `get_window_state` call with two separate calls in the same persistent JavaScript kernel. On the affected `@oai/sky 0.6.2` transport, the long-lived helper's stdout listener inherits the first call's `AsyncLocalStorage` store; a later app-approval callback then reaches `nodeRepl.config.createElicitation` with a stale execution ID.
+- Run `scripts\patch-computer-use-node-repl-context.ps1` without `-Install`. The documented source profile is original SHA-256 `6423BA83...702B7C` and patched SHA-256 `3600AC24...5BB60A`. Treat any other hash as unknown even when a nearby source fragment looks similar.
+- Test `nodeRepl.emitImage` independently when useful. A working direct image emission plus text-only Computer Use failure points away from the outer image-return channel.
+- Keep this separate from the Windows 10 `SetIsBorderRequired` / `0x80004002` helper profile, invalid window geometry, a target process that exited, and Chrome native-host state.
+
+Action:
+
+- Run `scripts\install-computer-use-local.ps1 -VerifyOnly`. For the exact known original transport, normal repair installs the hash-guarded source patch and stores the verified original under `.codex\backups\computer-use-node-repl-context`; `-StrictVerifyOnly` remains read-only and rejects the known unpatched state.
+- Reset the current `node_repl` JavaScript kernel after installation so the next `@oai/sky` import loads the patched module. The patch captures `AsyncLocalStorage.snapshot()` for each helper request and restores that request context before running its app-approval callback.
+- Validate in separate calls: enumerate a controlled window, then in at least two later calls activate it and request screenshot plus accessibility state. Require real images with the expected target title/content and normal dimensions; the existence of a PNG or a returned `Window` object is not enough.
+- Re-check the foreground window immediately before capture. The current native helper can return visible pixels from an occluding foreground window when focus drifts, so activate the intended target immediately before the state request and inspect the image content rather than trusting metadata alone.
+- Unknown helper transport hashes remain untouched. Do not copy this source transformation onto another `@oai/sky` build, edit WindowsApps in place, run a full MSIX repack, repair Chrome, or enter the Phone Remote Control workflow unless separate evidence requires it.
+
 ## Existing MCP Commands Point At A Retired CUA Node Runtime
 
 Symptoms:
