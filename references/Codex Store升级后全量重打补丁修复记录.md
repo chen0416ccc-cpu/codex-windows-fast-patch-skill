@@ -28,7 +28,10 @@ IDA/r2 确认 wrapper 的 `CreateThread`、`CloseHandle`、`RoInitialize`、`RoU
 - 当 live helper 已是 patched、原始 helper 仅存在于 `.codex\backups\computer-use-helper` 时，回归测试从当前 0.6.6 runtime 读取 `package.json`，再从原始备份复制测试源，默认执行仍可复现。
 - 真实 helper 安装后，`install-computer-use-local.ps1 -StrictVerifyOnly -VerifyAllBundledPluginsAvailable` 返回 `runtime import ok` / `verification ok`。
 - 重置 Node REPL 后分独立调用执行 `sky.list_windows()`、激活 Explorer 和 `get_window_state({ window, include_screenshot, include_text })`；`D:\Program Files\IDA.PRO` 返回 `1125x639` 非空截图，画面包含 `kg_patch`、`misc`、`portable_win`，重复截图成功。
-- 0.6.6 当前仅完成冷启动与重复静态截图、完整 hash guard 和未知 hash 拒绝；动态截图变化与长期资源稳定性仍待后续 helper 更新后重新验证。
+- 冷启动首帧约 `452 ms`；后续两批各十次静态截图均成功，耗时约 `31-48 ms`，每批未变化画面的 SHA-256 一致。accessibility 文本长度为 `3419`。
+- 第一张截图后主 helper 为 `58` threads / `661` handles；二十次静态截图并等待两秒后为 `55/662`。cursor-manager 子进程保持 `1` thread / `166` handles，没有线性增长。
+- fresh helper 会话中的 Task Manager CPU 性能页三帧间隔约 `2.1` 秒，尺寸均为 `666x593`，耗时 `50-51 ms`，三个 SHA-256 均不同；测试窗口随后已关闭。
+- 0.6.6 已完成完整输入/输出 hash guard、未知 hash 拒绝、冷启动、两批重复静态截图、动态图像变化、accessibility、窗口枚举和预热后资源稳定性验收。
 - 已登录 Chrome 的 `https://example.com/` smoke：URL 正确、title `Example Domain`、恰好一个 `h1` 且文本为 `Example Domain`。
 - `config.toml` 无 UTF-8 BOM，Python `tomllib` 解析通过；MSIX 包为 `Developer / Ok`。
 

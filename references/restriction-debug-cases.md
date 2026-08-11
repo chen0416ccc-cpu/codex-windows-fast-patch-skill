@@ -308,6 +308,7 @@ Action:
 - Read `references/win10-computer-use-screenshot-backend.md` before writing the helper.
 - For an exact documented original helper hash (`@oai/sky 0.4.20`, `0.5.2`, or `0.6.6`), run the hash-guarded patcher with `-Install`, then rerun `install-computer-use-local.ps1 -VerifyOnly` and `-StrictVerifyOnly`. Desktop `26.707.12708.0`, `26.721.4979.0`, and `26.803.10989.0` are the respective end-to-end validation baselines, not the compatibility boundary.
 - Validate through the real Computer Use client with a first screenshot, repeated static captures, dynamic captures spaced about two seconds apart, accessibility text, `list_windows`, and post-warm-up resource counts.
+- The `0.6.6` / Desktop `26.803.10989.0` baseline passed a cold Explorer capture, two batches of ten static captures, stable helper resources after twenty captures, and three distinct Task Manager performance frames. This validates only the documented complete helper hash pair; it is not a generic version rule.
 - Use the patcher's `-Rollback` mode to restore the verified original backup.
 - If the helper hash is unknown, stop. Do not reuse offsets, restore an older Codex Desktop package, copy a helper from another version, or edit `C:\Program Files\WindowsApps`.
 
