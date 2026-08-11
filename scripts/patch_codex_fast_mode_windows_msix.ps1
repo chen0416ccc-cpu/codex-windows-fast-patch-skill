@@ -2830,3 +2830,6 @@ try {
     Remove-DirectoryRobust -Path $tempWork -RequiredRoot $workRoot -BestEffort
   }
 }
+
+# Native tools such as robocopy use nonzero success codes. Do not leak one after a successful script run.
+$global:LASTEXITCODE = 0

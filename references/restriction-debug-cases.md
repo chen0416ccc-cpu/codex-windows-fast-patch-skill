@@ -229,6 +229,7 @@ Symptoms:
 Checks:
 
 - Import the current `@oai/sky` package from `%LOCALAPPDATA%\OpenAI\Codex\runtimes\cua_node\*\bin\node_modules` and enumerate the actual `sky` methods. Do not infer the API from a cached skill alone.
+- Treat the bundled Computer Use skill and its referenced `docs\api.md` as one contract. Newer descriptor-only bundles can keep only initialization in `SKILL.md` and move `list_windows`, `get_window_state`, and `activate_window` signatures into `docs\api.md`; do not force an older overlay merely because those call examples are absent from the skill entrypoint.
 - For the documented `@oai/sky` 0.6.2 Window2 profile, the supported read path is `sky.list_windows()` followed by `sky.get_window_state({ window, include_screenshot, include_text })`; `window` is the object returned by `list_windows`, not just its id.
 - Read `dist\project\cua\sky_js\src\targets\windows\internal\computer_use_client_base.d.ts` when the runtime API is uncertain. It is the local contract for `activate_window`, `get_window_state`, and `list_windows` in this profile.
 - Keep this distinct from `node_repl exec context not found`, native-pipe startup, screenshot-helper, or Chrome native-host failures. A stale skill can block an agent before any of those runtime paths are exercised.
@@ -301,13 +302,17 @@ Checks:
 - Run `scripts\install-computer-use-local.ps1 -StrictVerifyOnly` and keep the exact helper error.
 - Resolve the selected helper under `%LOCALAPPDATA%\OpenAI\Codex\runtimes\cua_node`, then calculate its SHA-256 and read the adjacent `@oai/sky\package.json` version.
 - Use `scripts\patch-computer-use-helper-win10.ps1` without `-Install` to classify the helper as `original-patchable`, `patched`, or `unsupported`.
+- Treat the Windows 10 build check, the exact `SetIsBorderRequired / 0x80004002` failure, the `@oai/sky` version, and the complete helper hash as separate requirements. A matching hash on Windows 11 is classification evidence only and does not authorize installation.
+- `-ComputeCandidateHash` is a read-only regression path for an exact original helper fixture. It can prove that the guarded regions reconstruct the documented output hash on a non-Windows-10 test host, but `-Install` must still reject that host and leave the helper unchanged.
+- If a browser capture stops because the runtime cannot determine the current URL with enough confidence, the native screenshot helper was not reached. Repeat later with a controlled non-browser window instead of attributing that policy stop to this profile.
 - Do not treat this native screenshot failure as a missing plugin/cache path or a Desktop feature gate.
 
 Action:
 
 - Read `references/win10-computer-use-screenshot-backend.md` before writing the helper.
-- For an exact documented original helper hash (`@oai/sky 0.4.20` or `0.5.2`), run the hash-guarded patcher with `-Install`, then rerun `install-computer-use-local.ps1 -VerifyOnly` and `-StrictVerifyOnly`. Desktop `26.707.12708.0` and `26.721.4979.0` are the respective end-to-end validation baselines, not the compatibility boundary.
-- Validate through the real Computer Use client with a first screenshot, repeated static captures, dynamic captures spaced about two seconds apart, accessibility text, `list_windows`, and post-warm-up resource counts.
+- For an exact documented original helper hash (`@oai/sky 0.4.20`, `0.5.2`, or `0.6.6`), run the hash-guarded patcher with `-Install`, then rerun `install-computer-use-local.ps1 -VerifyOnly` and `-StrictVerifyOnly`. Desktop `26.707.12708.0`, `26.721.4979.0`, and `26.803.10989.0` are the respective end-to-end validation baselines, not the compatibility boundary.
+- Validate through the real Computer Use client against a controlled non-browser window with recognizable, non-sensitive content. Use independent calls for enumeration, activation, and capture; inspect the returned pixels and dimensions, then add repeated static captures, dynamic captures spaced about two seconds apart, accessibility text, `list_windows`, and post-warm-up resource counts.
+- The `0.6.6` / Desktop `26.803.10989.0` baseline passed a cold Explorer capture, two batches of ten static captures, stable helper resources after twenty captures, and three distinct Task Manager performance frames. This validates only the documented complete helper hash pair; it is not a generic version rule.
 - Use the patcher's `-Rollback` mode to restore the verified original backup.
 - If the helper hash is unknown, stop. Do not reuse offsets, restore an older Codex Desktop package, copy a helper from another version, or edit `C:\Program Files\WindowsApps`.
 
