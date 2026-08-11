@@ -69,6 +69,12 @@ $patcher = "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patc
 powershell -NoProfile -ExecutionPolicy Bypass -File $patcher
 ```
 
+For an exact original helper fixture, `-ComputeCandidateHash` performs the guarded byte transformation in memory and returns the complete candidate SHA-256 without writing the helper. This regression path is intentionally usable on a non-Windows-10 development host; it does not bypass the Windows 10 gate for `-Install`:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File $patcher -HelperPath "<fixture-helper>" -ComputeCandidateHash
+```
+
 Install only after the reported path, version, build, and hash match the supported profile:
 
 ```powershell
@@ -149,7 +155,7 @@ Desktop `26.803.10989.0` ships `@oai/sky 0.6.6` with original helper SHA-256 `BE
 
 - The exact guarded rewrite changes five regions: optional-border path at file offset `0x47E01` (`4889c34189d6eb50` -> `e980000000909090`), busy return at `0x4CF86` (`0f85f5340000` -> `0f85d8340000`), one-shot flag at `0x4CF97` (`740d` -> `eb0d`), a 175-byte MTA wrapper at `0x14868F`, and the callback vtable pointer at `0x14B128` (`43db044001000000` -> `8f92144001000000`).
 - IDA/radare2 resolution confirmed the wrapper's `CreateThread`, `CloseHandle`, `RoInitialize`, and `RoUninitialize` IAT calls and the original `FrameArrived` callback at `0x14004DB43`. The wrapper VA is `0x14014928F`; no executable under `WindowsApps` was modified.
-- The isolated regression script `scripts/test-computer-use-helper-win10-patch.ps1` passed `original -> patched -> idempotent install -> rollback -> idempotent rollback`, complete input/output SHA-256 checks, and rejection of an unknown hash. The live install stored the original at `.codex\backups\computer-use-helper\26.803.10989.0-sky-0.6.6-BE488E66\codex-computer-use.exe.original`.
+- On Windows 10, the isolated regression script `scripts/test-computer-use-helper-win10-patch.ps1` passed `original -> patched -> idempotent install -> rollback -> idempotent rollback`, complete input/output SHA-256 checks, and rejection of an unknown hash. On newer Windows builds, the same script verifies the in-memory candidate hash, proves that `-Install` is rejected without changing the fixture, and still checks unknown-hash rejection. The live Windows 10 install stored the original at `.codex\backups\computer-use-helper\26.803.10989.0-sky-0.6.6-BE488E66\codex-computer-use.exe.original`.
 - After installation, `install-computer-use-local.ps1 -StrictVerifyOnly -VerifyAllBundledPluginsAvailable` returned `runtime import ok` and `verification ok`. A persistent Node REPL was reset; `sky.list_windows()` ran in one call, then independent calls activated the `D:\Program Files\IDA.PRO` Explorer window and returned a `1125x639` screenshot. The inspected image showed the expected `kg_patch`, `misc`, and `portable_win` entries, and the repeated independent screenshot also returned normally. The former `SetIsBorderRequired / 0x80004002` failure did not recur.
 - Cold capture completed in about `452 ms`; two later batches of ten unchanged Explorer captures all succeeded in about `31-48 ms`, with one stable SHA-256 per batch. Accessibility text length was `3419`.
 - Main-helper resources were `58` threads / `661` handles after the first capture and `55/662` after twenty static captures plus a two-second settle. The cursor-manager child remained at one thread / `166` handles, with no linear growth.

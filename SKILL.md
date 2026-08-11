@@ -471,7 +471,7 @@ $helperPatcher = "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\script
 powershell -NoProfile -ExecutionPolicy Bypass -File $helperPatcher
 ```
 
-Only an `original-patchable` result for one of the documented complete helper SHA-256 profiles authorizes the targeted write. The current profiles are `@oai/sky 0.4.20` validated with Desktop `26.707.12708.0`, `@oai/sky 0.5.2` validated with Desktop `26.721.4979.0`, and `@oai/sky 0.6.6` validated with Desktop `26.803.10989.0`; the helper hash, not the Desktop version, is the compatibility boundary:
+Only an `original-patchable` result for one of the documented complete helper SHA-256 profiles authorizes further evaluation. A real write additionally requires Windows 10 and the exact `SetIsBorderRequired / 0x80004002` screenshot failure; a matching hash on Windows 11 is not authorization. The current profiles are `@oai/sky 0.4.20` validated with Desktop `26.707.12708.0`, `@oai/sky 0.5.2` validated with Desktop `26.721.4979.0`, and `@oai/sky 0.6.6` validated with Desktop `26.803.10989.0`; the helper hash, not the Desktop version, is the binary compatibility boundary:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File $helperPatcher -Install

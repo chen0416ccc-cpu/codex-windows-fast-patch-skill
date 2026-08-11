@@ -64,6 +64,14 @@ function Get-Status {
   return @(& $Patcher -HelperPath $Path -CodexHome $CodexHome) | Select-Object -Last 1
 }
 
+function Get-WindowsBuild {
+  $os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
+  if ($os -and $os.BuildNumber) {
+    return [int]$os.BuildNumber
+  }
+  return [Environment]::OSVersion.Version.Build
+}
+
 if (-not (Test-Path -LiteralPath $Patcher -PathType Leaf)) {
   throw "patcher is missing: $Patcher"
 }
@@ -120,20 +128,35 @@ try {
   Assert-Equal $before.State 'original-patchable' 'original state mismatch'
   Assert-Equal $before.Sha256 $ExpectedOriginalHash 'original status hash mismatch'
 
-  & $Patcher -HelperPath $testHelper -CodexHome $codexHome -Install
-  $afterInstall = Get-Status $testHelper $codexHome
-  Assert-Equal $afterInstall.State 'patched' 'patched state mismatch'
-  Assert-Equal $afterInstall.Sha256 $ExpectedPatchedHash 'patched hash mismatch'
-  Assert-Equal (Get-FileHash -LiteralPath $afterInstall.BackupPath -Algorithm SHA256).Hash $ExpectedOriginalHash 'backup hash mismatch'
+  $candidateHash = @(& $Patcher -HelperPath $testHelper -CodexHome $codexHome -ComputeCandidateHash) | Select-Object -Last 1
+  Assert-Equal $candidateHash $ExpectedPatchedHash 'candidate hash mismatch'
 
-  & $Patcher -HelperPath $testHelper -CodexHome $codexHome -Install
-  Assert-Equal (Get-FileHash -LiteralPath $testHelper -Algorithm SHA256).Hash $ExpectedPatchedHash 'idempotent install changed the helper'
+  $windowsBuild = Get-WindowsBuild
+  if ($windowsBuild -lt 22000) {
+    & $Patcher -HelperPath $testHelper -CodexHome $codexHome -Install
+    $afterInstall = Get-Status $testHelper $codexHome
+    Assert-Equal $afterInstall.State 'patched' 'patched state mismatch'
+    Assert-Equal $afterInstall.Sha256 $ExpectedPatchedHash 'patched hash mismatch'
+    Assert-Equal (Get-FileHash -LiteralPath $afterInstall.BackupPath -Algorithm SHA256).Hash $ExpectedOriginalHash 'backup hash mismatch'
 
-  & $Patcher -HelperPath $testHelper -CodexHome $codexHome -Rollback
-  Assert-Equal (Get-FileHash -LiteralPath $testHelper -Algorithm SHA256).Hash $ExpectedOriginalHash 'rollback hash mismatch'
+    & $Patcher -HelperPath $testHelper -CodexHome $codexHome -Install
+    Assert-Equal (Get-FileHash -LiteralPath $testHelper -Algorithm SHA256).Hash $ExpectedPatchedHash 'idempotent install changed the helper'
 
-  & $Patcher -HelperPath $testHelper -CodexHome $codexHome -Rollback
-  Assert-Equal (Get-FileHash -LiteralPath $testHelper -Algorithm SHA256).Hash $ExpectedOriginalHash 'idempotent rollback changed the helper'
+    & $Patcher -HelperPath $testHelper -CodexHome $codexHome -Rollback
+    Assert-Equal (Get-FileHash -LiteralPath $testHelper -Algorithm SHA256).Hash $ExpectedOriginalHash 'rollback hash mismatch'
+
+    & $Patcher -HelperPath $testHelper -CodexHome $codexHome -Rollback
+    Assert-Equal (Get-FileHash -LiteralPath $testHelper -Algorithm SHA256).Hash $ExpectedOriginalHash 'idempotent rollback changed the helper'
+  } else {
+    $platformGuardRejected = $false
+    try {
+      & $Patcher -HelperPath $testHelper -CodexHome $codexHome -Install
+    } catch {
+      $platformGuardRejected = $_.Exception.Message -eq "this profile is limited to Windows 10; detected build $windowsBuild"
+    }
+    Assert-Equal $platformGuardRejected $true 'Windows 11 fixture install bypassed the live platform guard'
+    Assert-Equal (Get-FileHash -LiteralPath $testHelper -Algorithm SHA256).Hash $ExpectedOriginalHash 'platform guard changed the helper'
+  }
 
   $unknownBytes = [IO.File]::ReadAllBytes($testHelper)
   $unknownBytes[0x47E01] = $unknownBytes[0x47E01] -bxor 1
