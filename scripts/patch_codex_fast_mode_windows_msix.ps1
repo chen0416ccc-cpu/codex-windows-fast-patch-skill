@@ -693,7 +693,7 @@ if (text.includes(marker)) {
   process.exit(0);
 }
 
-if (!text.includes('harborEnabled:') && (text.includes('composer.modelPicker.power') || /model-picker-power-slider-impl/i.test(file))) {
+if (!text.includes('harborEnabled:') && (text.includes('composer.modelPicker.power') || /model-picker-power-slider-impl/i.test(file) || text.includes('ModelPickerPowerSliderImpl'))) {
   process.stdout.write('already-patched');
   process.exit(0);
 }
@@ -753,14 +753,14 @@ const [, mutationFn, mutationScope, enabled, snapshot, userSettingsQuery, previo
 const mutationReplacement = `async function ${mutationFn}(${mutationScope},${enabled}){let ${snapshot}=${mutationScope}.query.snapshot(${userSettingsQuery}),${previous}=${snapshot}.getData();${snapshot}.setData(${cached}=>${cached}==null?${cached}:{...${cached},ultraEffortEnabled:${enabled}});if(${previous}?.ultraEffortLocalFallback===!0){try{await ${writeConfig}(${mutationScope},${settings}.showUltraInModelPickerSlider,${enabled});return}catch(codexUltraLocalError){throw ${snapshot}.setData(${previous}),codexUltraLocalError}}try{await ${mutationScope}.get(${client}).setUltraEffortEnabled(${enabled}),await Promise.all([${snapshot}.invalidate(),${mutationScope}.query.snapshot(${tppQuery}).invalidate()])}catch(codexUltraRemoteError){throw ${snapshot}.setData(${previous}),codexUltraRemoteError}}`;
 let next = text.replace(mutationRe, mutationReplacement);
 
-const queryRe = /queryFn:async\(\)=>\{let ([$A-Za-z_][$\w]*)=([$A-Za-z_][$\w]*)\.parse\(await ([$A-Za-z_][$\w]*)\.get\(([$A-Za-z_][$\w]*)\)\.userSettings\(\)\);return\{lockdownModeEnabled:\1\.settings\?\.lockdown_mode_enabled===!0,ultraEffortEnabled:\1\.settings\?\.model_picker_persists_ultra_effort===!0\}\}/;
+const queryRe = /queryFn:async\(\)=>\{let ([$A-Za-z_][$\w]*)=([$A-Za-z_][$\w]*)\.parse\(await ([$A-Za-z_][$\w]*)\.get\(([$A-Za-z_][$\w]*)\)\.userSettings\(\)\);return\{((?:eligibleAnnouncements:[^,]+,)?)lockdownModeEnabled:\1\.settings\?\.lockdown_mode_enabled===!0,ultraEffortEnabled:\1\.settings\?\.model_picker_persists_ultra_effort===!0\}\}/;
 const queryMatch = next.match(queryRe);
 if (!queryMatch) {
   process.stderr.write('ultra-user-settings-query-target-not-found\n');
   process.exit(2);
 }
-const [, parsed, schema, queryScope, queryClient] = queryMatch;
-const queryReplacement = `queryFn:async()=>{try{let ${parsed}=${schema}.parse(await ${queryScope}.get(${queryClient}).userSettings());return{lockdownModeEnabled:${parsed}.settings?.lockdown_mode_enabled===!0,ultraEffortEnabled:${parsed}.settings?.model_picker_persists_ultra_effort===!0}}catch{return{lockdownModeEnabled:!1,ultraEffortEnabled:await ${readConfig}(${settings}.showUltraInModelPickerSlider).catch(()=>!1)===!0,ultraEffortLocalFallback:!0/*${marker}*/}}}`;
+const [, parsed, schema, queryScope, queryClient, eligiblePrefix] = queryMatch;
+const queryReplacement = `queryFn:async()=>{try{let ${parsed}=${schema}.parse(await ${queryScope}.get(${queryClient}).userSettings());return{${eligiblePrefix}lockdownModeEnabled:${parsed}.settings?.lockdown_mode_enabled===!0,ultraEffortEnabled:${parsed}.settings?.model_picker_persists_ultra_effort===!0}}catch{return{lockdownModeEnabled:!1,ultraEffortEnabled:await ${readConfig}(${settings}.showUltraInModelPickerSlider).catch(()=>!1)===!0,ultraEffortLocalFallback:!0/*${marker}*/}}}`;
 next = next.replace(queryRe, queryReplacement);
 
 const migrationKey = 'queryKey:[`chatgpt-ultra-effort-migration`]';
@@ -1433,6 +1433,15 @@ function Find-PatchTargets {
     }
   }
   if ([string]::IsNullOrWhiteSpace($powerSliderTarget)) {
+    foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter '*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
+      $text = Get-Content -Raw -LiteralPath $candidate
+      if ($text.Contains('ModelPickerPowerSliderImpl')) {
+        $powerSliderTarget = $candidate
+        break
+      }
+    }
+  }
+  if ([string]::IsNullOrWhiteSpace($powerSliderTarget)) {
     Fail 'could not find compact Power slider harbor gate in extracted assets'
   }
   $ultraSliderTarget = Find-UltraSliderTarget $RgPath $assetsDir
@@ -1868,6 +1877,15 @@ function Invoke-PatchAppAsar {
       foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter 'model-picker-power-slider-impl-*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
         $text = Get-Content -Raw -LiteralPath $candidate
         if ($text.Contains('PowerSlider')) {
+          $powerSliderTarget = $candidate
+          break
+        }
+      }
+    }
+    if ([string]::IsNullOrWhiteSpace($powerSliderTarget)) {
+      foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter '*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
+        $text = Get-Content -Raw -LiteralPath $candidate
+        if ($text.Contains('ModelPickerPowerSliderImpl')) {
           $powerSliderTarget = $candidate
           break
         }
@@ -2812,3 +2830,6 @@ try {
     Remove-DirectoryRobust -Path $tempWork -RequiredRoot $workRoot -BestEffort
   }
 }
+
+# Native tools such as robocopy use nonzero success codes. Do not leak one after a successful script run.
+$global:LASTEXITCODE = 0

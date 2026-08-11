@@ -9,6 +9,7 @@ param(
   [switch]$KeepBuild,
   [switch]$SkipMarketplace,
   [switch]$SkipComputerUse,
+  [switch]$VerifyAllBundledPluginsAvailable,
   [switch]$RegisterMarketplaceOnly,
   [switch]$ForceRebuild,
   [string]$OutputRoot,
@@ -259,7 +260,8 @@ function Repair-KnownLocalMarketplaceLayouts {
 function Invoke-ComputerUseInstaller {
   param(
     [string]$Stage,
-    [switch]$VerifyOnly
+    [switch]$VerifyOnly,
+    [switch]$VerifyAllBundledPluginsAvailable
   )
 
   if (-not (Test-Path -LiteralPath $ComputerUseScript)) {
@@ -271,6 +273,9 @@ function Invoke-ComputerUseInstaller {
   if ($VerifyOnly) {
     $args += '-VerifyOnly'
     $mode = 'verify/repair'
+  }
+  if ($VerifyAllBundledPluginsAvailable) {
+    $args += '-VerifyAllBundledPluginsAvailable'
   }
 
   Write-Log "Computer Use ${mode}: $Stage"
@@ -413,9 +418,9 @@ if (-not $SkipMarketplace) {
 
 if (-not $SkipComputerUse) {
   if ($DryRun) {
-    Invoke-ComputerUseInstaller -Stage 'preflight before MSIX dry run' -VerifyOnly
+    Invoke-ComputerUseInstaller -Stage 'preflight before MSIX dry run' -VerifyOnly -VerifyAllBundledPluginsAvailable:$VerifyAllBundledPluginsAvailable
   } else {
-    Invoke-ComputerUseInstaller -Stage 'preflight before MSIX patch'
+    Invoke-ComputerUseInstaller -Stage 'preflight before MSIX patch' -VerifyAllBundledPluginsAvailable:$VerifyAllBundledPluginsAvailable
   }
 }
 
@@ -446,12 +451,12 @@ if ($DryRun) {
   if (-not $SkipSdkCleanup) {
     $patchArgs += '-CleanupWindowsSdkAfterInstall'
   }
-  if (-not $KeepBuild) {
-    $patchArgs += '-CleanupAfter'
-  }
   if (-not $SkipFastVerify) {
     $patchArgs += '-VerifyFastModeRequest'
   }
+}
+if (-not $KeepBuild) {
+  $patchArgs += '-CleanupAfter'
 }
 if (-not [string]::IsNullOrWhiteSpace($OutputRoot)) {
   $patchArgs += '-OutputRoot'
@@ -497,10 +502,10 @@ for ($patchAttempt = 1; $patchAttempt -le $maxPatchAttempts; $patchAttempt++) {
 
   if (-not $SkipComputerUse) {
     if ($DryRun) {
-      Invoke-ComputerUseInstaller -Stage 'post-dry-run final verification' -VerifyOnly
+      Invoke-ComputerUseInstaller -Stage 'post-dry-run final verification' -VerifyOnly -VerifyAllBundledPluginsAvailable:$VerifyAllBundledPluginsAvailable
     } else {
-      Invoke-ComputerUseInstaller -Stage 'post-patch refresh after Codex startup'
-      Invoke-ComputerUseInstaller -Stage 'post-patch final verification' -VerifyOnly
+      Invoke-ComputerUseInstaller -Stage 'post-patch refresh after Codex startup' -VerifyAllBundledPluginsAvailable:$VerifyAllBundledPluginsAvailable
+      Invoke-ComputerUseInstaller -Stage 'post-patch final verification' -VerifyOnly -VerifyAllBundledPluginsAvailable:$VerifyAllBundledPluginsAvailable
     }
   }
 

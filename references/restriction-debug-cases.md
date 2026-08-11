@@ -137,7 +137,7 @@ Checks:
 
 - Run `codex plugin list` before package operations. If `sites@openai-bundled`, `chrome@openai-bundled`, `browser@openai-bundled`, or `computer-use@openai-bundled` are missing, disabled, or blocked by a marketplace snapshot error, treat that as local bundled marketplace evidence first.
 - Run `scripts\install-computer-use-local.ps1 -StrictVerifyOnly` before package operations. A failure on a stale Chrome native messaging manifest, missing `latest` link, missing helper path, missing plugin file, or `@oai/sky` import/runtime path is local repair evidence.
-- Read `[marketplaces.openai-bundled].source` from `config.toml`, then inspect `.agents\plugins\marketplace.json` under that stable root; in current Windows builds it should retain `sites`, `browser`, `chrome`, `computer-use`, and `latex`.
+- Read `[marketplaces.openai-bundled].source` from `config.toml`, then inspect `.agents\plugins\marketplace.json` under that stable root and compare its names with the current package manifest. Descriptor presence means available, not installed.
 - Inspect `plugins\computer-use` under the configured stable marketplace. Do not use the Desktop-owned `.tmp\bundled-marketplaces` copy as the final configured source.
 - Inspect running `extension-host` processes whose paths are under `%USERPROFILE%\.codex\plugins\cache\openai-bundled`.
 - Inspect `%USERPROFILE%\.codex\chrome-native-hosts.json`; remove stale entries whose `extensionHostPath` or `browserClientPath` points to a missing file.
@@ -180,13 +180,14 @@ Get-ChildItem -LiteralPath $root -Recurse -File |
 ```
 
 - Inspect the extracted main bundle or live ASAR for `isAvailable:({features:e})=>e.sites` near the bundled plugin descriptors. That shape means package resources can contain `sites`, but runtime filtering can still remove it when `features.sites` is false.
-- Confirm that the stable root configured under `[marketplaces.openai-bundled]` has at least the five required plugin directories after repair: `sites`, `browser`, `chrome`, `computer-use`, and `latex`.
+- Confirm that every descriptor declared by the current package has a matching plugin directory and identical descriptor version under the stable root, and that the CLI installed-or-available JSON reports that same version. Do not install or enable optional plugins merely to make this check pass; use `-StrictVerifyOnly -VerifyAllBundledPluginsAvailable` for structured availability validation.
+- For Chrome native-host failures, compare the manifest's `allowed_origins` with the top-level `extensionIds` in the current versioned Chrome cache's `scripts\extension-ids.json`, even when the manifest host `path` is already correct. If the side panel says `Codex app-server manifest entry is missing required path nodePath`, require `extension-host-config.json` beside the current `extension-host.exe`; its `codexCliPath` must match the installed package CLI by content, and `nodePath` / `nodeReplPath` must come from the same current `cua_node` runtime. Then inspect both `%LOCALAPPDATA%\OpenAI\Codex\chrome-native-hosts-v2.json` and `%USERPROFILE%\.codex\chrome-native-hosts-v2.json`: each must have a schema-2 entry for the current Chrome plugin version, both current extension IDs, the official per-field NUL-separated SHA-256 identity, installed-package `resourcesPath`, and all required existing runtime/cache paths. Old-only v2 files or a current-looking entry with an incorrectly flattened identity can reproduce this error even when the outer manifest and host config are correct. Normal repair must call the current plugin's official `installManifest.mjs` and atomically synchronize both v2 files; `-StrictVerifyOnly` must reject origin, registry, config-schema, v2-schema, identity, missing-path, stale-runtime, and mutable-cache drift.
 
 Action:
 
 - Use the targeted bundled marketplace patch with `-OnlyBundledMarketplaceCopy` and a non-system `-OutputRoot` when the user is avoiding C: drive pressure.
 - After install and relaunch, run `scripts\install-computer-use-local.ps1 -VerifyOnly` to rebuild the local mirror/cache, then `-StrictVerifyOnly`.
-- If `sites` was already uninstalled, rerun `install-computer-use-local.ps1 -VerifyOnly`; when the installed bundled marketplace provides `sites`, the repair re-enables it and rebuilds its stable cache automatically.
+- If `sites` is available but not installed, `install-computer-use-local.ps1 -VerifyOnly` must leave it uninstalled. If it was already installed, the repair may refresh its stable cache while preserving that state.
 - Verify recent logs show the five-plugin set and no new `not_in_bundled_marketplace_plugin_names` for `sites`.
 - Do not run Phone Remote Control scripts for this class. Do not run a full Fast/browser/Computer Use repatch unless separate logs show a closed Desktop gate such as `reason=statsig-disabled`.
 
@@ -204,18 +205,88 @@ Checks:
 
 - Inspect the installed package with `Get-AppxPackage -Name OpenAI.Codex | Select-Object Version,SignatureKind,InstallLocation`.
 - Check both `app\resources\app.asar` and `app\resources\codex.exe` under the current `InstallLocation`. Do not assume `codex.exe` being a PE file means the ASAR route is gone.
-- Inspect `%USERPROFILE%\.codex\plugins\cache\openai-bundled\computer-use\latest\scripts\computer-use-client.mjs`.
+- Inspect the installed Computer Use descriptor first. If it ships `scripts\computer-use-client.mjs`, inspect the matching cache copy; if it is descriptor-only, inspect the versioned `.codex-plugin\plugin.json` and independent `%LOCALAPPDATA%\OpenAI\Codex\runtimes\cua_node` `@oai/sky` entry instead.
 - Inspect `%LOCALAPPDATA%\OpenAI\Codex\runtimes\cua_node\*\bin\node_modules\@oai\sky\package.json`, especially the `exports` map. Newer runtime packages may export only `"."`, which breaks deep bare imports from plugin scripts.
 - Inspect `%USERPROFILE%\.codex\config.toml` for stale `[mcp_servers.node_repl.env]` entries named `SKY_CUA_NATIVE_PIPE` or `SKY_CUA_NATIVE_PIPE_DIRECTORY`.
 
 Action:
 
 - Run `scripts\install-computer-use-local.ps1 -VerifyOnly` to rebuild the local bundled plugin mirror, stable cache links, CUA runtime overlay, Chrome native host paths, and config cleanup.
-- Run `scripts\install-computer-use-local.ps1 -StrictVerifyOnly` immediately after. Treat `client import ok` and `helper transport ok` as the local repair success signal.
+- Run `scripts\install-computer-use-local.ps1 -StrictVerifyOnly` immediately after. Legacy layouts require `client import ok` and `helper transport ok`; descriptor-only layouts require `runtime import ok` with a real `sky.list_windows` array result.
 - If `-StrictVerifyOnly` fails because a cache link or plugin file is missing, rerun `-VerifyOnly` once, then rerun `-StrictVerifyOnly`.
 - In 26.609-style caches, `browser\latest` or `chrome\latest` may be absent while the versioned cache directory still exists. Do not treat that as a Computer Use failure by itself; require the versioned browser/chrome plugin manifests and only validate a support-plugin `latest` junction when it exists.
 - If verification succeeds but Desktop still reports native pipe unavailable, fully quit and relaunch Codex Desktop, then inspect the newest Desktop log for `computer-use native pipe startup ready`.
 - Only consider a full MSIX repack when Desktop logs or UI evidence show a closed feature gate. Do not patch `resources\codex.exe` or the ASAR just because the immediate failure is an `@oai/sky` package export/import error.
+
+## Bundled Computer Use Skill Calls A Missing Sky Documentation API
+
+Symptoms:
+
+- A new Computer Use task stops at its initialization guidance before it reads or controls a window.
+- The bundled `computer-use` skill tells the agent to call a Sky documentation helper, but the JavaScript call reports that the method is not a function or undefined.
+- The installed descriptor-only plugin has a working `sky.list_windows()` export while its bundled skill names a different, unavailable method.
+
+Checks:
+
+- Import the current `@oai/sky` package from `%LOCALAPPDATA%\OpenAI\Codex\runtimes\cua_node\*\bin\node_modules` and enumerate the actual `sky` methods. Do not infer the API from a cached skill alone.
+- For the documented `@oai/sky` 0.6.2 Window2 profile, the supported read path is `sky.list_windows()` followed by `sky.get_window_state({ window, include_screenshot, include_text })`; `window` is the object returned by `list_windows`, not just its id.
+- Read `dist\project\cua\sky_js\src\targets\windows\internal\computer_use_client_base.d.ts` when the runtime API is uncertain. It is the local contract for `activate_window`, `get_window_state`, and `list_windows` in this profile.
+- Keep this distinct from `node_repl exec context not found`, native-pipe startup, screenshot-helper, or Chrome native-host failures. A stale skill can block an agent before any of those runtime paths are exercised.
+
+Action:
+
+- Run `scripts\install-computer-use-local.ps1 -VerifyOnly`. For the exact recognized `@oai/sky` 0.6.2 type profile, it applies a local skill overlay in the stable marketplace and versioned cache that uses the real Window2 calls. The overlay is not applied to an unknown future profile or a skill that no longer contains the recognized stale prompt.
+- Run `scripts\install-computer-use-local.ps1 -StrictVerifyOnly` afterward. Strict verification permits only this one intentional cache difference from the installed package and requires the current `list_windows`, `get_window_state`, and `activate_window` workflow; a future upstream skill that already has that workflow is accepted without a local marker.
+- Do not edit the protected WindowsApps copy. The next local repair rebuilds the stable cache from the package and reapplies the guarded overlay.
+
+## Computer Use Cross-Call Approval Loses Node REPL Context
+
+Symptoms:
+
+- `sky.list_windows()` succeeds, but a later `sky.get_window_state()` or `sky.activate_window()` call fails with `Error: node_repl exec context not found`.
+- Resetting the JavaScript kernel appears ineffective when the agent again enumerates windows in one `node_repl` call and captures the selected window in a later call.
+- A fresh kernel can enumerate and capture in one combined call, while the same persistent helper fails when capture or app approval moves to the next call.
+- `include_screenshot:false, include_text:true` can fail with the same error, so this is not necessarily image decoding, PNG writing, or the Windows Graphics Capture backend.
+
+Checks:
+
+- Reproduce against a stable, visible, restored window and record its current HWND owner, title, process ID, and non-trivial bounds. Do not use an exited process, a stale handle, or a minimized `160x28` window as the deciding test.
+- Compare a combined `list_windows` plus `get_window_state` call with two separate calls in the same persistent JavaScript kernel. On the affected `@oai/sky 0.6.2` transport, the long-lived helper's stdout listener inherits the first call's `AsyncLocalStorage` store; a later app-approval callback then reaches `nodeRepl.config.createElicitation` with a stale execution ID.
+- Run `scripts\patch-computer-use-node-repl-context.ps1` without `-Install`. The documented source profile is original SHA-256 `6423BA83...702B7C` and patched SHA-256 `3600AC24...5BB60A`. Treat any other hash as unknown even when a nearby source fragment looks similar.
+- Test `nodeRepl.emitImage` independently when useful. A working direct image emission plus text-only Computer Use failure points away from the outer image-return channel.
+- Keep this separate from the Windows 10 `SetIsBorderRequired` / `0x80004002` helper profile, invalid window geometry, a target process that exited, and Chrome native-host state.
+
+Action:
+
+- Run `scripts\install-computer-use-local.ps1 -VerifyOnly`. For the exact known original transport, normal repair installs the hash-guarded source patch and stores the verified original under `.codex\backups\computer-use-node-repl-context`; `-StrictVerifyOnly` remains read-only and rejects the known unpatched state.
+- Reset the current `node_repl` JavaScript kernel after installation so the next `@oai/sky` import loads the patched module. The patch captures `AsyncLocalStorage.snapshot()` for each helper request and restores that request context before running its app-approval callback.
+- Validate in separate calls: enumerate a controlled window, then in at least two later calls activate it and request screenshot plus accessibility state. Require real images with the expected target title/content and normal dimensions; the existence of a PNG or a returned `Window` object is not enough.
+- Re-check the foreground window immediately before capture. The current native helper can return visible pixels from an occluding foreground window when focus drifts, so activate the intended target immediately before the state request and inspect the image content rather than trusting metadata alone.
+- Unknown helper transport hashes remain untouched. Do not copy this source transformation onto another `@oai/sky` build, edit WindowsApps in place, run a full MSIX repack, repair Chrome, or enter the Phone Remote Control workflow unless separate evidence requires it.
+
+## Existing MCP Commands Point At A Retired CUA Node Runtime
+
+Symptoms:
+
+- After a Codex Desktop Store update, one or more already-configured local MCP servers fail to start.
+- The affected `[mcp_servers.<name>].command` points under `%LOCALAPPDATA%\OpenAI\Codex\runtimes\cua_node\<old-runtime-id>\bin\node.exe`.
+- That executable is missing, or its runtime directory belongs to an earlier package while the current user-local CUA runtime uses another versioned directory.
+
+Checks:
+
+- Back up `%USERPROFILE%\.codex\config.toml` before changing any MCP entry, then parse the file as TOML and enumerate only the MCP servers actually configured on the machine. Do not assume a fixed server list or count.
+- Treat only missing commands inside the Codex-managed `%LOCALAPPDATA%\OpenAI\Codex\runtimes\cua_node` tree, or existing commands whose startup failure is reproduced and attributed to a retired Codex-managed runtime, as migration candidates. Leave an older but working runtime unchanged. Do not rewrite commands that use a system, user-managed, or project-managed Node installation.
+- Require the replacement `node.exe` and adjacent `node_repl.exe` to come from the same user-local runtime directory and to match the current installed package files by length and SHA-256. Resolve the final identity of both the expected CUA runtime root and each candidate; the candidate must remain under that resolved root. Reject candidates that land in WindowsApps, `.plugin-appserver`, or an unrelated root, while allowing the whole expected runtime root to be intentionally junctioned to another local drive.
+- Never execute the protected WindowsApps `node.exe` or `node_repl.exe` as a fallback. If no matching user-local runtime exists, launch Codex Desktop once to let it extract the runtime and retry; otherwise stop without changing MCP configuration.
+
+Action:
+
+- Update only an affected, already-configured MCP whose command is missing or whose startup failure is proven to follow the retired Codex-managed runtime. Replace only its `command` value; do not perform a file-wide runtime-ID replacement.
+- Preserve the MCP name, arguments, entry script, environment, working directory, timeouts, enabled state, and credentials. Do not install or enable MCP servers, modify their source trees, or migrate a working MCP merely because a newer CUA runtime exists.
+- Reparse `config.toml`, verify the MCP name set and every non-target field are unchanged, then use a user-accessible local Codex CLI whose content matches the installed package to run `codex mcp list`; never fall back to the protected WindowsApps CLI. Perform a real stdio JSON-RPC `initialize` plus `tools/list` smoke test for each migrated server. `node --version` alone is insufficient.
+- If initialization succeeds but an external backend is unavailable, report that dependency separately rather than calling the MCP fully healthy. If a migrated server fails its smoke test, restore the backup or revert that target mapping.
+
+`install-computer-use-local.ps1` does not automatically rewrite arbitrary `[mcp_servers.*].command` values. Its Chrome and Computer Use inventory supplies the current package-content matching rule, while this targeted MCP procedure adds the final-path containment check. Third-party MCP migration remains a separate configuration repair.
 
 ## Computer Use Screenshot Fails With 0x80004002 On Windows 10
 
@@ -235,7 +306,7 @@ Checks:
 Action:
 
 - Read `references/win10-computer-use-screenshot-backend.md` before writing the helper.
-- For an exact documented original helper hash (`@oai/sky 0.4.20` or `0.5.2`), run the hash-guarded patcher with `-Install`, then rerun `install-computer-use-local.ps1 -VerifyOnly` and `-StrictVerifyOnly`. Desktop `26.707.12708.0` and `26.721.4979.0` are the respective end-to-end validation baselines, not the compatibility boundary.
+- For an exact documented original helper hash (`@oai/sky 0.4.20`, `0.5.2`, or `0.6.6`), run the hash-guarded patcher with `-Install`, then rerun `install-computer-use-local.ps1 -VerifyOnly` and `-StrictVerifyOnly`. Desktop `26.707.12708.0`, `26.721.4979.0`, and `26.803.10989.0` are the respective end-to-end validation baselines, not the compatibility boundary.
 - Validate through the real Computer Use client with a first screenshot, repeated static captures, dynamic captures spaced about two seconds apart, accessibility text, `list_windows`, and post-warm-up resource counts.
 - Use the patcher's `-Rollback` mode to restore the verified original backup.
 - If the helper hash is unknown, stop. Do not reuse offsets, restore an older Codex Desktop package, copy a helper from another version, or edit `C:\Program Files\WindowsApps`.
