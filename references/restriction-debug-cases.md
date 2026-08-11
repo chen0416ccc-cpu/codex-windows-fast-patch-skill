@@ -119,7 +119,7 @@ Checks:
 Action:
 
 - Reapply the MSIX patch when `browser_use_availability_resolved` is still `statsig-disabled`.
-- Reinstall or repair the Chrome plugin/native host when the log is `local-patched` but the browser smoke test cannot reach Chrome.
+- When the log is `local-patched` but browser setup fails before discovery, check the browser-client trusted hash before reinstalling an already healthy extension or native host.
 - Validate with a real browser smoke test, not just plugin-list output. A good minimal test opens a controlled tab such as `https://example.com/`, asks the extension backend for the active tab, confirms the title `Example Domain`, and then closes the temporary tab.
 - Keep the distinction explicit: `local-patched` proves the Desktop gate is open; it does not prove Chrome native messaging or the extension backend is healthy.
 
@@ -128,20 +128,24 @@ Action:
 Symptoms:
 
 - Importing the current bundled `scripts\browser-client.mjs` fails immediately with `Browser use requires privileged node_repl capabilities` before browser discovery, tab listing, or Chrome native-host communication.
-- The active JavaScript runtime exposes ordinary `nodeRepl` fields such as `cwd`, `env`, `requestMeta`, `write`, `setResponseMeta`, and `emitImage`, but `nodeRepl.config` is absent.
+- The model-written JavaScript cell exposes ordinary `nodeRepl` fields such as `cwd`, `env`, `requestMeta`, `write`, `setResponseMeta`, and `emitImage`; that root object intentionally does not expose `nodeRepl.config`.
 - Chrome can still be installed and running while the extension, native-host manifest, registry entry, and app-server paths all pass their official diagnostics.
 
 Checks:
 
-- Inspect `Object.getOwnPropertyNames(globalThis.nodeRepl || {})` and whether `globalThis.nodeRepl?.config` exists. The bundled browser client requires that privileged object before it attempts any browser connection.
+- Do not classify the task as unprivileged from the root cell's `nodeRepl` properties alone. The current Node REPL injects the privileged bridge only into a browser-client module whose SHA-256 matches `NODE_REPL_TRUSTED_BROWSER_CLIENT_SHA256S`.
+- Compare the installed package's `plugins\chrome\scripts\browser-client.mjs` SHA-256 with the active stable marketplace and versioned cache copies. Any byte rewrite changes the hash and makes the browser client run in the ordinary untrusted module context.
+- Confirm the packaged browser-client SHA-256 appears in the current installed `app.asar` trusted browser-client list. In Codex 26.803.10989.0, the packaged hash was `8676FACA...C3B8FC`; a prior local rewrite that replaced `import{env as ...}from"node:process"` with `processShim.env` produced `0E1F364D...6AFF7A0` and caused this exact failure.
 - Run the current Chrome plugin's read-only diagnostics with the matching current CUA Node runtime: `scripts\chrome-is-running.js --browser chrome --check`, `scripts\installed-browsers.js --json`, `scripts\check-extension-installed.js --browser chrome --json`, and `scripts\check-native-host-manifest.js --browser chrome --json`.
 - If the side panel previously reported a missing `nodePath`, separately verify the current `extension-host-config.json` contains existing `codexCliPath`, `nodePath`, and `nodeReplPath` values, and rerun `install-computer-use-local.ps1 -StrictVerifyOnly`.
 - Keep this error distinct from `Chrome browser is unavailable`, a missing or disabled extension, a bad native-host registry path, missing origins, and the side-panel `nodePath` manifest error. A missing privileged task capability occurs before those transports are used.
 
 Action:
 
-- Do not patch `browser-client.mjs`, fabricate `nodeRepl.config`, reinstall an already healthy extension, or claim a page-level Chrome smoke test passed.
-- When all extension/native-host diagnostics pass but the current task lacks `nodeRepl.config`, report the page smoke as unverified in that task. Retry only from a task/runtime that actually exposes privileged browser capabilities; the capability cannot be manufactured by local marketplace or MSIX repair.
+- Do not patch `browser-client.mjs`, fabricate `nodeRepl.config`, or add the modified hash to `app.asar`. Preserve the vendor trust contract instead.
+- Run `install-computer-use-local.ps1 -VerifyOnly`. The repair restores the exact packaged browser-client bytes into the stable marketplace and versioned cache; `-StrictVerifyOnly` requires those hashes to match and requires the packaged hash to exist in the installed `app.asar` trust list.
+- Reset the current Node REPL kernel after repair, import the active cached browser client, require `setupBrowserRuntime()` to succeed, and confirm `agent.browsers.get("chrome")` returns the real Chrome extension backend.
+- Finish with a real controlled page smoke test: open `https://example.com/`, verify the final URL, title `Example Domain`, exactly one `h1`, and heading text `Example Domain`, then close the temporary tab.
 - If the official diagnostics fail, repair the concrete extension/native-host problem instead and rerun the same diagnostics before attempting browser-client setup again.
 
 ## Computer Use Settings Says Plugin Unavailable

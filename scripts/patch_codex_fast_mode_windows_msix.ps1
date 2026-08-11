@@ -2300,38 +2300,6 @@ function Add-LocalMarketplace {
   }
 }
 
-function Test-BrowserClientProcessShimCompatible {
-  param([string]$Content)
-
-  $localProxy = "  const process = processShim;`n  const global = Object.create(globalThis, { process: { value: processShim, enumerable: true } });"
-  if ($Content.Contains($localProxy)) {
-    return $true
-  }
-
-  foreach ($legacyBinding in @(
-    'globalThis.process = processShim;',
-    'globalThis.global.process = processShim;',
-    'const process = processShim;'
-  )) {
-    if ($Content.Contains($legacyBinding)) {
-      return $false
-    }
-  }
-
-  foreach ($directShimMarker in @(
-    'const processShim = {',
-    'processShim.on("beforeExit"',
-    'processShim.memoryUsage().rss',
-    'typeof processShim.versions.icu'
-  )) {
-    if (-not $Content.Contains($directShimMarker)) {
-      return $false
-    }
-  }
-
-  return $true
-}
-
 function Patch-ChromePluginWindowsRegistryParsing {
   param([string]$WorkApp)
 
@@ -2371,24 +2339,6 @@ function Patch-ChromePluginWindowsRegistryParsing {
         $changed = $true
       } else {
         Write-Log "warning: Chrome native-host registry parser anchor not found: $nativeHostPath"
-      }
-    }
-  }
-
-  $browserClientPath = Join-Path $chromePluginRoot 'scripts\browser-client.mjs'
-  if (Test-Path -LiteralPath $browserClientPath -PathType Leaf) {
-    $browserClientContent = [System.IO.File]::ReadAllText($browserClientPath, [System.Text.UTF8Encoding]::new($false))
-    $browserClientNew = "  const process = processShim;`n  const global = Object.create(globalThis, { process: { value: processShim, enumerable: true } });"
-    if (-not (Test-BrowserClientProcessShimCompatible $browserClientContent)) {
-      $browserClientOld = "  globalThis.process = processShim;`n  globalThis.global = globalThis.global ?? globalThis;`n  globalThis.global.process = processShim;"
-      $browserClientIntermediate = "  const process = processShim;`n  const global = globalThis;"
-      $browserClientIntermediate2 = "  const process = processShim;`n  const global = Object.assign(Object.create(globalThis), { process: processShim });"
-      $browserClientAnchor = if ($browserClientContent.Contains($browserClientOld)) { $browserClientOld } elseif ($browserClientContent.Contains($browserClientIntermediate)) { $browserClientIntermediate } elseif ($browserClientContent.Contains($browserClientIntermediate2)) { $browserClientIntermediate2 } else { $null }
-      if ($null -ne $browserClientAnchor) {
-        [System.IO.File]::WriteAllText($browserClientPath, $browserClientContent.Replace($browserClientAnchor, $browserClientNew), [System.Text.UTF8Encoding]::new($false))
-        $changed = $true
-      } else {
-        Fail "Chrome browser client process shim shape is unsupported: $browserClientPath"
       }
     }
   }

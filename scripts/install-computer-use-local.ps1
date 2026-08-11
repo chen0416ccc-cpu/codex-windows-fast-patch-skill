@@ -2619,44 +2619,103 @@ function Sync-BundledMarketplaceFromInstalledApp {
   Copy-DirectoryDataOnly $SourceRoot $MarketplaceRoot
 }
 
-function Test-BrowserClientProcessShimCompatible {
-  param([string]$Content)
+function Test-FileContainsAsciiText {
+  param(
+    [string]$Path,
+    [string]$Needle
+  )
 
-  if ($Content.Contains('node:process')) {
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+    throw "file not found for ASCII search: $Path"
+  }
+  if ([string]::IsNullOrEmpty($Needle)) {
     return $false
   }
 
-  $localProxy = "  const process = processShim;`n  const global = Object.create(globalThis, { process: { value: processShim, enumerable: true } });"
-  if ($Content.Contains($localProxy)) {
-    return $true
-  }
-
-  foreach ($legacyBinding in @(
-    'globalThis.process = processShim;',
-    'globalThis.global.process = processShim;',
-    'const process = processShim;'
-  )) {
-    if ($Content.Contains($legacyBinding)) {
-      return $false
+  $encoding = [System.Text.Encoding]::ASCII
+  $buffer = New-Object byte[] (4 * 1024 * 1024)
+  $carry = ''
+  $stream = [System.IO.File]::Open(
+    $Path,
+    [System.IO.FileMode]::Open,
+    [System.IO.FileAccess]::Read,
+    [System.IO.FileShare]::ReadWrite
+  )
+  try {
+    while (($read = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+      $text = $carry + $encoding.GetString($buffer, 0, $read)
+      if ($text.IndexOf($Needle, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        return $true
+      }
+      $carryLength = [Math]::Min($Needle.Length - 1, $text.Length)
+      $carry = if ($carryLength -gt 0) { $text.Substring($text.Length - $carryLength) } else { '' }
     }
+  } finally {
+    $stream.Dispose()
+  }
+  return $false
+}
+
+function Get-InstalledChromeBrowserClientTrust {
+  param([string]$InstalledMarketplaceRoot)
+
+  $sourcePath = Join-Path $InstalledMarketplaceRoot 'plugins\chrome\scripts\browser-client.mjs'
+  if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
+    throw "installed Chrome browser client is missing: $sourcePath"
   }
 
-  foreach ($directShimMarker in @(
-    'const processShim = {',
-    'processShim.on("beforeExit"',
-    'processShim.memoryUsage().rss',
-    'typeof processShim.versions.icu'
-  )) {
-    if (-not $Content.Contains($directShimMarker)) {
-      return $false
-    }
+  $sha256 = (Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash.ToLowerInvariant()
+  $resourcesRoot = Split-Path -Parent (Split-Path -Parent $InstalledMarketplaceRoot)
+  $appAsarPath = Join-Path $resourcesRoot 'app.asar'
+  if (-not (Test-FileContainsAsciiText $appAsarPath $sha256)) {
+    throw "installed app.asar does not trust the packaged Chrome browser client hash: $sha256"
   }
 
-  return $true
+  return [pscustomobject]@{
+    SourcePath = $sourcePath
+    Sha256 = $sha256
+    AppAsarPath = $appAsarPath
+  }
+}
+
+function Assert-ChromeBrowserClientTrustedBytes {
+  param(
+    [string]$BrowserClientPath,
+    [pscustomobject]$TrustedBrowserClient
+  )
+
+  if (-not (Test-Path -LiteralPath $BrowserClientPath -PathType Leaf)) {
+    throw "Chrome browser client is missing: $BrowserClientPath"
+  }
+  $actualHash = (Get-FileHash -LiteralPath $BrowserClientPath -Algorithm SHA256).Hash.ToLowerInvariant()
+  if ($actualHash -ne $TrustedBrowserClient.Sha256) {
+    throw "Chrome browser client differs from the installed trusted bytes: $BrowserClientPath / expected=$($TrustedBrowserClient.Sha256) actual=$actualHash"
+  }
+}
+
+function Restore-ChromeBrowserClientTrustedBytes {
+  param(
+    [string]$ChromePluginRoot,
+    [pscustomobject]$TrustedBrowserClient
+  )
+
+  $browserClientPath = Join-Path $ChromePluginRoot 'scripts\browser-client.mjs'
+  if (-not (Test-Path -LiteralPath $browserClientPath -PathType Leaf)) {
+    throw "missing Chrome browser client: $browserClientPath"
+  }
+  $actualHash = (Get-FileHash -LiteralPath $browserClientPath -Algorithm SHA256).Hash.ToLowerInvariant()
+  if ($actualHash -ne $TrustedBrowserClient.Sha256) {
+    [System.IO.File]::Copy($TrustedBrowserClient.SourcePath, $browserClientPath, $true)
+    Write-Log "restored trusted Chrome browser client bytes: $browserClientPath"
+  }
+  Assert-ChromeBrowserClientTrustedBytes $browserClientPath $TrustedBrowserClient
 }
 
 function Patch-ChromeWindowsRegistryParsing {
-  param([string]$ChromePluginRoot)
+  param(
+    [string]$ChromePluginRoot,
+    [pscustomobject]$TrustedBrowserClient
+  )
 
   $genericOld = 'if (match && match[1] === label) return stripRegistryString(match[2]);'
   $genericNew = 'if (match && (valueName == null || match[1] === label)) return stripRegistryString(match[2]);'
@@ -2689,42 +2748,8 @@ function Patch-ChromeWindowsRegistryParsing {
     Write-Utf8NoBom $nativeHostPath ($nativeContent.Replace($nativeOld, $nativeNew))
   }
 
-  $browserClientPath = Join-Path $ChromePluginRoot 'scripts\browser-client.mjs'
-  if (-not (Test-Path -LiteralPath $browserClientPath -PathType Leaf)) {
-    throw "missing Chrome browser client: $browserClientPath"
-  }
-  $browserClientContent = [System.IO.File]::ReadAllText($browserClientPath, [System.Text.UTF8Encoding]::new($false))
-  $browserClientNew = "  const process = processShim;`n  const global = Object.create(globalThis, { process: { value: processShim, enumerable: true } });"
-  $browserClientNext = $browserClientContent
-
-  $nodeProcessEnvPattern = 'import\{env as (?<name>[$A-Za-z_][$\w]*)\}from"node:process";'
-  $nodeProcessEnvMatch = [regex]::Match($browserClientNext, $nodeProcessEnvPattern)
-  if ($nodeProcessEnvMatch.Success) {
-    $envBinding = $nodeProcessEnvMatch.Groups['name'].Value
-    $browserClientNext = $browserClientNext.Remove($nodeProcessEnvMatch.Index, $nodeProcessEnvMatch.Length).Insert(
-      $nodeProcessEnvMatch.Index,
-      "const $envBinding=processShim.env;"
-    )
-  }
-
-  if (-not (Test-BrowserClientProcessShimCompatible $browserClientNext) -and -not $browserClientNext.Contains($browserClientNew)) {
-    $browserClientOld = "  globalThis.process = processShim;`n  globalThis.global = globalThis.global ?? globalThis;`n  globalThis.global.process = processShim;"
-    $browserClientIntermediate = "  const process = processShim;`n  const global = globalThis;"
-    $browserClientIntermediate2 = "  const process = processShim;`n  const global = Object.assign(Object.create(globalThis), { process: processShim });"
-    $browserClientAnchor = if ($browserClientNext.Contains($browserClientOld)) { $browserClientOld } elseif ($browserClientNext.Contains($browserClientIntermediate)) { $browserClientIntermediate } elseif ($browserClientNext.Contains($browserClientIntermediate2)) { $browserClientIntermediate2 } else { $null }
-    if ($null -eq $browserClientAnchor) {
-      throw "Chrome browser client process shim anchor not found: $browserClientPath"
-    }
-    $browserClientNext = $browserClientNext.Replace($browserClientAnchor, $browserClientNew)
-  }
-  if (-not (Test-BrowserClientProcessShimCompatible $browserClientNext)) {
-    throw "Chrome browser client has an unsupported process dependency: $browserClientPath"
-  }
-  if ($browserClientNext -cne $browserClientContent) {
-    Write-Utf8NoBom $browserClientPath $browserClientNext
-  }
-
-  Write-Log 'patched Chrome registry parsing and browser runtime process shim compatibility'
+  Restore-ChromeBrowserClientTrustedBytes $ChromePluginRoot $TrustedBrowserClient
+  Write-Log 'patched Chrome registry parsing and preserved trusted browser client bytes'
 }
 
 function Test-BundledMarketplaceMirror {
@@ -3175,20 +3200,15 @@ function Test-OfficialComputerUseCache {
   Test-ComputerUseSkillDocumentation (Join-Path $cacheVersionRoot 'skills\computer-use\SKILL.md') $runtimeSkyRoot
   $installedChromeRoot = Join-Path $InstalledMarketplaceRoot 'plugins\chrome'
   $chromeVersion = Get-PluginVersion $installedChromeRoot
+  $trustedChromeBrowserClient = Get-InstalledChromeBrowserClientTrust $InstalledMarketplaceRoot
   $chromeBrowserClientPaths = @(
     (Join-Path $stableMarketplaceRoot 'plugins\chrome\scripts\browser-client.mjs'),
     (Join-Path $codexHomeResolved "plugins\cache\openai-bundled\chrome\$chromeVersion\scripts\browser-client.mjs")
   )
   foreach ($browserClientPath in $chromeBrowserClientPaths) {
-    if (-not (Test-Path -LiteralPath $browserClientPath -PathType Leaf)) {
-      throw "Chrome browser client is missing: $browserClientPath"
-    }
-    $browserClientContent = [System.IO.File]::ReadAllText($browserClientPath, [System.Text.UTF8Encoding]::new($false))
-    if (-not (Test-BrowserClientProcessShimCompatible $browserClientContent)) {
-      throw "Chrome browser client process shim compatibility is missing or unrecognized: $browserClientPath"
-    }
+    Assert-ChromeBrowserClientTrustedBytes $browserClientPath $trustedChromeBrowserClient
   }
-  Write-Log "official lightweight cache verification ok: computer-use@$version / runtime=$runtimeSkyRoot"
+  Write-Log "official lightweight cache verification ok: computer-use@$version / runtime=$runtimeSkyRoot / chrome-browser-client=$($trustedChromeBrowserClient.Sha256)"
 }
 
 function Install-ComputerUse {
@@ -3205,9 +3225,10 @@ function Install-ComputerUse {
 
   Remove-StaleChromeNativeHostEntries
   $installedMarketplaceRoot = Get-InstalledBundledMarketplaceRoot
+  $trustedChromeBrowserClient = Get-InstalledChromeBrowserClientTrust $installedMarketplaceRoot
   Sync-BundledMarketplaceFromInstalledApp $marketplaceRoot $installedMarketplaceRoot
   Repair-ComputerUseNodeReplContext
-  Patch-ChromeWindowsRegistryParsing (Join-Path $marketplaceRoot 'plugins\chrome')
+  Patch-ChromeWindowsRegistryParsing (Join-Path $marketplaceRoot 'plugins\chrome') $trustedChromeBrowserClient
   Write-PluginTree $pluginSourceRoot
   Update-BundledMarketplaceManifest $marketplaceRoot
   Update-CodexConfig $marketplaceRoot
@@ -3221,7 +3242,7 @@ function Install-ComputerUse {
     (Join-Path (Split-Path -Parent $marketplaceRoot) 'openai-bundled-cache\chrome')
   )
   $chromeCacheRoot = Sync-OpenAiBundledPluginCache $installedMarketplaceRoot 'chrome'
-  Patch-ChromeWindowsRegistryParsing $chromeCacheRoot
+  Patch-ChromeWindowsRegistryParsing $chromeCacheRoot $trustedChromeBrowserClient
   $sitesInstalled = Test-BundledMarketplacePluginInstalledWithCodexCli 'sites'
   if ($sitesInstalled -and (Test-BundledMarketplacePluginAvailable $installedMarketplaceRoot 'sites')) {
     $sitesCacheRoot = Sync-OpenAiBundledPluginCache $installedMarketplaceRoot 'sites'
@@ -3343,11 +3364,9 @@ function Test-ComputerUse {
     }
   }
 
+  $trustedChromeBrowserClient = Get-InstalledChromeBrowserClientTrust $installedMarketplaceRoot
   foreach ($browserClientPath in @($marketplaceBrowserClientPath, $cachedBrowserClientPath)) {
-    $browserClientContent = [System.IO.File]::ReadAllText($browserClientPath, [System.Text.UTF8Encoding]::new($false))
-    if (-not (Test-BrowserClientProcessShimCompatible $browserClientContent)) {
-      throw "Chrome browser client process shim compatibility is missing or unrecognized: $browserClientPath"
-    }
+    Assert-ChromeBrowserClientTrustedBytes $browserClientPath $trustedChromeBrowserClient
   }
 
   $cachedChromeScriptRoot = Join-Path $chromeCacheVersionRoot 'scripts'
