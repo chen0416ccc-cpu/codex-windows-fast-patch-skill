@@ -123,6 +123,27 @@ Action:
 - Validate with a real browser smoke test, not just plugin-list output. A good minimal test opens a controlled tab such as `https://example.com/`, asks the extension backend for the active tab, confirms the title `Example Domain`, and then closes the temporary tab.
 - Keep the distinction explicit: `local-patched` proves the Desktop gate is open; it does not prove Chrome native messaging or the extension backend is healthy.
 
+## Browser Client Lacks Privileged Node REPL Capabilities
+
+Symptoms:
+
+- Importing the current bundled `scripts\browser-client.mjs` fails immediately with `Browser use requires privileged node_repl capabilities` before browser discovery, tab listing, or Chrome native-host communication.
+- The active JavaScript runtime exposes ordinary `nodeRepl` fields such as `cwd`, `env`, `requestMeta`, `write`, `setResponseMeta`, and `emitImage`, but `nodeRepl.config` is absent.
+- Chrome can still be installed and running while the extension, native-host manifest, registry entry, and app-server paths all pass their official diagnostics.
+
+Checks:
+
+- Inspect `Object.getOwnPropertyNames(globalThis.nodeRepl || {})` and whether `globalThis.nodeRepl?.config` exists. The bundled browser client requires that privileged object before it attempts any browser connection.
+- Run the current Chrome plugin's read-only diagnostics with the matching current CUA Node runtime: `scripts\chrome-is-running.js --browser chrome --check`, `scripts\installed-browsers.js --json`, `scripts\check-extension-installed.js --browser chrome --json`, and `scripts\check-native-host-manifest.js --browser chrome --json`.
+- If the side panel previously reported a missing `nodePath`, separately verify the current `extension-host-config.json` contains existing `codexCliPath`, `nodePath`, and `nodeReplPath` values, and rerun `install-computer-use-local.ps1 -StrictVerifyOnly`.
+- Keep this error distinct from `Chrome browser is unavailable`, a missing or disabled extension, a bad native-host registry path, missing origins, and the side-panel `nodePath` manifest error. A missing privileged task capability occurs before those transports are used.
+
+Action:
+
+- Do not patch `browser-client.mjs`, fabricate `nodeRepl.config`, reinstall an already healthy extension, or claim a page-level Chrome smoke test passed.
+- When all extension/native-host diagnostics pass but the current task lacks `nodeRepl.config`, report the page smoke as unverified in that task. Retry only from a task/runtime that actually exposes privileged browser capabilities; the capability cannot be manufactured by local marketplace or MSIX repair.
+- If the official diagnostics fail, repair the concrete extension/native-host problem instead and rerun the same diagnostics before attempting browser-client setup again.
+
 ## Computer Use Settings Says Plugin Unavailable
 
 Symptoms:
