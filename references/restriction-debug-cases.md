@@ -391,6 +391,32 @@ Action:
 - Keep the copy list and the tracked top-level file set aligned, and cover it with `scripts/test-skill-self-update-file-coverage.ps1`.
 - Write `.skill-version` as UTF-8 without BOM, and tolerate a BOM left by an older install when comparing against remote HEAD.
 
+## Removed Plugin Leaves Orphaned Config Tables
+
+Symptoms:
+
+- `config.toml` still contains an exact `[plugins."plugin@marketplace"]` table after that plugin or personal marketplace was removed.
+- Matching `[hooks.state."plugin@marketplace:..."]` tables remain, even though `codex plugin list` no longer exposes the plugin.
+- The stale entry causes warnings or confuses later plugin reconciliation.
+
+Checks:
+
+- Identify one exact `plugin@marketplace` ID. Do not scan and delete every unknown entry.
+- Run `scripts\cleanup-orphaned-plugin-config.ps1 -PluginId "<plugin@marketplace>"` without `-Install` first.
+- The helper requires the exact plugin table to exist, the corresponding marketplace to be absent from `config.toml`, and no matching plugin directory or descriptor under bounded `.codex\marketplaces`, `.codex\plugins\cache`, or `.codex\.tmp\bundled-marketplaces` locations.
+- An unreadable marketplace manifest is evidence to stop, not permission to delete config.
+
+Action:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\cleanup-orphaned-plugin-config.ps1" -PluginId "obsolete-helper@personal"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\cleanup-orphaned-plugin-config.ps1" -PluginId "obsolete-helper@personal" -Install
+```
+
+- The write path backs up `config.toml` under `.codex\backups\config`, verifies the backup SHA-256, removes only the exact plugin table and hook tables prefixed by that exact plugin ID, and removes `[hooks.state]` only when it is empty.
+- It preserves unrelated tables, similar plugin IDs, existing line endings, and UTF-8 without BOM. When Python is available, it validates the final TOML with `tomllib`.
+- If the marketplace is still configured or bounded disk evidence remains, repair or uninstall the actual marketplace/plugin first. Do not bypass the refusal with a broad text replacement.
+
 ## Manual ASAR Extraction Leaves Temp Directory
 
 Symptoms:

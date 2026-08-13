@@ -19,6 +19,7 @@ Use this skill when Windows Codex Desktop updates cause issues like these:
 - Repair Goal entries, settings entries, or feature buttons that disappear or become disabled after updates.
 - Restore local conversations in the official sidebar after switching `model_provider` / API config when the local history data still exists; if a restored conversation is visible but cannot continue because its working directory is missing, recreate the missing empty directory from the rollout `cwd`.
 - Repair broken local plugin marketplace config or `codex plugin list` errors.
+- Safely remove exact stale plugin and hook-state tables left in `config.toml` after a marketplace/plugin is removed. Classification is read-only by default, and writes require an absent marketplace plus no plugin evidence in bounded cache locations.
 - Optionally back up and restore local Codex config, skills, marketplaces, and related state.
 - Automatically update this skill to the latest version before each repair attempt.
 
@@ -45,6 +46,7 @@ Do not run it on macOS. A macOS version needs a separate workflow for the Codex 
 - `scripts/patch-computer-use-node-repl-context.ps1`: Exact-hash read-only classification, installation, full-hash verification, and rollback for the supported `@oai/sky 0.6.2` helper-transport cross-call app-approval context fix.
 - `scripts/patch-computer-use-helper-win10.ps1`: Read-only classification, exact-hash installation, and rollback for the supported `@oai/sky 0.4.20`, `0.5.2`, and `0.6.6` helper hashes; `26.707.12708.0`, `26.721.4979.0`, and `26.803.10989.0` are their end-to-end validation baselines, not version gates. The `0.6.6` baseline includes a cold capture, two repeated-static batches, three changing dynamic frames, and post-warm-up resource-stability checks.
 - `scripts/sync-codex-provider-history.ps1`: Sync local conversation provider metadata so conversations hidden after a `model_provider` switch reappear in the official list; `-RepairMissingCwdDirs` can also repair restored conversations that cannot continue because the recorded `cwd` directory is missing. It does not modify `config.toml` or workspace/project roots by default.
+- `scripts/cleanup-orphaned-plugin-config.ps1`: Classifies and removes orphaned `config.toml` plugin/hook tables for one explicit `plugin@marketplace` ID. It is read-only by default, checks the marketplace and bounded disk locations, and makes a SHA-256-verified backup before writing.
 - `scripts/install-model-instructions-file.ps1`: Optional installer for the bundled `model_instructions_file` prompt asset.
 - `scripts/manage-codex-backups.ps1`: Backup manager for local Codex config, MCP, skills, and marketplaces.
 - `scripts/update-skill-from-github.ps1`: Best-effort self-update script that syncs the latest GitHub version before use.
@@ -98,6 +100,7 @@ The current Codex Desktop session can usually repair these without another agent
 - Chrome / browser_use helper paths, plugin cache, or native-host files are broken.
 - Plugin marketplace config is broken, or `codex plugin list` fails because of marketplace manifests.
 - A local marketplace is missing `.agents\plugins\marketplace.json`.
+- A removed personal plugin still has `[plugins."...@marketplace"]` or matching `[hooks.state."...:..."]` tables, while that marketplace is no longer configured and bounded cache locations contain no plugin directory or descriptor. Run read-only classification first, then add `-Install` explicitly.
 - Old local conversations disappear after switching `model_provider` / API config, but `sessions`, `archived_sessions`, or `state_5.sqlite` still contain the data. Use provider history sync first; this does not require an MSIX reinstall.
 - Old conversations are visible again, but continuing one reports a missing current working directory or `invalid codex request`. First run the provider history sync dry-run and inspect `missing rollout cwd dirs before`, then use `-RepairMissingCwdDirs` to recreate the original missing directories recorded in rollout metadata.
 - You only need backup/restore work or the optional custom model instructions setup.
@@ -131,6 +134,18 @@ Example request: `Use the codex-windows-fast-patch skill to inspect and repair C
 
 Phone remote-control example request: `Use the codex-windows-fast-patch skill to repair Windows Codex Desktop phone remote control while preserving my third-party API provider and current conversation history. If large build artifacts are needed, keep them on D:\ or another non-system drive.`
 
+Classify an orphaned plugin config in read-only mode first:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\cleanup-orphaned-plugin-config.ps1" -PluginId "obsolete-helper@personal"
+```
+
+Only after it reports that the marketplace is not configured and bounded disk locations have no plugin evidence, run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\cleanup-orphaned-plugin-config.ps1" -PluginId "obsolete-helper@personal" -Install
+```
+
 Expected verification after a full run:
 
 - The patch log includes `fast-mode UI patch result`, `locale i18n patch result`, and `browser-use gate patch result`, each as `patched` or `already-patched`.
@@ -143,6 +158,7 @@ Expected verification after a full run:
 - If Chrome control is required, `codex plugin list` shows `chrome@openai-bundled` as `installed, enabled`; the native messaging host manifest path and registry value point to the current stable cache; `allowed_origins` exactly matches the top-level IDs in the cache's `scripts\extension-ids.json`; and `extension-host-config.json` contains a user-local `codex.exe` matching the current package plus `node.exe` / `node_repl.exe` from the same current runtime. Both `%LOCALAPPDATA%\OpenAI\Codex\chrome-native-hosts-v2.json` and `%USERPROFILE%\.codex\chrome-native-hosts-v2.json` must also contain the current version, official identity hashes, and existing cache/runtime paths. The stable marketplace and versioned-cache `browser-client.mjs` files must exactly match the installed package SHA-256, that hash must appear in the current `app.asar` trust list, `setupBrowserRuntime()` must succeed, and `agent.browsers.get("chrome")` must return the real Chrome extension backend. A smoke test can then read a controlled tab title such as `Example Domain`. When Chrome is not running, launch it automatically without requesting additional user authorization, then validate `https://example.com/`, its `Example Domain` title, and its single matching `h1`.
 - If phone remote control is repaired, Connections shows the phone setup path, QR appears, phone scan does not report an expired Codex environment, WindowsApps PID/path-correlated native logs show `remote_control_websocket_proxy_connected` and `Connected` without repeated `os error 10060`, and phone-created turns reach Desktop. Some native versions handle Ping/Pong silently, so frame log text is not the sole success criterion.
 - If conversation visibility is repaired, `sync-codex-provider-history.ps1` shows App/legacy SQLite stores and readable rollouts aligned to the current `model_provider`, logs `config.toml sha256 unchanged`, official Desktop conversations reappear, and no empty project groups are introduced. If repairing visible-but-uncontinuable conversations, `missing rollout cwd dirs after` is zero or contains only reviewed skipped paths, and the affected conversation can send a new message after Desktop restart.
+- For orphaned plugin config cleanup, the log first reports read-only classification or an explicit refusal reason. A successful `-Install` run reports the SHA-256-verified backup, valid TOML, no UTF-8 BOM, and absence of exact plugin/hook tables while preserving similar IDs and unrelated tables.
 
 ## Backup Management
 
