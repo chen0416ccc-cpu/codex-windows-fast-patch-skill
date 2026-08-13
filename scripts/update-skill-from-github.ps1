@@ -11,9 +11,24 @@ param(
 $ErrorActionPreference = 'Stop'
 $LogPrefix = '[codex-skill-self-update]'
 
+# Every tracked top-level file the installed skill needs. SKILL.md alone is not
+# enough: the README acceptance checklists are what a run is verified against,
+# so leaving them behind makes .skill-version advertise a commit whose
+# acceptance criteria were never installed.
+$TopLevelSyncedFiles = @('SKILL.md', 'README.md', 'README.en.md', 'AGENTS.md', 'SECURITY.md')
+
 function Write-Log {
   param([string]$Message)
   Write-Host "$LogPrefix $Message"
+}
+
+function Write-Utf8NoBom {
+  param(
+    [string]$Path,
+    [string]$Content
+  )
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
+  [System.IO.File]::WriteAllText($Path, $Content, [System.Text.UTF8Encoding]::new($false))
 }
 
 function Resolve-OrCreateDirectory {
@@ -111,7 +126,8 @@ try {
   $remoteSha = Get-RemoteHeadSha -Owner $Owner -Repo $Repo -Branch $Branch
   $localSha = ''
   if (Test-Path -LiteralPath $versionPath -PathType Leaf) {
-    $localSha = (Get-Content -LiteralPath $versionPath -Raw).Trim()
+    # Older installs wrote this marker with a UTF-8 BOM, which Trim() keeps.
+    $localSha = (Get-Content -LiteralPath $versionPath -Raw).Trim().TrimStart([char]0xFEFF)
   } elseif (Test-Path -LiteralPath (Join-Path $skillRoot '.git') -PathType Container) {
     $git = Get-Command git.exe -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($git) {
@@ -152,7 +168,7 @@ try {
       throw 'downloaded archive is missing SKILL.md'
     }
 
-    foreach ($fileName in @('SKILL.md')) {
+    foreach ($fileName in $TopLevelSyncedFiles) {
       Copy-AllowedFile -Source (Join-Path $sourceRoot.FullName $fileName) -Destination (Join-Path $skillRoot $fileName) -AllowedRoot $skillRoot
     }
 
@@ -160,7 +176,7 @@ try {
       Sync-Directory -Source (Join-Path $sourceRoot.FullName $dirName) -Destination (Join-Path $skillRoot $dirName) -AllowedRoot $skillRoot
     }
 
-    Set-Content -LiteralPath $versionPath -Value ($remoteSha + "`n") -Encoding UTF8
+    Write-Utf8NoBom -Path $versionPath -Content ($remoteSha + "`n")
     Write-Log "updated skill from GitHub: $remoteSha"
     Write-Log 'reload SKILL.md before continuing'
   } finally {
