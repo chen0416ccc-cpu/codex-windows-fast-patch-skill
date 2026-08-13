@@ -372,6 +372,25 @@ Action:
 - Continue with the currently installed local skill.
 - Mention that self-update was skipped, then rely on local scripts and local evidence.
 
+## Self-Update Reports A New Commit But Acceptance Criteria Are Stale
+
+Symptoms:
+
+- Self-update logs `updated skill from GitHub: <sha>` and `.skill-version` holds that commit, but the installed `README.md` / `README.en.md` still describe the previous acceptance criteria.
+- A verification step that the upstream commit added is missing from the installed checklist, so a real defect is never checked and the run is reported as complete.
+
+Checks:
+
+- Compare the installed top-level files with the commit in `.skill-version`, not just `SKILL.md` and `scripts`.
+- Confirm the self-update copy list covers every tracked top-level file. Only `agents`, `scripts`, `references`, and `assets` are mirrored as directories; top-level files are copied one by one from an explicit list.
+- Read `.skill-version` as bytes. A UTF-8 BOM makes non-PowerShell tooling compare the marker as unequal even when the skill is current.
+
+Action:
+
+- Sync the missing top-level files from the commit recorded in `.skill-version` before trusting any acceptance checklist.
+- Keep the copy list and the tracked top-level file set aligned, and cover it with `scripts/test-skill-self-update-file-coverage.ps1`.
+- Write `.skill-version` as UTF-8 without BOM, and tolerate a BOM left by an older install when comparing against remote HEAD.
+
 ## Manual ASAR Extraction Leaves Temp Directory
 
 Symptoms:
