@@ -119,9 +119,34 @@ Checks:
 Action:
 
 - Reapply the MSIX patch when `browser_use_availability_resolved` is still `statsig-disabled`.
-- Reinstall or repair the Chrome plugin/native host when the log is `local-patched` but the browser smoke test cannot reach Chrome.
+- When the log is `local-patched` but browser setup fails before discovery, check the browser-client trusted hash before reinstalling an already healthy extension or native host.
 - Validate with a real browser smoke test, not just plugin-list output. A good minimal test opens a controlled tab such as `https://example.com/`, asks the extension backend for the active tab, confirms the title `Example Domain`, and then closes the temporary tab.
 - Keep the distinction explicit: `local-patched` proves the Desktop gate is open; it does not prove Chrome native messaging or the extension backend is healthy.
+
+## Browser Client Lacks Privileged Node REPL Capabilities
+
+Symptoms:
+
+- Importing the current bundled `scripts\browser-client.mjs` fails immediately with `Browser use requires privileged node_repl capabilities` before browser discovery, tab listing, or Chrome native-host communication.
+- The model-written JavaScript cell exposes ordinary `nodeRepl` fields such as `cwd`, `env`, `requestMeta`, `write`, `setResponseMeta`, and `emitImage`; that root object intentionally does not expose `nodeRepl.config`.
+- Chrome can still be installed and running while the extension, native-host manifest, registry entry, and app-server paths all pass their official diagnostics.
+
+Checks:
+
+- Do not classify the task as unprivileged from the root cell's `nodeRepl` properties alone. The current Node REPL injects the privileged bridge only into a browser-client module whose SHA-256 matches `NODE_REPL_TRUSTED_BROWSER_CLIENT_SHA256S`.
+- Compare the installed package's `plugins\chrome\scripts\browser-client.mjs` SHA-256 with the active stable marketplace and versioned cache copies. Any byte rewrite changes the hash and makes the browser client run in the ordinary untrusted module context.
+- Confirm the packaged browser-client SHA-256 appears in the current installed `app.asar` trusted browser-client list. In Codex 26.803.10989.0, the packaged hash was `8676FACA...C3B8FC`; a prior local rewrite that replaced `import{env as ...}from"node:process"` with `processShim.env` produced `0E1F364D...6AFF7A0` and caused this exact failure.
+- Run the current Chrome plugin's read-only diagnostics with the matching current CUA Node runtime: `scripts\chrome-is-running.js --browser chrome --check`, `scripts\installed-browsers.js --json`, `scripts\check-extension-installed.js --browser chrome --json`, and `scripts\check-native-host-manifest.js --browser chrome --json`.
+- If the side panel previously reported a missing `nodePath`, separately verify the current `extension-host-config.json` contains existing `codexCliPath`, `nodePath`, and `nodeReplPath` values, and rerun `install-computer-use-local.ps1 -StrictVerifyOnly`.
+- Keep this error distinct from `Chrome browser is unavailable`, a missing or disabled extension, a bad native-host registry path, missing origins, and the side-panel `nodePath` manifest error. A missing privileged task capability occurs before those transports are used.
+
+Action:
+
+- Do not patch `browser-client.mjs`, fabricate `nodeRepl.config`, or add the modified hash to `app.asar`. Preserve the vendor trust contract instead.
+- Run `install-computer-use-local.ps1 -VerifyOnly`. The repair restores the exact packaged browser-client bytes into the stable marketplace and versioned cache; `-StrictVerifyOnly` requires those hashes to match and requires the packaged hash to exist in the installed `app.asar` trust list.
+- Reset the current Node REPL kernel after repair, import the active cached browser client, require `setupBrowserRuntime()` to succeed, and confirm `agent.browsers.get("chrome")` returns the real Chrome extension backend.
+- Finish with a real controlled page smoke test: open `https://example.com/`, verify the final URL, title `Example Domain`, exactly one `h1`, and heading text `Example Domain`, then close the temporary tab.
+- If the official diagnostics fail, repair the concrete extension/native-host problem instead and rerun the same diagnostics before attempting browser-client setup again.
 
 ## Computer Use Settings Says Plugin Unavailable
 
@@ -229,6 +254,7 @@ Symptoms:
 Checks:
 
 - Import the current `@oai/sky` package from `%LOCALAPPDATA%\OpenAI\Codex\runtimes\cua_node\*\bin\node_modules` and enumerate the actual `sky` methods. Do not infer the API from a cached skill alone.
+- Treat the bundled Computer Use skill and its referenced `docs\api.md` as one contract. Newer descriptor-only bundles can keep only initialization in `SKILL.md` and move `list_windows`, `get_window_state`, and `activate_window` signatures into `docs\api.md`; do not force an older overlay merely because those call examples are absent from the skill entrypoint.
 - For the documented `@oai/sky` 0.6.2 Window2 profile, the supported read path is `sky.list_windows()` followed by `sky.get_window_state({ window, include_screenshot, include_text })`; `window` is the object returned by `list_windows`, not just its id.
 - Read `dist\project\cua\sky_js\src\targets\windows\internal\computer_use_client_base.d.ts` when the runtime API is uncertain. It is the local contract for `activate_window`, `get_window_state`, and `list_windows` in this profile.
 - Keep this distinct from `node_repl exec context not found`, native-pipe startup, screenshot-helper, or Chrome native-host failures. A stale skill can block an agent before any of those runtime paths are exercised.
@@ -301,13 +327,16 @@ Checks:
 - Run `scripts\install-computer-use-local.ps1 -StrictVerifyOnly` and keep the exact helper error.
 - Resolve the selected helper under `%LOCALAPPDATA%\OpenAI\Codex\runtimes\cua_node`, then calculate its SHA-256 and read the adjacent `@oai/sky\package.json` version.
 - Use `scripts\patch-computer-use-helper-win10.ps1` without `-Install` to classify the helper as `original-patchable`, `patched`, or `unsupported`.
+- Treat the Windows 10 build check, the exact `SetIsBorderRequired / 0x80004002` failure, the `@oai/sky` version, and the complete helper hash as separate requirements. A matching hash on Windows 11 is classification evidence only and does not authorize installation.
+- `-ComputeCandidateHash` is a read-only regression path for an exact original helper fixture. It can prove that the guarded regions reconstruct the documented output hash on a non-Windows-10 test host, but `-Install` must still reject that host and leave the helper unchanged.
+- If a browser capture stops because the runtime cannot determine the current URL with enough confidence, the native screenshot helper was not reached. Repeat later with a controlled non-browser window instead of attributing that policy stop to this profile.
 - Do not treat this native screenshot failure as a missing plugin/cache path or a Desktop feature gate.
 
 Action:
 
 - Read `references/win10-computer-use-screenshot-backend.md` before writing the helper.
 - For an exact documented original helper hash (`@oai/sky 0.4.20`, `0.5.2`, or `0.6.6`), run the hash-guarded patcher with `-Install`, then rerun `install-computer-use-local.ps1 -VerifyOnly` and `-StrictVerifyOnly`. Desktop `26.707.12708.0`, `26.721.4979.0`, and `26.803.10989.0` are the respective end-to-end validation baselines, not the compatibility boundary.
-- Validate through the real Computer Use client with a first screenshot, repeated static captures, dynamic captures spaced about two seconds apart, accessibility text, `list_windows`, and post-warm-up resource counts.
+- Validate through the real Computer Use client against a controlled non-browser window with recognizable, non-sensitive content. Use independent calls for enumeration, activation, and capture; inspect the returned pixels and dimensions, then add repeated static captures, dynamic captures spaced about two seconds apart, accessibility text, `list_windows`, and post-warm-up resource counts.
 - The `0.6.6` / Desktop `26.803.10989.0` baseline passed a cold Explorer capture, two batches of ten static captures, stable helper resources after twenty captures, and three distinct Task Manager performance frames. This validates only the documented complete helper hash pair; it is not a generic version rule.
 - Use the patcher's `-Rollback` mode to restore the verified original backup.
 - If the helper hash is unknown, stop. Do not reuse offsets, restore an older Codex Desktop package, copy a helper from another version, or edit `C:\Program Files\WindowsApps`.

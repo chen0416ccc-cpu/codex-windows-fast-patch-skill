@@ -3,7 +3,8 @@ param(
   [string]$HelperPath,
   [string]$CodexHome = (Join-Path $env:USERPROFILE '.codex'),
   [switch]$Install,
-  [switch]$Rollback
+  [switch]$Rollback,
+  [switch]$ComputeCandidateHash
 )
 
 $ErrorActionPreference = 'Stop'
@@ -153,17 +154,20 @@ function Convert-BytesToHex {
   return ([BitConverter]::ToString($Bytes) -replace '-', '').ToLowerInvariant()
 }
 
-function Get-Sha256 {
-  param([string]$Path)
+function Get-Sha256FromBytes {
+  param([byte[]]$Bytes)
 
-  $stream = [System.IO.File]::OpenRead($Path)
   $sha256 = [System.Security.Cryptography.SHA256]::Create()
   try {
-    return ([BitConverter]::ToString($sha256.ComputeHash($stream)) -replace '-', '')
+    return ([BitConverter]::ToString($sha256.ComputeHash($Bytes)) -replace '-', '')
   } finally {
     $sha256.Dispose()
-    $stream.Dispose()
   }
+}
+
+function Get-Sha256 {
+  param([string]$Path)
+  return Get-Sha256FromBytes ([IO.File]::ReadAllBytes($Path))
 }
 
 function Resolve-HelperPath {
@@ -304,6 +308,9 @@ function Stop-RunningHelper {
 if ($Install -and $Rollback) {
   throw 'choose either -Install or -Rollback'
 }
+if ($ComputeCandidateHash -and ($Install -or $Rollback)) {
+  throw '-ComputeCandidateHash cannot be combined with -Install or -Rollback'
+}
 
 $resolvedHelperPath = Resolve-HelperPath $HelperPath
 $skyVersion = Get-SkyVersion $resolvedHelperPath
@@ -333,6 +340,25 @@ $backupPath = if (-not $PatchProfile) {
   Resolve-OriginalBackupPath $preferredBackupPath
 } else {
   $preferredBackupPath
+}
+
+if ($ComputeCandidateHash) {
+  if ($state -ne 'original-patchable') {
+    throw "candidate hash requires an exact supported original helper; state=$state"
+  }
+  if ($skyVersion -ne $PatchProfile.SkyVersion) {
+    throw "this profile requires @oai/sky $($PatchProfile.SkyVersion); detected $skyVersion"
+  }
+
+  $candidateBytes = [IO.File]::ReadAllBytes($resolvedHelperPath)
+  Assert-Regions $candidateBytes 'Original'
+  Set-PatchedRegions $candidateBytes
+  $candidateHash = Get-Sha256FromBytes $candidateBytes
+  if ($candidateHash -ne $PatchProfile.PatchedSha256) {
+    throw "patched helper candidate hash mismatch: $candidateHash"
+  }
+  $candidateHash
+  return
 }
 
 if (-not $Install -and -not $Rollback) {

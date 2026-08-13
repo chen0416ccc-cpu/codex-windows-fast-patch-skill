@@ -16,6 +16,8 @@ if (-not $package) {
 $pluginRoot = Join-Path $package.InstallLocation 'app\resources\plugins\openai-bundled\plugins\computer-use'
 $descriptor = Join-Path $pluginRoot '.codex-plugin\plugin.json'
 $legacyClient = Join-Path $pluginRoot 'scripts\computer-use-client.mjs'
+$packageSkill = Join-Path $pluginRoot 'skills\computer-use\SKILL.md'
+$packageApi = Join-Path $pluginRoot 'docs\api.md'
 if (-not (Test-Path -LiteralPath $descriptor -PathType Leaf)) {
   throw "Computer Use descriptor is missing: $descriptor"
 }
@@ -72,19 +74,38 @@ $cacheSkill = Join-Path $env:USERPROFILE ".codex\plugins\cache\openai-bundled\co
 if (-not (Test-Path -LiteralPath $cacheSkill -PathType Leaf)) {
   throw "descriptor-only repair did not create the current Computer Use skill: $cacheSkill"
 }
+$cacheApi = Join-Path $env:USERPROFILE ".codex\plugins\cache\openai-bundled\computer-use\$pluginVersion\docs\api.md"
+if (-not (Test-Path -LiteralPath $cacheApi -PathType Leaf)) {
+  throw "descriptor-only repair did not create the current Computer Use API reference: $cacheApi"
+}
+foreach ($pair in @(
+  @($packageSkill, $cacheSkill),
+  @($packageApi, $cacheApi)
+)) {
+  if (-not (Test-Path -LiteralPath $pair[0] -PathType Leaf)) {
+    throw "installed package is missing a Computer Use contract file: $($pair[0])"
+  }
+  if ((Get-FileHash -LiteralPath $pair[0] -Algorithm SHA256).Hash -ne
+      (Get-FileHash -LiteralPath $pair[1] -Algorithm SHA256).Hash) {
+    throw "descriptor-only cache contract does not match the installed package: $($pair[1])"
+  }
+}
+
 $skillContent = Get-Content -Raw -Encoding UTF8 -LiteralPath $cacheSkill
+$apiContent = Get-Content -Raw -Encoding UTF8 -LiteralPath $cacheApi
+$contractContent = $skillContent + "`n" + $apiContent
 foreach ($stalePrompt in @('sky.documentation(', 'sky.document_info(')) {
-  if ($skillContent.Contains($stalePrompt)) {
-    throw "descriptor-only repair retained a missing Sky documentation API prompt: $cacheSkill"
+  if ($contractContent.Contains($stalePrompt)) {
+    throw "descriptor-only repair retained a missing Sky documentation API prompt: $cacheSkill / $cacheApi"
   }
 }
-foreach ($requiredApi in @('sky.list_windows()', 'sky.get_window_state({', 'sky.activate_window({ window: target })')) {
-  if (-not $skillContent.Contains($requiredApi)) {
-    throw "descriptor-only repair omitted the current Sky API workflow ($requiredApi): $cacheSkill"
-  }
+if (-not $skillContent.Contains('const { sky } = await import("@oai/sky")')) {
+  throw "descriptor-only repair omitted the official @oai/sky initialization: $cacheSkill"
 }
-if (-not $skillContent.Contains('<!-- codex-windows-fast-patch: sky-0.6.2-window2-api -->')) {
-  Write-Warning "descriptor-only repair is using an upstream Computer Use skill that already matches the current Sky API: $cacheSkill"
+foreach ($requiredApi in @('list_windows():', 'get_window_state(input:', 'activate_window(input:')) {
+  if (-not $apiContent.Contains($requiredApi)) {
+    throw "descriptor-only repair omitted the current Sky API contract ($requiredApi): $cacheApi"
+  }
 }
 
 Write-Output 'descriptor-only Computer Use repair passed'
