@@ -19,6 +19,7 @@
 - 修复 Goal 入口、部分设置入口、功能按钮在更新后消失或变灰的问题。
 - 修复切换 `model_provider` / API 配置后，旧会话仍在本地但官方侧边栏不显示的问题；如果恢复后的会话能显示但继续时报“当前工作目录缺失”，可按 rollout 原始 `cwd` 创建缺失空目录。
 - 修复本地插件市场配置损坏、`codex plugin list` 报错的问题。
+- 安全清理已移除 marketplace/plugin 在 `config.toml` 中遗留的精确插件表和 hook state；默认只读，只有 marketplace 未配置且限定缓存位置无插件证据时才允许写入。
 - 可选备份和恢复本机 Codex 配置、技能、插件市场等关键状态。
 - 支持每次开始修复前自动将skills更新到最新版本
 - 破限只需：帮我配置破限相关文件和config.toml中的相关配置
@@ -46,6 +47,7 @@
 - `scripts/patch-computer-use-node-repl-context.ps1`：为精确支持哈希的 `@oai/sky 0.6.2` helper transport 修复跨 `node_repl` 调用的应用审批上下文，提供只读识别、安装、完整哈希校验和回滚。
 - `scripts/patch-computer-use-helper-win10.ps1`：为精确支持哈希的 `@oai/sky 0.4.20`、`0.5.2` 和 `0.6.6` helper 提供只读识别、安装和回滚；`26.707.12708.0`、`26.721.4979.0` 与 `26.803.10989.0` 是各自的端到端验证基线，不是版本门槛。`0.6.6` 基线已完成冷启动、两批重复静态截图、三帧动态图像变化和预热后资源稳定性验证。
 - `scripts/sync-codex-provider-history.ps1`：同步本地会话 provider 元数据，让切换 `model_provider` 后消失的会话重新出现在官方列表中；也可用 `-RepairMissingCwdDirs` 修复恢复后会话无法继续的缺失 `cwd` 目录。默认不改 `config.toml`，也不改 workspace/project roots。
+- `scripts/cleanup-orphaned-plugin-config.ps1`：只针对显式 `plugin@marketplace` ID 分类并清理孤立 `config.toml` 插件/hook 表；默认只读，写入前检查 marketplace 和限定磁盘位置，写入时创建 SHA-256 校验备份。
 - `scripts/install-model-instructions-file.ps1`：可选安装内置 `model_instructions_file` 提示词资源。
 - `scripts/manage-codex-backups.ps1`：本地 Codex 配置、MCP、skills 和 marketplaces 的备份管理脚本。
 - `scripts/update-skill-from-github.ps1`：使用前尽力同步 GitHub 最新版本的自更新脚本。
@@ -99,6 +101,7 @@ Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'assets') -Destination
 - Chrome / browser_use 的 helper 路径、缓存、native-host 文件损坏。
 - 插件市场配置损坏、`codex plugin list` 报 marketplace manifest 错误。
 - 本地 marketplace 缺 `.agents\plugins\marketplace.json`。
+- 已移除的个人插件仍残留 `[plugins."...@marketplace"]` 或对应 `[hooks.state."...:..."]`，而 marketplace 已不再配置且限定缓存位置无插件目录或 descriptor。先运行只读分类，再显式加 `-Install`。
 - 切换 `model_provider` / API 配置后，本地旧会话消失但 `sessions`、`archived_sessions` 或 `state_5.sqlite` 仍有数据。此类先用 provider history sync，不需要重装 MSIX。
 - 旧会话已经恢复显示，但继续对话时报“当前工作目录缺失”或 `invalid codex request`。此类先用 provider history sync 的 dry-run 看 `missing rollout cwd dirs before`，确认后用 `-RepairMissingCwdDirs` 创建 rollout 记录的原始缺失目录。
 - 只需要备份/恢复 Codex 配置，或安装可选的自定义提示词配置。
@@ -140,6 +143,18 @@ Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'assets') -Destination
 使用 codex-windows-fast-patch 这个 skill，修复 Windows Codex Desktop 手机远控，同时保留我的第三方 API 主使用方式和现有会话记录。
 ```
 
+孤立插件配置先只读检查：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\cleanup-orphaned-plugin-config.ps1" -PluginId "obsolete-helper@personal"
+```
+
+只有输出确认 marketplace 未配置且限定磁盘位置无插件证据时，才执行清理：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\cleanup-orphaned-plugin-config.ps1" -PluginId "obsolete-helper@personal" -Install
+```
+
 ## 预期验证
 
 - 补丁日志包含 `fast-mode UI patch result`、`locale i18n patch result` 和 `browser-use gate patch result`，结果为 `patched` 或 `already-patched`。
@@ -152,6 +167,7 @@ Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'assets') -Destination
 - 如果需要 Chrome 控制，`codex plugin list` 显示 `chrome@openai-bundled` 为 `installed, enabled`；native messaging host manifest 的路径和注册表值指向当前稳定缓存；`allowed_origins` 与缓存 `scripts\extension-ids.json` 顶层 ID 精确一致；`extension-host-config.json` 包含与当前安装包匹配的本地 `codex.exe` 以及同一当前运行时的 `node.exe` / `node_repl.exe`；`%LOCALAPPDATA%\OpenAI\Codex\chrome-native-hosts-v2.json` 与 `%USERPROFILE%\.codex\chrome-native-hosts-v2.json` 都包含当前版本、官方哈希身份和全部现存路径。稳定 marketplace 与版本化缓存中的 `browser-client.mjs` 必须和安装包 SHA-256 完全一致，并且该哈希出现在当前 `app.asar` 的信任列表中；`setupBrowserRuntime()` 成功且 `agent.browsers.get("chrome")` 返回真实 Chrome 扩展后端。随后真实 smoke test 应能读到受控标签页标题，例如 `Example Domain`。Chrome 未运行时，无需再次征得用户授权，直接自动启动后验证 `https://example.com/`、`Example Domain` 标题和唯一且文本匹配的 `h1`。
 - 如果修复手机远控，连接页应显示手机/移动设备设置路径，二维码应出现，手机扫码不再提示 Codex 版本过期；按 WindowsApps native PID/路径关联的日志应出现 `remote_control_websocket_proxy_connected` 和 `Connected` 且没有重复 `os error 10060`，手机发送消息能到达 Desktop。部分 native 版本会静默处理 Ping/Pong，因此不得把帧日志文字当作唯一成功条件。
 - 如果修复会话消失，`sync-codex-provider-history.ps1` 应显示 App/legacy SQLite 和 readable rollout 的 provider 已对齐到当前 `model_provider`，`config.toml sha256 unchanged`，官方侧边栏能看到历史会话，并且不会新增空项目分组。如果修的是“恢复后无法继续”，`missing rollout cwd dirs after` 应为 0 或只剩已审查跳过的路径，受影响会话重启后能发送新消息。
+- 如果清理孤立插件配置，日志应先报告只读分类或明确拒绝原因；`-Install` 成功时必须报告备份 SHA-256、TOML 校验通过、无 UTF-8 BOM、精确插件/hook 表已不存在，且相似 ID 与无关表仍保留。
 
 ## 备份管理
 
