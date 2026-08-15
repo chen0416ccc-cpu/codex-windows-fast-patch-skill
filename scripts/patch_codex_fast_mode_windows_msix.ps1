@@ -86,49 +86,175 @@ function Test-CodexAppPath {
   )
 }
 
+function Get-CodexAppVersion {
+  param([string]$Candidate)
+  $app = Normalize-AppPath $Candidate
+  if ([string]::IsNullOrWhiteSpace($app)) {
+    return [version]'0.0.0.0'
+  }
+
+  $packageName = Split-Path -Leaf (Split-Path -Parent $app)
+  if ($packageName -match '^OpenAI\.Codex_(?<version>\d+(?:\.\d+){1,3})_') {
+    try {
+      return [version]$Matches.version
+    } catch {
+      return [version]'0.0.0.0'
+    }
+  }
+  return [version]'0.0.0.0'
+}
+
 function Find-CodexAppPath {
   if ($AppPath) {
     $manual = Normalize-AppPath $AppPath
     if (-not (Test-CodexAppPath $manual)) {
       Fail "-AppPath is not a Codex app directory: $AppPath"
     }
+    $manualVersion = Get-CodexAppVersion $manual
+    Write-Log "selected Codex app: $manual version=$manualVersion source=explicit-AppPath"
     return $manual
   }
 
-  $pkg = Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction SilentlyContinue |
-    Sort-Object Version -Descending |
-    Select-Object -First 1
-  if ($pkg -and $pkg.InstallLocation) {
-    $candidate = Join-Path $pkg.InstallLocation 'app'
-    if (Test-CodexAppPath $candidate) {
-      return (Normalize-AppPath $candidate)
+  $candidates = [System.Collections.Generic.List[object]]::new()
+  $seen = @{}
+  $addCandidate = {
+    param(
+      [string]$Candidate,
+      [object]$Version,
+      [int]$Priority,
+      [string]$Source
+    )
+    $normalized = Normalize-AppPath $Candidate
+    if (-not (Test-CodexAppPath $normalized)) {
+      return
+    }
+    $key = $normalized.TrimEnd('\').ToLowerInvariant()
+    if ($seen.ContainsKey($key)) {
+      return
+    }
+    $resolvedVersion = $null
+    if ($null -ne $Version) {
+      try {
+        $resolvedVersion = [version]$Version
+      } catch {
+        $resolvedVersion = $null
+      }
+    }
+    if ($null -eq $resolvedVersion) {
+      $resolvedVersion = Get-CodexAppVersion $normalized
+    }
+    $seen[$key] = $true
+    $candidates.Add([pscustomobject]@{
+      AppPath = $normalized
+      Version = $resolvedVersion
+      Priority = $Priority
+      Source = $Source
+    })
+  }
+
+  # Store updates can leave the newest package Staged for SYSTEM while the
+  # user's package query still returns the older installed build. Keep only
+  # the current-user and SYSTEM-Staged registrations from the all-user view.
+  $currentPackages = @(Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction SilentlyContinue)
+  foreach ($pkg in ($currentPackages | Sort-Object Version -Descending)) {
+    if ($pkg -and $pkg.InstallLocation) {
+      & $addCandidate (Join-Path $pkg.InstallLocation 'app') $pkg.Version 3 'appx-package-current-user'
     }
   }
 
-  $running = Get-Process -Name 'Codex', 'ChatGPT' -ErrorAction SilentlyContinue |
+  $allUsersPackages = @()
+  $allUsersQueryFailed = $false
+  try {
+    $allUsersPackages = @(Get-AppxPackage -Name 'OpenAI.Codex' -AllUsers -ErrorAction Stop)
+  } catch {
+    $allUsersQueryFailed = $true
+    Write-Log "warning: could not query all user Codex packages: $($_.Exception.Message)"
+  }
+
+  $currentUserSid = $null
+  try {
+    $currentUserSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+  } catch {
+    Write-Log "warning: could not determine current user SID: $($_.Exception.Message)"
+  }
+  foreach ($pkg in ($allUsersPackages | Sort-Object Version -Descending)) {
+    if (-not ($pkg -and $pkg.InstallLocation)) {
+      continue
+    }
+
+    $source = $null
+    foreach ($userInfo in @($pkg.PackageUserInformation)) {
+      $sid = $null
+      $securityId = $userInfo.UserSecurityId
+      if ($securityId) {
+        if ($securityId.PSObject.Properties['Sid']) {
+          $sid = [string]$securityId.Sid
+        } elseif ($securityId.PSObject.Properties['Value']) {
+          $sid = [string]$securityId.Value
+        } else {
+          $sid = [string]$securityId
+        }
+      }
+      $installState = [string]$userInfo.InstallState
+      if ($sid -eq 'S-1-5-18' -and $installState -eq 'Staged') {
+        $source = 'appx-package-system-staged'
+        break
+      }
+      if ($currentUserSid -and $sid -eq $currentUserSid -and $installState -in @('Installed', 'Staged')) {
+        $source = 'appx-package-current-user'
+      }
+    }
+    if ($source) {
+      & $addCandidate (Join-Path $pkg.InstallLocation 'app') $pkg.Version 3 $source
+    } else {
+      Write-Log "warning: ignoring all-user Codex package without current-user or SYSTEM-Staged registration: $($pkg.PackageFullName)"
+    }
+  }
+
+  $validRunningCandidateFound = $false
+  $running = @(Get-Process -Name 'Codex', 'ChatGPT' -ErrorAction SilentlyContinue |
     Where-Object {
       $_.Path -and (
         $_.Path -like '*\WindowsApps\OpenAI.Codex_*\app\Codex.exe' -or
         $_.Path -like '*\WindowsApps\OpenAI.Codex_*\app\ChatGPT.exe'
       )
-    } |
-    Sort-Object StartTime -Descending |
-    Select-Object -First 1
-  if ($running) {
-    $candidate = Split-Path -Parent $running.Path
+    })
+  foreach ($process in @($running)) {
+    $candidate = Split-Path -Parent $process.Path
     if (Test-CodexAppPath $candidate) {
-      return (Normalize-AppPath $candidate)
+      $validRunningCandidateFound = $true
+    }
+    & $addCandidate $candidate $null 2 'running-process'
+  }
+
+  $validWindowsAppsDirectoryFound = $false
+  if ($allUsersQueryFailed -or $allUsersPackages.Count -eq 0) {
+    $windowsApps = Join-Path $env:ProgramFiles 'WindowsApps'
+    try {
+      $dirs = Get-ChildItem -LiteralPath $windowsApps -Directory -Filter 'OpenAI.Codex_*_x64__*' -ErrorAction Stop |
+        Sort-Object LastWriteTime -Descending
+      foreach ($dir in $dirs) {
+        $candidate = Join-Path $dir.FullName 'app'
+        if (Test-CodexAppPath $candidate) {
+          $validWindowsAppsDirectoryFound = $true
+        }
+        & $addCandidate $candidate $null 1 'WindowsApps-directory'
+      }
+    } catch {
+      Write-Log "warning: could not enumerate WindowsApps Codex packages: $($_.Exception.Message)"
     }
   }
 
-  $windowsApps = Join-Path $env:ProgramFiles 'WindowsApps'
-  $dirs = Get-ChildItem -LiteralPath $windowsApps -Directory -Filter 'OpenAI.Codex_*_x64__*' -ErrorAction SilentlyContinue |
-    Sort-Object LastWriteTime -Descending
-  foreach ($dir in $dirs) {
-    $candidate = Join-Path $dir.FullName 'app'
-    if (Test-CodexAppPath $candidate) {
-      return (Normalize-AppPath $candidate)
-    }
+  if ($allUsersQueryFailed -and -not $validWindowsAppsDirectoryFound -and -not $validRunningCandidateFound) {
+    Fail 'could not confirm Codex package candidates because the all-user query and WindowsApps fallback failed. Pass -AppPath explicitly.'
+  }
+
+  $selected = $candidates |
+    Sort-Object @{Expression = 'Version'; Descending = $true}, @{Expression = 'Priority'; Descending = $true} |
+    Select-Object -First 1
+  if ($selected) {
+    Write-Log "selected Codex app: $($selected.AppPath) version=$($selected.Version) source=$($selected.Source)"
+    return $selected.AppPath
   }
 
   Fail 'could not find Windows Store/MSIX Codex app. Pass -AppPath explicitly.'
@@ -640,6 +766,11 @@ if (text.includes(marker) && models.every((model) => text.includes(model))) {
 }
 
 const visibilityPatterns = [
+  {
+    re: /return ([$A-Za-z_][$\w]*)\?\.has\(([$A-Za-z_][$\w]*)\.model\)===!0\|\|\2\.model!==`codex-auto-review`&&\(([$A-Za-z_][$\w]*)&&!([$A-Za-z_][$\w]*)&&([$A-Za-z_][$\w]*)!==`amazonBedrock`\?([$A-Za-z_][$\w]*)\.has\(\2\.model\):!\2\.hidden\)\}/,
+    modelGroup: 2,
+    isReturn: true,
+  },
   {
     re: /if\(([$A-Za-z_][$\w]*)\?([$A-Za-z_][$\w]*)\.has\(([$A-Za-z_][$\w]*)\.model\):!\3\.hidden\)\{/,
     modelGroup: 3,
@@ -1337,6 +1468,34 @@ if (changed) {
   }
 }
 
+function Test-CustomModelVisibilityExpression {
+  param(
+    [AllowNull()]
+    [string]$Text
+  )
+
+  if ([string]::IsNullOrEmpty($Text)) {
+    return $false
+  }
+  if ($Text.Contains('CODEX_CUSTOM_MODELS_V1')) {
+    return $true
+  }
+
+  # Keep target discovery aligned with the embedded Node patcher's supported predicate shapes.
+  $patterns = @(
+    'if\([$A-Za-z_][$\w]*\?[$A-Za-z_][$\w]*\.has\((?<model>[$A-Za-z_][$\w]*)\.model\):!\k<model>\.hidden\)\{',
+    'if\([$A-Za-z_][$\w]*\?\.has\((?<model>[$A-Za-z_][$\w]*)\.model\)===!0\|\|\([$A-Za-z_][$\w]*\?[$A-Za-z_][$\w]*\.has\(\k<model>\.model\):!\k<model>\.hidden\)\)\{',
+    '\?\.has\(\w+\.model\)===!0\|\|\(\w+(?:&&\w+!==`amazonBedrock`)?\?\w+\.has\(\w+\.model\):!\w+\.hidden\)',
+    '\?\.has\((?<model>[$A-Za-z_][$\w]*)\.model\)===!0\|\|\k<model>\.model!==`codex-auto-review`&&\((?<showHidden>[$A-Za-z_][$\w]*)&&!(?<customProvider>[$A-Za-z_][$\w]*)&&(?<authMethod>[$A-Za-z_][$\w]*)!==`amazonBedrock`\?(?<availableModels>[$A-Za-z_][$\w]*)\.has\(\k<model>\.model\):!\k<model>\.hidden\)'
+  )
+  foreach ($pattern in $patterns) {
+    if ($Text -match $pattern) {
+      return $true
+    }
+  }
+  return $false
+}
+
 function Find-PatchTargets {
   param(
     [string]$RgPath,
@@ -1402,8 +1561,7 @@ function Find-PatchTargets {
       if ($text.Contains('available_models') -and
           $text.Contains('useHiddenModels') -and
           $text.Contains('supportedReasoningEfforts') -and
-          (($text -match '\?\.has\(\w+\.model\)===!0\|\|\(\w+(?:&&\w+!==`amazonBedrock`)?\?\w+\.has\(\w+\.model\):!\w+\.hidden\)') -or
-           $text.Contains('CODEX_CUSTOM_MODELS_V1'))) {
+          (Test-CustomModelVisibilityExpression -Text $text)) {
         $customModelsTarget = $candidate
         break
       }
@@ -1852,8 +2010,7 @@ function Invoke-PatchAppAsar {
         if ($text.Contains('available_models') -and
             $text.Contains('useHiddenModels') -and
             $text.Contains('supportedReasoningEfforts') -and
-            (($text -match '\?\.has\(\w+\.model\)===!0\|\|\(\w+(?:&&\w+!==`amazonBedrock`)?\?\w+\.has\(\w+\.model\):!\w+\.hidden\)') -or
-             $text.Contains('CODEX_CUSTOM_MODELS_V1'))) {
+            (Test-CustomModelVisibilityExpression -Text $text)) {
           $customModelsTarget = $candidate
           break
         }

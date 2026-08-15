@@ -22,12 +22,14 @@ Checks:
 - Inspect `webview\assets\model-list-filter-*.js` for Statsig-driven `available_models` filtering. Provider discovery can succeed while the frontend still removes the model before the Power slider calculates its available combinations.
 - Inspect the asset containing `chatgpt-user-settings`, `model_picker_persists_ultra_effort`, and `showUltraInModelPickerSlider`. A settings control shaped like `disabled: data == null || mutation.isPending` is permanently disabled when a custom provider has no ChatGPT account user-settings response. The local TOML key alone is not enough if the build uses it only as a one-time migration flag.
 - Codex Desktop `26.721.3996.0` can merge the Fast UI gate and model-list filter into `webview\assets\app-initial-*.js`. Match the same stable behavior (`isServiceTierAllowed`, `available_models`, `useHiddenModels`, and `supportedReasoningEfforts`) before concluding that the gate was removed.
+- Codex Desktop `26.810.4967.0` adds a `model !== codex-auto-review` guard before the hidden-model ternary: `available?.has(model.model) === true || model.model !== codex-auto-review && (showHidden && !customProvider && authMethod !== amazonBedrock ? availableModels.has(model.model) : !model.hidden)`. An older patcher that only recognizes the parenthesized `amazonBedrock` form fails with `could not find custom model visibility filter in extracted assets`; treat that as matcher drift, not evidence that custom-model filtering disappeared.
 
 Action:
 
 - For CPA, add an override rule for the Codex-facing model names and force `service_tier` as a string value of `priority`.
 - Patch the Fast Mode gate by removing the `chatgpt`-only branch while preserving the feature-requirement lookup, then rerun wire capture.
 - Patch Ultra persistence with a guarded fallback: keep the official account API for successful ChatGPT user-settings queries, but on query failure return a local-backed state, write `show-ultra-in-model-picker-slider` locally, and do not let the one-time migration clear that local value after a failed remote write. Verify both the toggle state after restart and Ultra's presence in the actual compact slider.
+- When adding support for the `26.810` visibility predicate, retain the historical conditional and `amazonBedrock` predicate shapes. Run `scripts\test-custom-model-visibility-patterns.ps1 -TemporaryRoot <D-drive-child>` before a real-package dry run so old Store builds remain patchable.
 - Run the unified Model Experience dry run so the request gate, UI gate, and model filter are checked separately and only broken components are changed:
 
 ```powershell

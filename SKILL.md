@@ -52,6 +52,7 @@ Before choosing the full MSIX repack path, identify whether the current failure 
 
 - Use the Model Experience workflow for Fast Mode request/UI failures, new models hidden from the Desktop picker, the compact Power slider falling back to the legacy picker, or its Ultra setting being disabled under a custom provider. These symptoms share the same service-tier/model-picker area. Run `scripts\patch_codex_fast_mode_windows_msix.ps1 -OnlyModelExperience -DryRun` first; it checks the Fast request gate, Fast UI gate, model visibility filter, Electron Power slider `harborEnabled` gate, and Ultra setting persistence independently, then repairs only the broken parts in one MSIX repack. The Ultra fallback preserves the normal ChatGPT account API path and uses local `show-ultra-in-model-picker-slider` config only when ChatGPT user settings cannot load. `-OnlyCustomModels` remains a compatibility alias. Merge missing model metadata into `models_cache.json` only when read-only inspection proves the cache entry is absent; back up the cache first.
 - Use the full repatch workflow for locale, plugin UI gates, browser_use Desktop gates, Goal gates, ASAR integrity, settings/UI availability gates, or when Model Experience repair is required together with those features.
+- Before a full repatch after a Store update, compare the current-user and `Get-AppxPackage -AllUsers` results. The patcher selects the highest-version valid current-user or SYSTEM-Staged package, plus running-process candidates; it uses WindowsApps-directory candidates only if the all-user query is unavailable. This prevents an older user-installed package from hiding a newer SYSTEM-Staged build without selecting a package registered only to another user. Check the `selected Codex app` log before proceeding. Use `-AppPath` only when an explicit source override is required.
 - Use the Computer Use Only workflow first when evidence points to a local plugin/runtime problem: `codex plugin list` marketplace errors, missing `.agents\plugins\marketplace.json`, missing or partial `openai-bundled` plugin files, `bundled_plugins_marketplace_resolve_failed`, `EBUSY` on bundled plugin files, native pipe unavailable, `missing-helper-path`, stale Chrome native messaging host paths, bundled plugin cache drift, Chrome/browser cache link drift, stale `SKY_CUA_NATIVE_PIPE` config, `@oai/sky` import errors, or `setupComputerUseRuntime` import failure. This class does not require an MSIX uninstall/reinstall unless a later check also proves a Desktop gate is still closed.
 - If a Store update breaks an already-configured MCP because its `command` points into a removed `%LOCALAPPDATA%\OpenAI\Codex\runtimes\cua_node\<old-runtime-id>` directory, use the retired CUA Node MCP case in `references/restriction-debug-cases.md`. This is a targeted `config.toml` repair, not evidence for a broad MSIX repatch or permission to install additional MCP servers.
 - If app/window enumeration works but the first screenshot fails with `SetIsBorderRequired failed` and `0x80004002` on Windows 10, treat it as a native CUA screenshot-helper compatibility failure, not a cache path or Desktop gate. Read `references/win10-computer-use-screenshot-backend.md`, then use `scripts\patch-computer-use-helper-win10.ps1` only when its read-only status reports the exact supported original or patched hash. Unknown hashes require fresh analysis and must remain untouched.
@@ -83,11 +84,15 @@ Before starting from VS Code Codex or external PowerShell, confirm no User-level
 powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\manage-codex-backups.ps1" -Action Backup
 ```
 
-2. Inspect current package status:
+2. Inspect current-user and all-user package status so a newer SYSTEM-Staged Store build is visible:
 
 ```powershell
 Get-AppxPackage -Name OpenAI.Codex | Select-Object Name,PackageFullName,Version,SignatureKind,InstallLocation
+Get-AppxPackage -Name OpenAI.Codex -AllUsers |
+  Select-Object Name,PackageFullName,Version,SignatureKind,InstallLocation,PackageUserInformation
 ```
+
+The MSIX patcher automatically chooses the highest-version candidate whose `app` layout is complete, even when the current-user query returns an older installed build. Confirm its `selected Codex app` and `source package` log lines before installation. An explicit `-AppPath` remains authoritative.
 
 3. Run read-only feature triage before any package reinstall. Capture the decision evidence, especially for Chrome/Computer Use:
 
@@ -530,6 +535,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\ski
 ## Success Criteria
 
 - If an existing `config.toml` was modified, the log shows a timestamped backup under `.codex\backups\config\`.
+- The patch log's `selected Codex app` and `source package` lines identify the intended highest-version package, including a newer SYSTEM-Staged Store package when present.
 - `Get-AppxPackage -Name OpenAI.Codex` shows `SignatureKind = Developer`.
 - The install log launches the patched Desktop package through its AppUserModelId, avoiding direct-executable access failures under `WindowsApps`.
 - The manifest-declared Codex Desktop process stays alive from the installed package, currently `...\app\ChatGPT.exe` on newer builds and `...\app\Codex.exe` on older builds.
