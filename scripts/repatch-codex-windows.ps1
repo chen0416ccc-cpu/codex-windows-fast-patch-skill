@@ -387,6 +387,24 @@ function Test-CodexPatchInstallResult {
   $finalVersion = [string]$FinalPackage.Version
   $signatureKind = [string]$FinalPackage.SignatureKind
   if ($finalVersion -ne $sourceVersion) {
+    # The patcher deliberately targets the newest app payload on disk, which after a
+    # Store upgrade is a SYSTEM-staged package newer than the currently installed one.
+    # In that case a Developer-signed newer final package is the intended outcome, not drift.
+    $sourceParsed = $null
+    $finalParsed = $null
+    $upgradedToStagedPackage = (
+      [Version]::TryParse($sourceVersion, [ref]$sourceParsed) -and
+      [Version]::TryParse($finalVersion, [ref]$finalParsed) -and
+      $finalParsed -gt $sourceParsed -and
+      $signatureKind -eq 'Developer'
+    )
+    if ($upgradedToStagedPackage) {
+      return [pscustomobject]@{
+        Success = $true
+        Retryable = $false
+        Reason = "staged package upgraded during repair: source=$sourceVersion final=$finalVersion signature=$signatureKind"
+      }
+    }
     return [pscustomobject]@{
       Success = $false
       Retryable = $signatureKind -eq 'Store'
