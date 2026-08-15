@@ -1,24 +1,34 @@
 [CmdletBinding()]
 param(
   [string]$HelperPath,
-  [ValidateSet('0.6.6', '0.6.11')]
-  [string]$SkyVersion = '0.6.11'
+  # Profile labels, not raw @oai/sky versions: one sky version can ship more than one
+  # helper binary across Desktop builds, so each label pins its own hash pair.
+  [ValidateSet('0.6.6', '0.6.11', '0.6.11-7A95D14E')]
+  [string]$SkyVersion = '0.6.11-7A95D14E'
 )
 
 $ErrorActionPreference = 'Stop'
 $Profiles = @{
   '0.6.6' = [ordered]@{
+    SkyVersion = '0.6.6'
     OriginalHash = 'BE488E66C38E12FA46850EE48C1F5E44ECDB0A3A64042E064E3A1A1DA286AC42'
     PatchedHash = '34D6EB4F23630AD6E7211898AA7678472C9ED7ACFD972C78B7D9E575A1C5C640'
   }
   '0.6.11' = [ordered]@{
+    SkyVersion = '0.6.11'
     OriginalHash = 'DE07F17A7206588687A8F722E4EBFC5A4FB1BD87F91DF2C60BB5C777C6D5CDCD'
     PatchedHash = '40530E628C91EF510F81A02FD3394C18E0D322C3D68D4A0277F0B0C56A2D43CC'
   }
+  '0.6.11-7A95D14E' = [ordered]@{
+    SkyVersion = '0.6.11'
+    OriginalHash = '7A95D14EBF992955D8AB8E6C57A75545ED7D18E864B0F5C1B9FE7F47685BD897'
+    PatchedHash = 'E84A4ECB473CF9D3B4B65BB27A298DE6602AD8A1A11B21EE0BA7BC9209FE4DA9'
+  }
 }
-$ExpectedSkyVersion = $SkyVersion
-$ExpectedOriginalHash = $Profiles[$SkyVersion].OriginalHash
-$ExpectedPatchedHash = $Profiles[$SkyVersion].PatchedHash
+$ProfileLabel = $SkyVersion
+$ExpectedSkyVersion = $Profiles[$ProfileLabel].SkyVersion
+$ExpectedOriginalHash = $Profiles[$ProfileLabel].OriginalHash
+$ExpectedPatchedHash = $Profiles[$ProfileLabel].PatchedHash
 $Patcher = Join-Path $PSScriptRoot 'patch-computer-use-helper-win10.ps1'
 
 function Assert-Equal {
@@ -65,7 +75,7 @@ function Resolve-OriginalHelper {
     }
   }
 
-  throw "the exact @oai/sky $ExpectedSkyVersion original helper is unavailable for this regression test"
+  throw "the exact original helper for profile $ProfileLabel (@oai/sky $ExpectedSkyVersion) is unavailable for this regression test"
 }
 
 function Get-Status {

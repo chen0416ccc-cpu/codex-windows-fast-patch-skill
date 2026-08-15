@@ -17,6 +17,9 @@ Use this profile only when all of the following are true:
 | `0.5.2` | `26.721.4979.0` | `2C4CAC168200520C2752058177EA9FE7D1CCF9A26B7287DDDFF669D41CA9AF16` | `D816B14A80370697380BA702863DA9528AA5B73ED34C2B189ACE2BF9E103BEFF` |
 | `0.6.6` | `26.803.10989.0` | `BE488E66C38E12FA46850EE48C1F5E44ECDB0A3A64042E064E3A1A1DA286AC42` | `34D6EB4F23630AD6E7211898AA7678472C9ED7ACFD972C78B7D9E575A1C5C640` |
 | `0.6.11` | `26.810.6296.0` | `DE07F17A7206588687A8F722E4EBFC5A4FB1BD87F91DF2C60BB5C777C6D5CDCD` | `40530E628C91EF510F81A02FD3394C18E0D322C3D68D4A0277F0B0C56A2D43CC` |
+| `0.6.11` | `26.810.7004.0` | `7A95D14EBF992955D8AB8E6C57A75545ED7D18E864B0F5C1B9FE7F47685BD897` | `E84A4ECB473CF9D3B4B65BB27A298DE6602AD8A1A11B21EE0BA7BC9209FE4DA9` |
+
+One `@oai/sky` version can ship more than one helper binary across Desktop builds, so the table is keyed by the complete hash pair, not by the version string alone. Both `0.6.11` rows use the same five guarded regions at the same offsets.
 
 The `0.4.20` original helper was also observed in Desktop `26.715.2305.0` by package inspection. That observation did not create a separate end-to-end profile. The patcher is `scripts/patch-computer-use-helper-win10.ps1`.
 
@@ -188,6 +191,27 @@ Desktop `26.810.6296.0` ships `@oai/sky 0.6.11` with original helper SHA-256 `DE
 | Window enumeration | Explorer and Task Manager were both returned by `list_windows`; the test-created Task Manager window was closed afterward. |
 
 As with every prior profile, this is an exact input/output hash pair. A later helper hash must be analyzed independently even when the guarded regions appear unchanged.
+
+### `@oai/sky 0.6.11` helper `7A95D14E` / Desktop 26.810.7004.0 validation
+
+Desktop `26.810.7004.0` ships `@oai/sky 0.6.11` again, but with a different helper binary: original SHA-256 `7A95D14EBF992955D8AB8E6C57A75545ED7D18E864B0F5C1B9FE7F47685BD897`. The version string alone was therefore not sufficient to select a profile, and the prior `DE07F17A` profile was correctly rejected as an unsupported hash before any patch attempt.
+
+- Both helpers are `1,895,728` bytes. Binary comparison found `4,266` changed bytes across `75` ranges. Mapping every changed offset onto the PE section table placed `2` bytes in the PE header and `4,264` bytes in the overlay, with zero differences in `.text`, `.rdata`, `.data`, `.pdata`, `.fptable`, and `.reloc`. The new helper is code-identical to the validated one; the differences are the PE timestamp, version resource, and Authenticode signature.
+- All five guarded regions were re-read from the new binary and matched the profile's original bytes exactly at the same offsets.
+- Applying the five guarded transformations in memory produced complete candidate SHA-256 `E84A4ECB473CF9D3B4B65BB27A298DE6602AD8A1A11B21EE0BA7BC9209FE4DA9`, which the live install then reproduced exactly.
+- Live installation stored the original at `.codex\backups\computer-use-helper\26.810.7004.0-sky-0.6.11-7A95D14E\codex-computer-use.exe.original`.
+- The isolated regression passed `original -> patched -> idempotent install -> rollback -> idempotent rollback` plus unknown-hash rejection.
+
+| Test | Result |
+| --- | --- |
+| Cold Explorer capture | Passed; `1125x639` image returned and no `0x80004002` error appeared. |
+| Repeated static capture | Ten identical Explorer frames; first capture `476 ms` cold, remaining nine `31-45 ms`. |
+| Dynamic capture | Eight Task Manager Performance-tab frames spaced `1.1 s` apart were all distinct (`8/8`), proving live frames rather than a cached first frame. |
+| Accessibility | Explorer tree length `8234`; Task Manager tree resolved the tab control and `性能` tab item. |
+| Resource stability | One helper process across `20` post-warm-up captures: threads `21 -> 23 -> 23`, handles `527 -> 542 -> 544`; both plateaued with no linear growth. |
+| Window enumeration | Explorer, Task Manager, VS Code, and Clash Verge returned by `list_windows`; test-created windows were closed afterward. |
+
+Because the Processes tab does not repaint while backgrounded, a dynamic-capture check must activate the window and select a continuously animating view; otherwise identical frames are expected and prove nothing about the `FrameArrived` patch.
 
 ### Desktop 26.715 upgrade-repair regressions
 
