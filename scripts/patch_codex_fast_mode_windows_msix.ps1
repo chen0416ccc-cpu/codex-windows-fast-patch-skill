@@ -86,6 +86,24 @@ function Test-CodexAppPath {
   )
 }
 
+function Get-CodexAppVersion {
+  param([string]$Candidate)
+  $app = Normalize-AppPath $Candidate
+  if ([string]::IsNullOrWhiteSpace($app)) {
+    return [version]'0.0.0.0'
+  }
+
+  $packageName = Split-Path -Leaf (Split-Path -Parent $app)
+  if ($packageName -match '^OpenAI\.Codex_(?<version>\d+(?:\.\d+){1,3})_') {
+    try {
+      return [version]$Matches.version
+    } catch {
+      return [version]'0.0.0.0'
+    }
+  }
+  return [version]'0.0.0.0'
+}
+
 function Find-CodexAppPath {
   if ($AppPath) {
     $manual = Normalize-AppPath $AppPath
@@ -95,13 +113,56 @@ function Find-CodexAppPath {
     return $manual
   }
 
-  $pkg = Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction SilentlyContinue |
-    Sort-Object Version -Descending |
-    Select-Object -First 1
-  if ($pkg -and $pkg.InstallLocation) {
-    $candidate = Join-Path $pkg.InstallLocation 'app'
-    if (Test-CodexAppPath $candidate) {
-      return (Normalize-AppPath $candidate)
+  $candidates = [System.Collections.Generic.List[object]]::new()
+  $seen = @{}
+  $addCandidate = {
+    param(
+      [string]$Candidate,
+      [object]$Version,
+      [int]$Priority,
+      [string]$Source
+    )
+    $normalized = Normalize-AppPath $Candidate
+    if (-not (Test-CodexAppPath $normalized)) {
+      return
+    }
+    $key = $normalized.TrimEnd('\').ToLowerInvariant()
+    if ($seen.ContainsKey($key)) {
+      return
+    }
+    $resolvedVersion = $null
+    if ($null -ne $Version) {
+      try {
+        $resolvedVersion = [version]$Version
+      } catch {
+        $resolvedVersion = $null
+      }
+    }
+    if ($null -eq $resolvedVersion) {
+      $resolvedVersion = Get-CodexAppVersion $normalized
+    }
+    $seen[$key] = $true
+    $candidates.Add([pscustomobject]@{
+      AppPath = $normalized
+      Version = $resolvedVersion
+      Priority = $Priority
+      Source = $Source
+    })
+  }
+
+  # Store updates can leave the newest package Staged for SYSTEM while the
+  # user's package query still returns the older installed build. Inspect both
+  # scopes and choose the newest valid package instead of returning early.
+  $packages = @()
+  $packages += @(Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction SilentlyContinue)
+  try {
+    $packages += @(Get-AppxPackage -Name 'OpenAI.Codex' -AllUsers -ErrorAction SilentlyContinue)
+  } catch {
+    Write-Log "warning: could not query all user Codex packages: $($_.Exception.Message)"
+  }
+  foreach ($pkg in ($packages | Sort-Object Version -Descending)) {
+    if ($pkg -and $pkg.InstallLocation) {
+      & $addCandidate (Join-Path $pkg.InstallLocation 'app') $pkg.Version 3 'appx-package'
     }
   }
 
@@ -116,9 +177,7 @@ function Find-CodexAppPath {
     Select-Object -First 1
   if ($running) {
     $candidate = Split-Path -Parent $running.Path
-    if (Test-CodexAppPath $candidate) {
-      return (Normalize-AppPath $candidate)
-    }
+    & $addCandidate $candidate $null 2 'running-process'
   }
 
   $windowsApps = Join-Path $env:ProgramFiles 'WindowsApps'
@@ -126,9 +185,15 @@ function Find-CodexAppPath {
     Sort-Object LastWriteTime -Descending
   foreach ($dir in $dirs) {
     $candidate = Join-Path $dir.FullName 'app'
-    if (Test-CodexAppPath $candidate) {
-      return (Normalize-AppPath $candidate)
-    }
+    & $addCandidate $candidate $null 1 'WindowsApps-directory'
+  }
+
+  $selected = $candidates |
+    Sort-Object @{Expression = 'Version'; Descending = $true}, @{Expression = 'Priority'; Descending = $true} |
+    Select-Object -First 1
+  if ($selected) {
+    Write-Log "selected Codex app: $($selected.AppPath) version=$($selected.Version) source=$($selected.Source)"
+    return $selected.AppPath
   }
 
   Fail 'could not find Windows Store/MSIX Codex app. Pass -AppPath explicitly.'
