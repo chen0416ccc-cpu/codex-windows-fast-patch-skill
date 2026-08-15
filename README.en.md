@@ -4,6 +4,8 @@ Language: [中文](README.md) | English
 
 This is the public version of the `codex-windows-fast-patch` skill. It helps Agent-Skills-capable agents repair common Windows Codex Desktop features that break after Desktop updates.
 
+This repository's main branch: <https://github.com/suixincrazy/codex-windows-fast-patch-skill/tree/main>
+
 ## Features
 
 Use this skill when Windows Codex Desktop updates cause issues like these:
