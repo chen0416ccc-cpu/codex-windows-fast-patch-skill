@@ -16,6 +16,7 @@ Use this profile only when all of the following are true:
 | `0.4.20` | `26.707.12708.0` | `F2B2F56FCD1699B0FA32DEC3214A56A1D36B937A2ECF58CC822AB4A904551E03` | `71A13CBC4BB333F0707D2311C99DBA54D8B24D1BBB9F7CE25C3B9386577FFDDA` |
 | `0.5.2` | `26.721.4979.0` | `2C4CAC168200520C2752058177EA9FE7D1CCF9A26B7287DDDFF669D41CA9AF16` | `D816B14A80370697380BA702863DA9528AA5B73ED34C2B189ACE2BF9E103BEFF` |
 | `0.6.6` | `26.803.10989.0` | `BE488E66C38E12FA46850EE48C1F5E44ECDB0A3A64042E064E3A1A1DA286AC42` | `34D6EB4F23630AD6E7211898AA7678472C9ED7ACFD972C78B7D9E575A1C5C640` |
+| `0.6.11` | `26.810.6296.0` | `DE07F17A7206588687A8F722E4EBFC5A4FB1BD87F91DF2C60BB5C777C6D5CDCD` | `40530E628C91EF510F81A02FD3394C18E0D322C3D68D4A0277F0B0C56A2D43CC` |
 
 The `0.4.20` original helper was also observed in Desktop `26.715.2305.0` by package inspection. That observation did not create a separate end-to-end profile. The patcher is `scripts/patch-computer-use-helper-win10.ps1`.
 
@@ -59,6 +60,11 @@ No executable is stored in this repository. The patcher reconstructs the validat
 | `0.6.6` | `0x0004CF97` | `0x14004DB97` | Continue after the existing one-shot flag check. |
 | `0.6.6` | `0x0014868F-0x0014873D` | `0x14014928F-0x14014933D` | Wrapper, thread creation/failure cleanup, and MTA worker. |
 | `0.6.6` | `0x0014B128` | `0x14014C928` | Redirect the `FrameArrived` delegate vtable entry to the wrapper. |
+| `0.6.11` | `0x00047E01` | `0x140048A01` | Skip the optional border-interface failure path. |
+| `0.6.11` | `0x0004CF86` | `0x14004DB86` | Send the busy/re-entry branch to the normal return tail. |
+| `0.6.11` | `0x0004CF97` | `0x14004DB97` | Continue after the existing one-shot flag check. |
+| `0.6.11` | `0x0014868F-0x0014873D` | `0x14014928F-0x14014933D` | Wrapper, thread creation/failure cleanup, and MTA worker. |
+| `0.6.11` | `0x0014B128` | `0x14014C928` | Redirect the `FrameArrived` delegate vtable entry to the wrapper. |
 
 ## Apply and verify
 
@@ -163,6 +169,26 @@ Desktop `26.803.10989.0` ships `@oai/sky 0.6.6` with original helper SHA-256 `BE
 
 This profile has a complete hash guard plus real cold, repeated-static, dynamic-image-change, accessibility, enumeration, and post-warm-up resource-stability validation. It has not been promoted to a generic cross-version rule; any later helper update must be analyzed and validated independently. Unknown hashes remain untouched.
 
+### `@oai/sky 0.6.11` / Desktop 26.810 validation
+
+Desktop `26.810.6296.0` ships `@oai/sky 0.6.11` with original helper SHA-256 `DE07F17A7206588687A8F722E4EBFC5A4FB1BD87F91DF2C60BB5C777C6D5CDCD`. On Windows 10 build `19045`, window enumeration succeeded but screenshot capture reproduced `SetIsBorderRequired failed: 不支持此接口 (0x80004002)`.
+
+- The `0.6.11` helper has the same `1,895,728`-byte image size as the validated `0.6.6` helper. Binary comparison found `5,596` changed bytes in `126` ranges, limited to the PE header and version/signing resources; the five guarded code/data regions above are byte-identical.
+- IDA confirmed the same optional-interface failure path, original `FrameArrived` callback at `0x14004DB43`, one-shot/busy guards, vtable entry, executable padding, and unchanged IAT slots for `CreateThread`, `CloseHandle`, `RoInitialize`, and `RoUninitialize`.
+- Applying the five guarded transformations in memory produced complete candidate SHA-256 `40530E628C91EF510F81A02FD3394C18E0D322C3D68D4A0277F0B0C56A2D43CC`. The isolated regression passed install, idempotent install, rollback, idempotent rollback, and unknown-hash rejection for both `0.6.11` and the prior `0.6.6` fixture.
+- Live installation stored the original at `.codex\backups\computer-use-helper\26.810.6296.0-sky-0.6.11-DE07F17A\codex-computer-use.exe.original`. Both local verification modes passed afterward.
+
+| Test | Result |
+| --- | --- |
+| Cold Explorer capture | Passed; `1125x639` image returned and the previous `0x80004002` error disappeared. |
+| Repeated static capture | Ten identical Explorer frames completed in `32-47 ms`, followed by twenty more captures in `30-53 ms` (`35 ms` average). |
+| Dynamic capture | Three Task Manager frames spaced two seconds apart completed; the second and third frames differed from their predecessor. |
+| Accessibility | Explorer tree length `6588`, including `Antigravity`. |
+| Resource stability | After warm-up and repeated batches the main helper remained near `54-55` threads and `788-794` handles; no linear growth was observed. |
+| Window enumeration | Explorer and Task Manager were both returned by `list_windows`; the test-created Task Manager window was closed afterward. |
+
+As with every prior profile, this is an exact input/output hash pair. A later helper hash must be analyzed independently even when the guarded regions appear unchanged.
+
 ### Desktop 26.715 upgrade-repair regressions
 
 The Store upgrade to Desktop `26.715.2305.0` (`codex-cli 0.145.0-alpha.18`) was also checked after a full MSIX repatch on Windows 10 build `19045`:
@@ -181,6 +207,6 @@ The later Store upgrade to Desktop `26.715.3651.0` (the same `codex-cli 0.145.0-
 - Fast wire verification again reached `/v1/responses` with `service_tier=priority`; strict Computer Use verification returned a `1920x1080` screenshot while the helper retained the documented patched SHA-256.
 - Chrome extension, native-host manifest, launch dry run, and the Windows sandbox smoke test passed.
 
-These are upgrade-repair regression checks for the `0.4.20` profile. The deeper end-to-end helper validations were performed on Desktop `26.707.12708.0` for `0.4.20`, Desktop `26.721.4979.0` for `0.5.2`, and Desktop `26.803.10989.0` for `0.6.6`; each complete helper hash pair, not a Desktop version by itself, remains the compatibility boundary.
+These are upgrade-repair regression checks for the `0.4.20` profile. The deeper end-to-end helper validations were performed on Desktop `26.707.12708.0` for `0.4.20`, Desktop `26.721.4979.0` for `0.5.2`, Desktop `26.803.10989.0` for `0.6.6`, and Desktop `26.810.6296.0` for `0.6.11`; each complete helper hash pair, not a Desktop version by itself, remains the compatibility boundary.
 
 Repeated static captures can appear as alternating complete/black composites in the conversation renderer. In the validated run, every underlying static image data URL had the same length and SHA-256, so that presentation artifact was not a corrupted helper frame.

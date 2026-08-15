@@ -1,12 +1,24 @@
 [CmdletBinding()]
 param(
-  [string]$HelperPath
+  [string]$HelperPath,
+  [ValidateSet('0.6.6', '0.6.11')]
+  [string]$SkyVersion = '0.6.11'
 )
 
 $ErrorActionPreference = 'Stop'
-$ExpectedSkyVersion = '0.6.6'
-$ExpectedOriginalHash = 'BE488E66C38E12FA46850EE48C1F5E44ECDB0A3A64042E064E3A1A1DA286AC42'
-$ExpectedPatchedHash = '34D6EB4F23630AD6E7211898AA7678472C9ED7ACFD972C78B7D9E575A1C5C640'
+$Profiles = @{
+  '0.6.6' = [ordered]@{
+    OriginalHash = 'BE488E66C38E12FA46850EE48C1F5E44ECDB0A3A64042E064E3A1A1DA286AC42'
+    PatchedHash = '34D6EB4F23630AD6E7211898AA7678472C9ED7ACFD972C78B7D9E575A1C5C640'
+  }
+  '0.6.11' = [ordered]@{
+    OriginalHash = 'DE07F17A7206588687A8F722E4EBFC5A4FB1BD87F91DF2C60BB5C777C6D5CDCD'
+    PatchedHash = '40530E628C91EF510F81A02FD3394C18E0D322C3D68D4A0277F0B0C56A2D43CC'
+  }
+}
+$ExpectedSkyVersion = $SkyVersion
+$ExpectedOriginalHash = $Profiles[$SkyVersion].OriginalHash
+$ExpectedPatchedHash = $Profiles[$SkyVersion].PatchedHash
 $Patcher = Join-Path $PSScriptRoot 'patch-computer-use-helper-win10.ps1'
 
 function Assert-Equal {
@@ -53,7 +65,7 @@ function Resolve-OriginalHelper {
     }
   }
 
-  throw 'the exact @oai/sky 0.6.6 original helper is unavailable for this regression test'
+  throw "the exact @oai/sky $ExpectedSkyVersion original helper is unavailable for this regression test"
 }
 
 function Get-Status {
@@ -104,10 +116,10 @@ if ([string]::IsNullOrWhiteSpace($sourcePackagePath)) {
   $sourceSkyRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $sourceHelper))
   $sourcePackagePath = Join-Path $sourceSkyRoot 'package.json'
 }
-if (-not (Test-Path -LiteralPath $sourcePackagePath -PathType Leaf)) {
-  throw "source @oai/sky package.json is missing: $sourcePackagePath"
+$hasSourcePackage = Test-Path -LiteralPath $sourcePackagePath -PathType Leaf
+if ($hasSourcePackage) {
+  Assert-Equal ([string]((Get-Content -Raw -LiteralPath $sourcePackagePath | ConvertFrom-Json).version)) $ExpectedSkyVersion 'unexpected source @oai/sky version'
 }
-Assert-Equal ([string]((Get-Content -Raw -LiteralPath $sourcePackagePath | ConvertFrom-Json).version)) $ExpectedSkyVersion 'unexpected source @oai/sky version'
 
 $tempBase = [IO.Path]::GetFullPath($(if ([string]::IsNullOrWhiteSpace($env:TEMP)) { [IO.Path]::GetTempPath() } else { $env:TEMP }))
 $testRoot = Join-Path $tempBase ('codex-cua-win10-helper-test-' + [guid]::NewGuid().ToString('N'))
@@ -122,7 +134,12 @@ try {
   $codexHome = Join-Path $resolvedTestRoot 'codex-home'
   New-Item -ItemType Directory -Force -Path (Split-Path -Parent $testHelper) | Out-Null
   Copy-Item -LiteralPath $sourceHelper -Destination $testHelper -Force
-  Copy-Item -LiteralPath $sourcePackagePath -Destination (Join-Path $skyRoot 'package.json') -Force
+  $testPackagePath = Join-Path $skyRoot 'package.json'
+  if ($hasSourcePackage) {
+    Copy-Item -LiteralPath $sourcePackagePath -Destination $testPackagePath -Force
+  } else {
+    [IO.File]::WriteAllText($testPackagePath, ('{"version":"' + $ExpectedSkyVersion + '"}'), [Text.UTF8Encoding]::new($false))
+  }
 
   $before = Get-Status $testHelper $codexHome
   Assert-Equal $before.State 'original-patchable' 'original state mismatch'
