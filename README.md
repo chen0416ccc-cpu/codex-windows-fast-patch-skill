@@ -4,8 +4,6 @@
 
 这是 `codex-windows-fast-patch` skill 的公开版本，用于让支持 Agent Skills 的智能体修复 Windows 版 Codex Desktop 更新后常见的功能失效问题。
 
-本仓库 main：<https://github.com/suixincrazy/codex-windows-fast-patch-skill/tree/main>
-
 ## 主要功能
 
 如果你的 Windows Codex Desktop 更新后出现下面这些问题，可以让 agent 使用这个 skill：
