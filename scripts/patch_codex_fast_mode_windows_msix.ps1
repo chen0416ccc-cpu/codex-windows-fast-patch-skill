@@ -110,6 +110,8 @@ function Find-CodexAppPath {
     if (-not (Test-CodexAppPath $manual)) {
       Fail "-AppPath is not a Codex app directory: $AppPath"
     }
+    $manualVersion = Get-CodexAppVersion $manual
+    Write-Log "selected Codex app: $manual version=$manualVersion source=explicit-AppPath"
     return $manual
   }
 
@@ -151,41 +153,100 @@ function Find-CodexAppPath {
   }
 
   # Store updates can leave the newest package Staged for SYSTEM while the
-  # user's package query still returns the older installed build. Inspect both
-  # scopes and choose the newest valid package instead of returning early.
-  $packages = @()
-  $packages += @(Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction SilentlyContinue)
-  try {
-    $packages += @(Get-AppxPackage -Name 'OpenAI.Codex' -AllUsers -ErrorAction SilentlyContinue)
-  } catch {
-    Write-Log "warning: could not query all user Codex packages: $($_.Exception.Message)"
-  }
-  foreach ($pkg in ($packages | Sort-Object Version -Descending)) {
+  # user's package query still returns the older installed build. Keep only
+  # the current-user and SYSTEM-Staged registrations from the all-user view.
+  $currentPackages = @(Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction SilentlyContinue)
+  foreach ($pkg in ($currentPackages | Sort-Object Version -Descending)) {
     if ($pkg -and $pkg.InstallLocation) {
-      & $addCandidate (Join-Path $pkg.InstallLocation 'app') $pkg.Version 3 'appx-package'
+      & $addCandidate (Join-Path $pkg.InstallLocation 'app') $pkg.Version 3 'appx-package-current-user'
     }
   }
 
-  $running = Get-Process -Name 'Codex', 'ChatGPT' -ErrorAction SilentlyContinue |
+  $allUsersPackages = @()
+  $allUsersQueryFailed = $false
+  try {
+    $allUsersPackages = @(Get-AppxPackage -Name 'OpenAI.Codex' -AllUsers -ErrorAction Stop)
+  } catch {
+    $allUsersQueryFailed = $true
+    Write-Log "warning: could not query all user Codex packages: $($_.Exception.Message)"
+  }
+
+  $currentUserSid = $null
+  try {
+    $currentUserSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+  } catch {
+    Write-Log "warning: could not determine current user SID: $($_.Exception.Message)"
+  }
+  foreach ($pkg in ($allUsersPackages | Sort-Object Version -Descending)) {
+    if (-not ($pkg -and $pkg.InstallLocation)) {
+      continue
+    }
+
+    $source = $null
+    foreach ($userInfo in @($pkg.PackageUserInformation)) {
+      $sid = $null
+      $securityId = $userInfo.UserSecurityId
+      if ($securityId) {
+        if ($securityId.PSObject.Properties['Sid']) {
+          $sid = [string]$securityId.Sid
+        } elseif ($securityId.PSObject.Properties['Value']) {
+          $sid = [string]$securityId.Value
+        } else {
+          $sid = [string]$securityId
+        }
+      }
+      $installState = [string]$userInfo.InstallState
+      if ($sid -eq 'S-1-5-18' -and $installState -eq 'Staged') {
+        $source = 'appx-package-system-staged'
+        break
+      }
+      if ($currentUserSid -and $sid -eq $currentUserSid -and $installState -in @('Installed', 'Staged')) {
+        $source = 'appx-package-current-user'
+      }
+    }
+    if ($source) {
+      & $addCandidate (Join-Path $pkg.InstallLocation 'app') $pkg.Version 3 $source
+    } else {
+      Write-Log "warning: ignoring all-user Codex package without current-user or SYSTEM-Staged registration: $($pkg.PackageFullName)"
+    }
+  }
+
+  $validRunningCandidateFound = $false
+  $running = @(Get-Process -Name 'Codex', 'ChatGPT' -ErrorAction SilentlyContinue |
     Where-Object {
       $_.Path -and (
         $_.Path -like '*\WindowsApps\OpenAI.Codex_*\app\Codex.exe' -or
         $_.Path -like '*\WindowsApps\OpenAI.Codex_*\app\ChatGPT.exe'
       )
-    } |
-    Sort-Object StartTime -Descending |
-    Select-Object -First 1
-  if ($running) {
-    $candidate = Split-Path -Parent $running.Path
+    })
+  foreach ($process in @($running)) {
+    $candidate = Split-Path -Parent $process.Path
+    if (Test-CodexAppPath $candidate) {
+      $validRunningCandidateFound = $true
+    }
     & $addCandidate $candidate $null 2 'running-process'
   }
 
-  $windowsApps = Join-Path $env:ProgramFiles 'WindowsApps'
-  $dirs = Get-ChildItem -LiteralPath $windowsApps -Directory -Filter 'OpenAI.Codex_*_x64__*' -ErrorAction SilentlyContinue |
-    Sort-Object LastWriteTime -Descending
-  foreach ($dir in $dirs) {
-    $candidate = Join-Path $dir.FullName 'app'
-    & $addCandidate $candidate $null 1 'WindowsApps-directory'
+  $validWindowsAppsDirectoryFound = $false
+  if ($allUsersQueryFailed -or $allUsersPackages.Count -eq 0) {
+    $windowsApps = Join-Path $env:ProgramFiles 'WindowsApps'
+    try {
+      $dirs = Get-ChildItem -LiteralPath $windowsApps -Directory -Filter 'OpenAI.Codex_*_x64__*' -ErrorAction Stop |
+        Sort-Object LastWriteTime -Descending
+      foreach ($dir in $dirs) {
+        $candidate = Join-Path $dir.FullName 'app'
+        if (Test-CodexAppPath $candidate) {
+          $validWindowsAppsDirectoryFound = $true
+        }
+        & $addCandidate $candidate $null 1 'WindowsApps-directory'
+      }
+    } catch {
+      Write-Log "warning: could not enumerate WindowsApps Codex packages: $($_.Exception.Message)"
+    }
+  }
+
+  if ($allUsersQueryFailed -and -not $validWindowsAppsDirectoryFound -and -not $validRunningCandidateFound) {
+    Fail 'could not confirm Codex package candidates because the all-user query and WindowsApps fallback failed. Pass -AppPath explicitly.'
   }
 
   $selected = $candidates |

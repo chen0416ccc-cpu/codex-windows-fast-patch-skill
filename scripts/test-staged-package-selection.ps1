@@ -35,6 +35,7 @@ $definitions = foreach ($name in $requiredFunctions) {
 
 function Write-Log {
   param([string]$Message)
+  $script:Logs += $Message
 }
 
 function Fail {
@@ -46,6 +47,7 @@ $script:CurrentPackages = @()
 $script:AllUserPackages = @()
 $script:AllUsersQueryFails = $false
 $script:RunningProcesses = @()
+$script:Logs = @()
 
 function Get-AppxPackage {
   [CmdletBinding()]
@@ -89,11 +91,31 @@ function New-CodexPackageFixture {
 function New-PackageRecord {
   param(
     [Parameter(Mandatory = $true)][version]$Version,
-    [Parameter(Mandatory = $true)][string]$InstallLocation
+    [Parameter(Mandatory = $true)][string]$InstallLocation,
+    [object[]]$PackageUserInformation = @()
   )
   return [pscustomobject]@{
     Version = $Version
     InstallLocation = $InstallLocation
+    PackageFullName = "OpenAI.Codex_$Version"
+    PackageUserInformation = $PackageUserInformation
+  }
+}
+
+function New-PackageUserInfo {
+  param(
+    [Parameter(Mandatory = $true)][string]$Sid,
+    [Parameter(Mandatory = $true)][string]$InstallState,
+    [ValidateSet('Value', 'Sid')][string]$SecurityIdShape = 'Value'
+  )
+  $securityId = if ($SecurityIdShape -eq 'Sid') {
+    [pscustomobject]@{ Sid = $Sid }
+  } else {
+    [System.Security.Principal.SecurityIdentifier]::new($Sid)
+  }
+  return [pscustomobject]@{
+    UserSecurityId = $securityId
+    InstallState = $InstallState
   }
 }
 
@@ -122,38 +144,90 @@ try {
   $env:ProgramFiles = $programFiles
   $oldRoot = New-CodexPackageFixture -WindowsAppsRoot $windowsApps -Version '26.803.10989.0'
   $newRoot = New-CodexPackageFixture -WindowsAppsRoot $windowsApps -Version '26.810.4967.0'
+  $otherUserRoot = New-CodexPackageFixture -WindowsAppsRoot $windowsApps -Version '26.900.0.0'
   (Get-Item -LiteralPath $oldRoot).LastWriteTime = (Get-Date).AddMinutes(5)
   (Get-Item -LiteralPath $newRoot).LastWriteTime = (Get-Date).AddMinutes(-5)
+  $currentUserSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 
-  $script:CurrentPackages = @(New-PackageRecord -Version '26.803.10989.0' -InstallLocation $oldRoot)
+  $script:CurrentPackages = @(
+    New-PackageRecord -Version '26.803.10989.0' -InstallLocation $oldRoot -PackageUserInformation @(
+      New-PackageUserInfo -Sid $currentUserSid -InstallState 'Installed'
+    )
+  )
   $script:AllUserPackages = @(
-    New-PackageRecord -Version '26.803.10989.0' -InstallLocation $oldRoot
-    New-PackageRecord -Version '26.810.4967.0' -InstallLocation $newRoot
+    New-PackageRecord -Version '26.803.10989.0' -InstallLocation $oldRoot -PackageUserInformation @(
+      New-PackageUserInfo -Sid $currentUserSid -InstallState 'Installed'
+    )
+    New-PackageRecord -Version '26.810.4967.0' -InstallLocation $newRoot -PackageUserInformation @(
+      New-PackageUserInfo -Sid 'S-1-5-18' -InstallState 'Staged' -SecurityIdShape 'Sid'
+    )
+    New-PackageRecord -Version '26.900.0.0' -InstallLocation $otherUserRoot -PackageUserInformation @(
+      New-PackageUserInfo -Sid 'S-1-5-21-999-888-777-666' -InstallState 'Installed'
+    )
   )
   $script:AllUsersQueryFails = $false
   $AppPath = $null
   Assert-PathEqual `
     -Actual (Find-CodexAppPath) `
     -Expected (Join-Path $newRoot 'app') `
-    -Message 'a newer all-users Staged package wins over the older user package'
+    -Message 'a SYSTEM-Staged package wins without selecting a newer other-user package'
 
+  Remove-Item -LiteralPath (Join-Path $otherUserRoot 'app\resources\rg.exe') -Force
   $script:AllUsersQueryFails = $true
   Assert-PathEqual `
     -Actual (Find-CodexAppPath) `
     -Expected (Join-Path $newRoot 'app') `
     -Message 'WindowsApps fallback sorts by package version instead of directory timestamp'
 
+  $script:CurrentPackages = @()
+  $script:RunningProcesses = @(
+    [pscustomobject]@{
+      Path = Join-Path (Join-Path $oldRoot 'app') 'ChatGPT.exe'
+      StartTime = (Get-Date).AddMinutes(10)
+    }
+    [pscustomobject]@{
+      Path = Join-Path (Join-Path $newRoot 'app') 'Codex.exe'
+      StartTime = (Get-Date).AddMinutes(-10)
+    }
+  )
+  $previousProgramFilesForRunning = $env:ProgramFiles
+  $env:ProgramFiles = Join-Path $fixture 'inaccessible Program Files'
+  Assert-PathEqual `
+    -Actual (Find-CodexAppPath) `
+    -Expected (Join-Path $newRoot 'app') `
+    -Message 'a newer running package wins even when it started later'
+  $env:ProgramFiles = $previousProgramFilesForRunning
+
+  $script:RunningProcesses = @()
+  $env:ProgramFiles = Join-Path $fixture 'inaccessible Program Files'
+  $script:CurrentPackages = @(New-PackageRecord -Version '26.803.10989.0' -InstallLocation $oldRoot)
+  $selectionFailed = $false
+  try {
+    $null = Find-CodexAppPath
+  } catch {
+    $selectionFailed = $_.Exception.Message -match 'could not confirm Codex package candidates'
+  }
+  if (-not $selectionFailed) {
+    throw 'assertion failed: unavailable all-user and WindowsApps queries require AppPath'
+  }
+  $env:ProgramFiles = $previousProgramFilesForRunning
+
   Remove-Item -LiteralPath (Join-Path $newRoot 'app\resources\rg.exe') -Force
+  $script:CurrentPackages = @(New-PackageRecord -Version '26.803.10989.0' -InstallLocation $oldRoot)
   Assert-PathEqual `
     -Actual (Find-CodexAppPath) `
     -Expected (Join-Path $oldRoot 'app') `
     -Message 'an incomplete newer package is skipped'
 
   $AppPath = Join-Path $oldRoot 'app'
+  $script:Logs = @()
   Assert-PathEqual `
     -Actual (Find-CodexAppPath) `
     -Expected (Join-Path $oldRoot 'app') `
     -Message 'an explicit AppPath remains authoritative'
+  if (-not ($script:Logs -match 'selected Codex app: .*source=explicit-AppPath')) {
+    throw 'assertion failed: explicit AppPath selection is logged'
+  }
 } finally {
   $env:ProgramFiles = $previousProgramFiles
   Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
