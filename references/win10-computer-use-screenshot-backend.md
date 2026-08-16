@@ -132,7 +132,7 @@ The helper profile passed the following Windows 10 tests on Desktop `26.707.1270
 | Repeated static capture | Two batches of ten, all successful; subsequent captures about `31-96 ms`. |
 | Resource stability | Warm-up baseline `24` threads / `506` handles; batches settled at `18/501` and `19/503`, with no linear growth. |
 | Dynamic capture | Three Task Manager performance frames two seconds apart produced three distinct image-data hashes. |
-| Accessibility | Explorer tree length `8708`, including `Antigravity`. |
+| Accessibility | Explorer tree length `8708`, including the expected folder name. |
 | Window enumeration | Explorer and Task Manager both returned by `list_windows`. |
 | Local plugin verification | `client import ok`, `helper transport ok`, and `verification ok`. |
 
@@ -152,7 +152,7 @@ Desktop `26.721.4979.0` introduced `@oai/sky 0.5.2` with original helper SHA-256
 | Repeated static capture | Two batches of ten succeeded. Captures were about `25-50 ms`; all ten data URLs within each unchanged foreground batch had an identical SHA-256. |
 | Screenshot resource stability | Main helper baseline after the first capture was `59` threads / `658` handles, plus the expected one-thread cursor-manager child at `162` handles. After twenty static captures and a two-second settle it was `55/665` plus `1/162`, with no linear growth. |
 | Dynamic capture | Three Task Manager performance frames spaced two seconds apart completed in `32-39 ms` and produced three distinct SHA-256 values. A further ten screenshot-only captures completed in `24-37 ms`. |
-| Accessibility | Explorer tree length `5723`, including `Antigravity`. |
+| Accessibility | Explorer tree length `5723`, including the expected folder name. |
 | Window enumeration | Explorer and Task Manager were returned by `list_windows`; the test-created Task Manager window was closed afterward. |
 | Session cleanup | Both the main helper and cursor-manager child exited when the Computer Use validation session ended; no helper process remained. |
 
@@ -186,7 +186,7 @@ Desktop `26.810.6296.0` ships `@oai/sky 0.6.11` with original helper SHA-256 `DE
 | Cold Explorer capture | Passed; `1125x639` image returned and the previous `0x80004002` error disappeared. |
 | Repeated static capture | Ten identical Explorer frames completed in `32-47 ms`, followed by twenty more captures in `30-53 ms` (`35 ms` average). |
 | Dynamic capture | Three Task Manager frames spaced two seconds apart completed; the second and third frames differed from their predecessor. |
-| Accessibility | Explorer tree length `6588`, including `Antigravity`. |
+| Accessibility | Explorer tree length `6588`, including the expected folder name. |
 | Resource stability | After warm-up and repeated batches the main helper remained near `54-55` threads and `788-794` handles; no linear growth was observed. |
 | Window enumeration | Explorer and Task Manager were both returned by `list_windows`; the test-created Task Manager window was closed afterward. |
 
