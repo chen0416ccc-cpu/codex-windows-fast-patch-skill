@@ -23,6 +23,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\ski
 
 The helper checks `chen0416ccc-cpu/codex-windows-fast-patch-skill` on GitHub and synchronizes only the skill allowlist: the tracked top-level files (`SKILL.md`, `README.md`, `README.en.md`, `AGENTS.md`, `SECURITY.md`) plus `agents`, `scripts`, `references`, and `assets`. 如果无法更新到最新版，则不要中断当前任务；继续使用本机已安装的当前版本完成工作，并在结果中说明未能更新。
 
+An installed skill with `.skill-local-overlay` must also have `.skill-update-source.json` unless the caller passes an explicit `-Owner`, `-Repo`, or `-Branch`. The JSON file pins the intended fork source with `owner`, `repo`, and `branch`. The updater refuses to replace an unconfigured local overlay with its default upstream source, so a future upstream commit cannot silently erase local helper profiles or repair guards.
+
 If the normal workflow does not explain a restriction, plugin gate, Computer Use failure, browser_use failure, or Fast Mode failure, read `references/restriction-debug-cases.md` before editing scripts or repatching.
 If the task is phone remote control, QR pairing, mobile setup, isolated remote OAuth, remote-control WebSocket, or post-pairing API endpoint diagnosis, read `references/remote-control-debug-cases.md` before editing scripts or repatching.
 If a removed plugin or marketplace leaves stale `[plugins."..."]` or `[hooks.state."..."]` tables in `config.toml`, use the orphaned plugin config case in `references/restriction-debug-cases.md` before deleting anything.

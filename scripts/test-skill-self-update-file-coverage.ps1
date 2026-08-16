@@ -73,7 +73,7 @@ $versionWrite = $updaterAst.FindAll({
 }, $true) | Select-Object -First 1
 Assert-True ($null -ne $versionWrite) 'the version marker is written with Write-Utf8NoBom'
 
-$requiredFunctions = @('Write-Utf8NoBom', 'Copy-AllowedFile', 'Assert-UnderPath')
+$requiredFunctions = @('Write-Utf8NoBom', 'Copy-AllowedFile', 'Assert-UnderPath', 'Resolve-UpdateSource')
 $definitions = @{}
 foreach ($name in $requiredFunctions) {
   $definition = $updaterAst.FindAll({
@@ -140,6 +140,53 @@ try {
   [System.IO.File]::WriteAllText($versionPath, $sha + "`n", [System.Text.UTF8Encoding]::new($true))
   $legacySha = (Get-Content -LiteralPath $versionPath -Raw).Trim().TrimStart([char]0xFEFF)
   Assert-True ($legacySha -eq $sha) 'a legacy BOM marker still compares equal to the remote SHA'
+
+  $sourceSkillRoot = Join-Path $fixture 'source-selection-skill'
+  New-Item -ItemType Directory -Force -Path $sourceSkillRoot | Out-Null
+  Set-Content -LiteralPath (Join-Path $sourceSkillRoot '.skill-local-overlay') -Value 'overlay' -Encoding ASCII
+
+  $overlayBlocked = $false
+  try {
+    $null = Resolve-UpdateSource `
+      -SkillRoot $sourceSkillRoot `
+      -Owner 'upstream-owner' `
+      -Repo 'upstream-repo' `
+      -Branch 'main' `
+      -BoundParameters @{}
+  } catch {
+    $overlayBlocked = $_.Exception.Message -match 'refusing to overwrite the overlay'
+  }
+  Assert-True $overlayBlocked 'an unconfigured local overlay blocks default upstream replacement'
+
+  $sourceConfig = @{
+    owner = 'fork-owner'
+    repo = 'fork-repo'
+    branch = 'fork-main'
+  } | ConvertTo-Json
+  [IO.File]::WriteAllText(
+    (Join-Path $sourceSkillRoot '.skill-update-source.json'),
+    $sourceConfig,
+    [Text.UTF8Encoding]::new($false)
+  )
+  $configuredSource = Resolve-UpdateSource `
+    -SkillRoot $sourceSkillRoot `
+    -Owner 'upstream-owner' `
+    -Repo 'upstream-repo' `
+    -Branch 'main' `
+    -BoundParameters @{}
+  Assert-True ($configuredSource.Owner -eq 'fork-owner') 'local source config selects the fork owner'
+  Assert-True ($configuredSource.Repo -eq 'fork-repo') 'local source config selects the fork repository'
+  Assert-True ($configuredSource.Branch -eq 'fork-main') 'local source config selects the fork branch'
+  Assert-True ($configuredSource.Kind -eq 'local-config') 'local source config is reported in diagnostics'
+
+  $explicitSource = Resolve-UpdateSource `
+    -SkillRoot $sourceSkillRoot `
+    -Owner 'explicit-owner' `
+    -Repo 'upstream-repo' `
+    -Branch 'main' `
+    -BoundParameters @{ Owner = 'explicit-owner' }
+  Assert-True ($explicitSource.Owner -eq 'explicit-owner') 'an explicit owner overrides the local source config'
+  Assert-True ($explicitSource.Repo -eq 'fork-repo') 'unbound repository still comes from local source config'
 
   Write-Host "Skill self-update file coverage regression passed: $fixture"
 } finally {
