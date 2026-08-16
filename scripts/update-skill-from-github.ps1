@@ -37,6 +37,63 @@ function Resolve-OrCreateDirectory {
   return (Resolve-Path -LiteralPath $Path).ProviderPath
 }
 
+function Resolve-UpdateSource {
+  param(
+    [string]$SkillRoot,
+    [string]$Owner,
+    [string]$Repo,
+    [string]$Branch,
+    [object]$BoundParameters
+  )
+
+  $overlayPath = Join-Path $SkillRoot '.skill-local-overlay'
+  $sourcePath = Join-Path $SkillRoot '.skill-update-source.json'
+  $hasExplicitSource = (
+    $BoundParameters.ContainsKey('Owner') -or
+    $BoundParameters.ContainsKey('Repo') -or
+    $BoundParameters.ContainsKey('Branch')
+  )
+
+  if ((Test-Path -LiteralPath $overlayPath -PathType Leaf) -and
+      -not (Test-Path -LiteralPath $sourcePath -PathType Leaf) -and
+      -not $hasExplicitSource) {
+    throw 'local overlay marker is present but .skill-update-source.json is missing; refusing to overwrite the overlay with the default upstream source'
+  }
+
+  $sourceKind = 'parameters'
+  if (Test-Path -LiteralPath $sourcePath -PathType Leaf) {
+    try {
+      $configured = Get-Content -Raw -LiteralPath $sourcePath | ConvertFrom-Json
+    } catch {
+      throw "invalid local skill update source file: $sourcePath ($($_.Exception.Message))"
+    }
+
+    foreach ($name in @('owner', 'repo', 'branch')) {
+      if ([string]::IsNullOrWhiteSpace([string]$configured.$name)) {
+        throw "invalid local skill update source file: missing $name in $sourcePath"
+      }
+    }
+
+    if (-not $BoundParameters.ContainsKey('Owner')) {
+      $Owner = [string]$configured.owner
+    }
+    if (-not $BoundParameters.ContainsKey('Repo')) {
+      $Repo = [string]$configured.repo
+    }
+    if (-not $BoundParameters.ContainsKey('Branch')) {
+      $Branch = [string]$configured.branch
+    }
+    $sourceKind = 'local-config'
+  }
+
+  return [pscustomobject]@{
+    Owner = $Owner
+    Repo = $Repo
+    Branch = $Branch
+    Kind = $sourceKind
+  }
+}
+
 function Assert-UnderPath {
   param(
     [string]$Path,
@@ -122,6 +179,18 @@ try {
   }
 
   $skillRoot = Resolve-OrCreateDirectory $SkillDir
+  $updateSource = Resolve-UpdateSource `
+    -SkillRoot $skillRoot `
+    -Owner $Owner `
+    -Repo $Repo `
+    -Branch $Branch `
+    -BoundParameters $PSBoundParameters
+  $Owner = $updateSource.Owner
+  $Repo = $updateSource.Repo
+  $Branch = $updateSource.Branch
+  if ($updateSource.Kind -eq 'local-config') {
+    Write-Log "using local update source: $Owner/$Repo@$Branch"
+  }
   $versionPath = Join-Path $skillRoot '.skill-version'
   $remoteSha = Get-RemoteHeadSha -Owner $Owner -Repo $Repo -Branch $Branch
   $localSha = ''
