@@ -2667,7 +2667,20 @@ function Get-InstalledChromeBrowserClientTrust {
   $sha256 = (Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash.ToLowerInvariant()
   $resourcesRoot = Split-Path -Parent (Split-Path -Parent $InstalledMarketplaceRoot)
   $appAsarPath = Join-Path $resourcesRoot 'app.asar'
-  if (-not (Test-FileContainsAsciiText $appAsarPath $sha256)) {
+  $hashTrusted = Test-FileContainsAsciiText $appAsarPath $sha256
+  $nodeReplServiceTrusted = $false
+  if (-not $hashTrusted) {
+    # Codex 26.814 lightweight browser clients are packaged outside app.asar.
+    # The Desktop bundle provisions NODE_REPL_TRUSTED_SERVICES and the
+    # browser service path; the client enforces the same contract through
+    # globalThis.nodeRepl.rpc.
+    $nodeReplServiceTrusted =
+      (Test-FileContainsAsciiText $appAsarPath 'NODE_REPL_TRUSTED_SERVICES') -and
+      (Test-FileContainsAsciiText $appAsarPath 'browserServicePath') -and
+      (Test-FileContainsAsciiText $sourcePath 'Browser use requires a trusted Node REPL browser service') -and
+      (Test-FileContainsAsciiText $sourcePath 'setupBrowserRuntime')
+  }
+  if (-not $hashTrusted -and -not $nodeReplServiceTrusted) {
     throw "installed app.asar does not trust the packaged Chrome browser client hash: $sha256"
   }
 
@@ -2675,6 +2688,7 @@ function Get-InstalledChromeBrowserClientTrust {
     SourcePath = $sourcePath
     Sha256 = $sha256
     AppAsarPath = $appAsarPath
+    TrustMode = if ($hashTrusted) { 'asar-hash' } else { 'node-repl-service' }
   }
 }
 
