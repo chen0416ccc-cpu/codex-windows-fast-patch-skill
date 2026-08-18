@@ -18,8 +18,9 @@ Use this profile only when all of the following are true:
 | `0.6.6` | `26.803.10989.0` | `BE488E66C38E12FA46850EE48C1F5E44ECDB0A3A64042E064E3A1A1DA286AC42` | `34D6EB4F23630AD6E7211898AA7678472C9ED7ACFD972C78B7D9E575A1C5C640` |
 | `0.6.11` | `26.810.6296.0` | `DE07F17A7206588687A8F722E4EBFC5A4FB1BD87F91DF2C60BB5C777C6D5CDCD` | `40530E628C91EF510F81A02FD3394C18E0D322C3D68D4A0277F0B0C56A2D43CC` |
 | `0.6.11` | `26.810.7004.0` | `7A95D14EBF992955D8AB8E6C57A75545ED7D18E864B0F5C1B9FE7F47685BD897` | `E84A4ECB473CF9D3B4B65BB27A298DE6602AD8A1A11B21EE0BA7BC9209FE4DA9` |
+| `0.6.16` | `26.814.5167.0` | `E40BE6145157885F0E155A4247DF3B64BD5D3455A04E276503B0E2821B3EA39E` | `F35CA6D89959EDEFB4DF46A5ECC6202091AB3C63E885E6CD6CF9824D92B66EB7` |
 
-One `@oai/sky` version can ship more than one helper binary across Desktop builds, so the table is keyed by the complete hash pair, not by the version string alone. Both `0.6.11` rows use the same five guarded regions at the same offsets.
+One `@oai/sky` version can ship more than one helper binary across Desktop builds, so the table is keyed by the complete hash pair, not by the version string alone. Both `0.6.11` rows use the same five guarded regions at the same offsets; `0.6.16` keeps the same callback paths but has its own wrapper padding location and exact hash pair.
 
 The `0.4.20` original helper was also observed in Desktop `26.715.2305.0` by package inspection. That observation did not create a separate end-to-end profile. The patcher is `scripts/patch-computer-use-helper-win10.ps1`.
 
@@ -68,6 +69,11 @@ No executable is stored in this repository. The patcher reconstructs the validat
 | `0.6.11` | `0x0004CF97` | `0x14004DB97` | Continue after the existing one-shot flag check. |
 | `0.6.11` | `0x0014868F-0x0014873D` | `0x14014928F-0x14014933D` | Wrapper, thread creation/failure cleanup, and MTA worker. |
 | `0.6.11` | `0x0014B128` | `0x14014C928` | Redirect the `FrameArrived` delegate vtable entry to the wrapper. |
+| `0.6.16` | `0x00047E01` | `0x140048A01` | Skip the optional border-interface failure path. |
+| `0.6.16` | `0x0004CF86` | `0x14004DB86` | Send the busy/re-entry branch to the normal return tail. |
+| `0.6.16` | `0x0004CF97` | `0x14004DB97` | Continue after the existing one-shot flag check. |
+| `0.6.16` | `0x001486AF-0x0014875D` | `0x1401492AF-0x14014935D` | Wrapper, thread creation/failure cleanup, and MTA worker. |
+| `0.6.16` | `0x0014B128` | `0x14014C928` | Redirect the `FrameArrived` delegate vtable entry to the wrapper. |
 
 ## Apply and verify
 
@@ -212,6 +218,25 @@ Desktop `26.810.7004.0` ships `@oai/sky 0.6.11` again, but with a different help
 | Window enumeration | Explorer, Task Manager, VS Code, and Clash Verge returned by `list_windows`; test-created windows were closed afterward. |
 
 Because the Processes tab does not repaint while backgrounded, a dynamic-capture check must activate the window and select a continuously animating view; otherwise identical frames are expected and prove nothing about the `FrameArrived` patch.
+
+### `@oai/sky 0.6.16` / Desktop 26.814.5167.0 validation
+
+Desktop `26.814.5167.0` ships `@oai/sky 0.6.16` with a new `1,895,728`-byte helper. The original helper SHA-256 is `E40BE6145157885F0E155A4247DF3B64BD5D3455A04E276503B0E2821B3EA39E`; the previous profile was not reused by version number alone. Static analysis revalidated the optional-interface path, busy/one-shot guards, import slots, original `FrameArrived` callback, and a separate executable padding region at file offset `0x1486AF` (virtual address `0x1401492AF`). The vtable entry at `0x14B128` was redirected from `43db044001000000` to `af92144001000000`.
+
+- The guarded in-memory rewrite produced complete candidate SHA-256 `F35CA6D89959EDEFB4DF46A5ECC6202091AB3C63E885E6CD6CF9824D92B66EB7`, and the live helper reproduced it exactly.
+- The wrapper retained the existing `CreateThread`, `CloseHandle`, `RoInitialize`, and `RoUninitialize` import slots and the original callback at `0x14004DB43`. No executable under `WindowsApps` was modified.
+- The isolated regression passed `original -> patched -> idempotent install -> rollback -> idempotent rollback`, complete input/output hash checks, and unknown-hash rejection. The original backup is stored under `.codex\backups\computer-use-helper\26.814.5167.0-sky-0.6.16-E40BE614`.
+
+| Test | Result |
+| --- | --- |
+| Cold Explorer capture | Passed through the real Computer Use route; `1125x639` image returned and no `SetIsBorderRequired / 0x80004002` error recurred. |
+| Repeated static capture | Ten unchanged Explorer captures succeeded; all underlying image data URLs had the same SHA-256 `49dd0400f32004013d8cd2854799d140e8d4b554a28dfd19bb57bafa265e9368`. |
+| Dynamic capture | Eight Task Manager Performance-tab frames spaced about `1.2 s` apart were all distinct (`8/8`); each was `666x593`. |
+| Accessibility | Task Manager text exposed the tab control with the `性能` item and live CPU, memory, disk, network, and GPU nodes; the captured tree was `4764` characters. |
+| Resource stability | During twenty warm-up captures, the single main helper stayed at `51` threads / `784` handles across repeated half-second samples; no linear growth was observed. |
+| Window enumeration | Explorer and Task Manager were returned by `list_windows`; the validation session used the existing helper and cursor-manager child. |
+
+As with every other profile, this is an exact input/output hash pair. A later helper hash requires independent PE/code analysis and real static/dynamic Computer Use validation.
 
 ### Desktop 26.715 upgrade-repair regressions
 

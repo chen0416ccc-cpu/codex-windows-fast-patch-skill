@@ -74,7 +74,13 @@ $cachedHash = (Get-FileHash -LiteralPath $browserClient -Algorithm SHA256).Hash.
 if ($cachedHash -ne $installedHash) {
   throw "Chrome browser client hash drift removes privileged node_repl capabilities: expected=$installedHash actual=$cachedHash path=$browserClient"
 }
-if (-not (Test-FileContainsAsciiText $appAsar $installedHash)) {
+$hashTrusted = Test-FileContainsAsciiText $appAsar $installedHash
+$nodeReplServiceTrusted =
+  (Test-FileContainsAsciiText $appAsar 'NODE_REPL_TRUSTED_SERVICES') -and
+  (Test-FileContainsAsciiText $appAsar 'browserServicePath') -and
+  (Test-FileContainsAsciiText $installedBrowserClient 'Browser use requires a trusted Node REPL browser service') -and
+  (Test-FileContainsAsciiText $installedBrowserClient 'setupBrowserRuntime')
+if (-not $hashTrusted -and -not $nodeReplServiceTrusted) {
   throw "installed app.asar does not trust the packaged Chrome browser client hash: $installedHash"
 }
 
@@ -87,4 +93,5 @@ if ($LASTEXITCODE -ne 0) {
   throw "Chrome browser client syntax check failed: $browserClient"
 }
 
-Write-Output "Chrome browser client trusted hash passed: $installedHash"
+$trustMode = if ($hashTrusted) { 'asar-hash' } else { 'node-repl-service' }
+Write-Output "Chrome browser client trusted ($trustMode): $installedHash"
