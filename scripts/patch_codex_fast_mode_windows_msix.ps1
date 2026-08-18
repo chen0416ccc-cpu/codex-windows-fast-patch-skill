@@ -663,8 +663,10 @@ const currentDirectOriginalRe = /function (\w+)\(e\)\{let (\w+)=([^,;]+),(\w+)=e
 const currentAsyncOriginalRe = /async function (\w+)\((\w+),(\w+)\)\{let (\w+)=await ([A-Za-z_$][\w$]*)\(\2,\3\);return \4===`chatgpt`\?\(await \2\.query\.fetch\(([A-Za-z_$][\w$]*),\{authMethod:\4,hostId:\3\}\)\)\.requirements\?\.featureRequirements\?\.fast_mode!==!1:!1\}/;
 const currentCachedAsyncOriginalRe = /async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3\);if\(\4!==`chatgpt`\)return!1;let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\3,\{priority:`critical`\}\);return \2\.query\.setData\(([A-Za-z_$][\w$]*),\{authMethod:\4,hostId:\3\},\6\),\6\.requirements\?\.featureRequirements\?\.fast_mode!==!1\}/;
 const currentSplitConditionRe = /if\((\w+)\?\.authMethod!==`chatgpt`\|\|(\w+)\)\{/;
+const currentAuthOnlyFastModeRe = /async function [A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*\)\{[\s\S]{0,1000}?if\([A-Za-z_$][\w$]*!==`chatgpt`\)return!1;[\s\S]{0,1000}?featureRequirements\?\.fast_mode!==!1\}/;
+const currentAuthOnlyFastModePatchedRe = /async function [A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*\)\{[\s\S]{0,1000}?featureRequirements\?\.fast_mode!==!1\}/;
 
-if (legacyPatchedRe.test(text) || currentAsyncPatchedRe.test(text) || currentCachedAsyncPatchedRe.test(text) || (currentDirectPatchedRe.test(text) && !legacyOriginalRe.test(text) && !currentDirectOriginalRe.test(text) && !currentSplitConditionRe.test(text))) {
+if (legacyPatchedRe.test(text) || currentAsyncPatchedRe.test(text) || currentCachedAsyncPatchedRe.test(text) || (currentAuthOnlyFastModePatchedRe.test(text) && !currentAuthOnlyFastModeRe.test(text)) || (currentDirectPatchedRe.test(text) && !legacyOriginalRe.test(text) && !currentDirectOriginalRe.test(text) && !currentSplitConditionRe.test(text))) {
   process.stdout.write('already-patched');
   process.exit(0);
 }
@@ -697,6 +699,12 @@ if (!patched) {
   if (currentCachedAsyncMatch) {
     const [, fn, hostManagerVar, hostIdVar, authMethodVar, authMethodFn, requirementsVar, requirementsFn, queryVar] = currentCachedAsyncMatch;
     next = next.replace(currentCachedAsyncOriginalRe, `async function ${fn}(${hostManagerVar},${hostIdVar}){let ${authMethodVar}=await ${authMethodFn}(${hostManagerVar},${hostIdVar});let ${requirementsVar}=await ${requirementsFn}(${hostIdVar},{priority:\`critical\`});return ${hostManagerVar}.query.setData(${queryVar},{authMethod:${authMethodVar},hostId:${hostIdVar}},${requirementsVar}),${requirementsVar}.requirements?.featureRequirements?.fast_mode!==!1}`);
+    patched = true;
+  }
+
+  const currentAuthOnlyFastModeMatch = next.match(currentAuthOnlyFastModeRe);
+  if (currentAuthOnlyFastModeMatch) {
+    next = next.replace(currentAuthOnlyFastModeRe, (match) => match.replace(/if\([A-Za-z_$][\w$]*!==`chatgpt`\)return!1;/, ''));
     patched = true;
   }
 
@@ -1276,6 +1284,40 @@ function patchFeatureHook(file) {
     'let $1={enabled:!0,isLoading:!1},$2=!1,$3=!0,$4=!1,$5=!1,$6;'
   );
 
+  function patchModernFeatureHook(source, featureName) {
+    const marker = `featureName:\`${featureName}\``;
+    const markerIndex = source.indexOf(marker);
+    if (markerIndex < 0) return source;
+    const functionStart = source.lastIndexOf('function ', markerIndex);
+    if (functionStart < 0) return source;
+    const nextFunction = source.indexOf('function ', markerIndex + marker.length);
+    const functionEnd = nextFunction < 0 ? source.length : nextFunction;
+    const segment = source.slice(functionStart, functionEnd);
+    let patchedSegment = segment.replace(
+      /(let|var) ([A-Za-z_$][\w$]*)=GNr\([A-Za-z_$][\w$]*\),/,
+      '$1 $2={enabled:!0,isLoading:!1},'
+    );
+    patchedSegment = patchedSegment.replace(
+      /([A-Za-z_$][\w$]*)=Px\(`\d+`\),/g,
+      '$1=!0,'
+    );
+    return source.slice(0, functionStart) + patchedSegment + source.slice(functionEnd);
+  }
+
+  after = patchModernFeatureHook(after, 'browser_use_external');
+  after = patchModernFeatureHook(after, 'browser_use');
+  function modernFeatureHookAlreadyPatched(source, featureName) {
+    const marker = `featureName:\`${featureName}\``;
+    const markerIndex = source.indexOf(marker);
+    if (markerIndex < 0) return false;
+    const functionStart = source.lastIndexOf('function ', markerIndex);
+    if (functionStart < 0) return false;
+    const nextFunction = source.indexOf('function ', markerIndex + marker.length);
+    const functionEnd = nextFunction < 0 ? source.length : nextFunction;
+    const segment = source.slice(functionStart, functionEnd);
+    return /\{enabled:!0,isLoading:!1\}/.test(segment) && !/Px\(`\d+`\)/.test(segment);
+  }
+
   if (after === before &&
       !before.includes('let c={enabled:!0,isLoading:!1},d=!0,f=!1,p;') &&
       !before.includes('s=!0,d=!0,f;') &&
@@ -1284,7 +1326,8 @@ function patchFeatureHook(file) {
       !before.includes('i=!0,a=!0,l;') &&
       !before.includes('let u={enabled:!0,isLoading:!1},d=!1,f=!0,p=!1,_=!1,v;') &&
       !/\{enabled:!0,isLoading:!1\},[A-Za-z_$][\w$]*=!0,[A-Za-z_$][\w$]*=!1/.test(before) &&
-      !/[A-Za-z_$][\w$]*=!0,[A-Za-z_$][\w$]*=!0,[A-Za-z_$][\w$]*;/.test(before)) {
+      !/[A-Za-z_$][\w$]*=!0,[A-Za-z_$][\w$]*=!0,[A-Za-z_$][\w$]*;/.test(before) &&
+      !(modernFeatureHookAlreadyPatched(before, 'browser_use_external') && modernFeatureHookAlreadyPatched(before, 'browser_use'))) {
     process.stderr.write('browser-use-feature-hook-patch-target-not-found\n');
     process.exit(2);
   }
@@ -1310,9 +1353,22 @@ function patchSidebarAvailability(file) {
     /([A-Za-z_$][\w$]*)=`in_app_browser`,([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),\(\{get:[A-Za-z_$][\w$]*\}\)=>\{let\{data:([A-Za-z_$][\w$]*)\}=[\s\S]*?,[A-Za-z_$][\w$]*=\5\?\.find\([A-Za-z_$][\w$]*=>[A-Za-z_$][\w$]*\.name===\1\);return \5!=null&&[A-Za-z_$][\w$]*\?\.enabled!==!1\}\)/,
     '$1=`in_app_browser`,$2=$3($4,()=>!0)'
   );
+  const modernCapabilityPattern = /("browser\.in-app":\{)configFeatures:\[\{key:`in_app_browser`,host:`default`\}\],/;
+  const modernCapabilityPatched = /"browser\.in-app":\{supportedClients:\[`electron`\]\}/.test(before);
+  const beforeModernCapability = after;
+  after = after.replace(modernCapabilityPattern, '$1');
+  if (after === beforeModernCapability && !modernCapabilityPatched) {
+    after = after.replace(
+      /(name:`browser\.in-app`[\s\S]{0,1800}?)(let|var) ([A-Za-z_$][\w$]*)=hs\([A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*\)\.isCapable,/g,
+      '$1$2 $3=!0,'
+    );
+  }
+  const modernSidebarPatched = modernCapabilityPatched || /name:`browser\.in-app`[\s\S]{0,1800}?(?:let|var) [A-Za-z_$][\w$]*=!0,/.test(before);
+  const legacySidebarPatched = /(?:var|let) [A-Za-z_$][\w$]*=`in_app_browser`,[\s\S]{0,500}=>!0/.test(before);
   if (after === before &&
       !before.includes('a=t(n,()=>!0)') &&
-      !before.includes('()=>!0')) {
+      !legacySidebarPatched &&
+      !modernSidebarPatched) {
     process.stderr.write('browser-sidebar-availability-patch-target-not-found\n');
     process.exit(2);
   }
@@ -1637,9 +1693,12 @@ function Find-PatchTargets {
     foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter 'app-initial-*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
       $text = Get-Content -Raw -LiteralPath $candidate
       if ($text.Contains('in_app_browser') -and
-          $text.Contains('experimental-features') -and
-          (($text -match '`in_app_browser`,\w+=\w+\(\w+,\(\{get:\w+\}\)=>\{let\{data:\w+\}=.+?;return \w+!=null&&\w+\?\.enabled!==!1\}\)') -or
-           ($text -match '`in_app_browser`,\w+=\w+\(\w+,\(\)=>!0\)'))) {
+           (($text -match '`in_app_browser`,\w+=\w+\(\w+,\(\{get:\w+\}\)=>\{let\{data:\w+\}=.+?;return \w+!=null&&\w+\?\.enabled!==!1\}\)') -or
+            ($text -match '`in_app_browser`,\w+=\w+\(\w+,\(\)=>!0\)') -or
+            ($text -match '"browser\.in-app":\{configFeatures:\[\{key:`in_app_browser`,host:`default`\}\],') -or
+            ($text -match '"browser\.in-app":\{supportedClients:\[`electron`\]\}') -or
+            ($text -match 'name:`browser\.in-app`[\s\S]{0,1800}?(?:let|var) [A-Za-z_$][\w$]*=hs\([A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*\)\.isCapable,') -or
+           ($text -match 'name:`browser\.in-app`[\s\S]{0,1800}?(?:let|var) [A-Za-z_$][\w$]*=!0,'))) {
         $browserSidebarAvailabilityTarget = $candidate
         break
       }
