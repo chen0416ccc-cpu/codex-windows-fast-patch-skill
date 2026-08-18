@@ -648,6 +648,7 @@ function Write-PatcherFiles {
   $computerUsePatcherPath = Join-Path $WorkDir 'PatchComputerUseGates.cjs'
   $browserUsePatcherPath = Join-Path $WorkDir 'PatchBrowserUseGates.cjs'
   $bundledMarketplaceCopyPatcherPath = Join-Path $WorkDir 'PatchBundledMarketplaceCopy.cjs'
+  $nodeReplTrustedPathsPatcherPath = Join-Path $WorkDir 'PatchNodeReplTrustedPaths.cjs'
 
   Set-Content -LiteralPath $fastPatcherPath -Encoding UTF8 -Value @'
 const fs = require('node:fs');
@@ -658,13 +659,15 @@ const legacyPatchedRe = /function L\(e\)\{let (\w+)=v\(x\),(\w+)=e\?\.hostId\?\?
 const currentDirectPatchedRe = /featureRequirements\?\.fast_mode===!1;return!\w+\}/;
 const currentAsyncPatchedRe = /async function \w+\(\w+,\w+\)\{let \w+=await \w+\(\w+,\w+\);return\(await \w+\.query\.fetch\(\w+,\{authMethod:\w+,hostId:\w+\}\)\)\.requirements\?\.featureRequirements\?\.fast_mode!==!1\}/;
 const currentCachedAsyncPatchedRe = /async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3\);let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\3,\{priority:`critical`\}\);return \2\.query\.setData\(([A-Za-z_$][\w$]*),\{authMethod:\4,hostId:\3\},\6\),\6\.requirements\?\.featureRequirements\?\.fast_mode!==!1\}/;
+const currentManagerCachedAsyncPatchedRe = /async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3\);let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3,\{priority:`critical`\}\);return \2\.query\.setData\(([A-Za-z_$][\w$]*),\{authMethod:\4,hostId:\3\},\6\),\6\.requirements\?\.featureRequirements\?\.fast_mode!==!1\}/;
 const legacyOriginalRe = /function L\(e\)\{let (\w+)=v\(x\),(\w+)=e\?\.hostId\?\?\1,(\w+)=O\(\2\),\{data:(\w+)\}=d\(E,\2\);return!\(\3\?\.authMethod!==`chatgpt`\|\|\4\?\.requirements\?\.featureRequirements\?\.fast_mode===!1\)\}/;
 const currentDirectOriginalRe = /function (\w+)\(e\)\{let (\w+)=([^,;]+),(\w+)=e\?\.hostId\?\?\2,(\w+)=(\w+\(\4\)),\{data:(\w+)\}=(\w+\(\w+,\4\)),(\w+)=\7\?\.requirements\?\.featureRequirements\?\.fast_mode===!1;return!\(\5\?\.authMethod!==`chatgpt`\|\|\9\)\}/;
 const currentAsyncOriginalRe = /async function (\w+)\((\w+),(\w+)\)\{let (\w+)=await ([A-Za-z_$][\w$]*)\(\2,\3\);return \4===`chatgpt`\?\(await \2\.query\.fetch\(([A-Za-z_$][\w$]*),\{authMethod:\4,hostId:\3\}\)\)\.requirements\?\.featureRequirements\?\.fast_mode!==!1:!1\}/;
 const currentCachedAsyncOriginalRe = /async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3\);if\(\4!==`chatgpt`\)return!1;let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\3,\{priority:`critical`\}\);return \2\.query\.setData\(([A-Za-z_$][\w$]*),\{authMethod:\4,hostId:\3\},\6\),\6\.requirements\?\.featureRequirements\?\.fast_mode!==!1\}/;
+const currentManagerCachedAsyncOriginalRe = /async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3\);if\(\4!==`chatgpt`\)return!1;let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(\2,\3,\{priority:`critical`\}\);return \2\.query\.setData\(([A-Za-z_$][\w$]*),\{authMethod:\4,hostId:\3\},\6\),\6\.requirements\?\.featureRequirements\?\.fast_mode!==!1\}/;
 const currentSplitConditionRe = /if\((\w+)\?\.authMethod!==`chatgpt`\|\|(\w+)\)\{/;
 
-if (legacyPatchedRe.test(text) || currentAsyncPatchedRe.test(text) || currentCachedAsyncPatchedRe.test(text) || (currentDirectPatchedRe.test(text) && !legacyOriginalRe.test(text) && !currentDirectOriginalRe.test(text) && !currentSplitConditionRe.test(text))) {
+if (legacyPatchedRe.test(text) || currentAsyncPatchedRe.test(text) || currentCachedAsyncPatchedRe.test(text) || currentManagerCachedAsyncPatchedRe.test(text) || (currentDirectPatchedRe.test(text) && !legacyOriginalRe.test(text) && !currentDirectOriginalRe.test(text) && !currentSplitConditionRe.test(text))) {
   process.stdout.write('already-patched');
   process.exit(0);
 }
@@ -700,6 +703,13 @@ if (!patched) {
     patched = true;
   }
 
+  const currentManagerCachedAsyncMatch = next.match(currentManagerCachedAsyncOriginalRe);
+  if (currentManagerCachedAsyncMatch) {
+    const [, fn, hostManagerVar, hostIdVar, authMethodVar, authMethodFn, requirementsVar, requirementsFn, queryVar] = currentManagerCachedAsyncMatch;
+    next = next.replace(currentManagerCachedAsyncOriginalRe, `async function ${fn}(${hostManagerVar},${hostIdVar}){let ${authMethodVar}=await ${authMethodFn}(${hostManagerVar},${hostIdVar});let ${requirementsVar}=await ${requirementsFn}(${hostManagerVar},${hostIdVar},{priority:\`critical\`});return ${hostManagerVar}.query.setData(${queryVar},{authMethod:${authMethodVar},hostId:${hostIdVar}},${requirementsVar}),${requirementsVar}.requirements?.featureRequirements?.fast_mode!==!1}`);
+    patched = true;
+  }
+
   if (/canUseFastMode:!1/.test(next)) {
     const splitNext = next.replace(currentSplitConditionRe, 'if($2){');
     if (splitNext === next) {
@@ -712,7 +722,7 @@ if (!patched) {
 }
 
 if (!patched) {
-  process.stderr.write('patch-target-not-found\n');
+  process.stderr.write('fast-mode-patch-target-not-found\n');
   process.exit(2);
 }
 fs.writeFileSync(file, next);
@@ -1227,7 +1237,54 @@ function patchFeatureHook(file) {
     process.exit(2);
   }
 
-  let after = before.replace(
+  const currentInAppPairOriginalRe = /let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\.isCapable,([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(`410262010`\),([A-Za-z_$][\w$]*);/;
+  const currentInAppPairPatchedRe = /let [A-Za-z_$][\w$]*=!0,[A-Za-z_$][\w$]*=\([A-Za-z_$][\w$]*\(`410262010`\),!0\),[A-Za-z_$][\w$]*;\/\*CODEX_BROWSER_IN_APP_GATES_V2\*\//;
+  const currentInAppConfigOriginalRe = /let ([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\),([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\.runCodexInWsl\),([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\),([A-Za-z_$][\w$]*)=\1\.enabled&&!\1\.isLoading,([A-Za-z_$][\w$]*)=\1\.isLoading,([A-Za-z_$][\w$]*)=\2===!0\|\|\3\.kind===`wsl`,([A-Za-z_$][\w$]*);/;
+  const currentInAppConfigPatchedRe = /let [A-Za-z_$][\w$]*=\{enabled:!0,isLoading:!1\},[A-Za-z_$][\w$]*=!1,[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\),[A-Za-z_$][\w$]*=!0,[A-Za-z_$][\w$]*=!1,[A-Za-z_$][\w$]*=!1,[A-Za-z_$][\w$]*;\/\*CODEX_BROWSER_IN_APP_CONFIG_V2\*\//;
+  const currentExternalGateOriginalRe = /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(`410065390`\),([A-Za-z_$][\w$]*);/;
+  const currentExternalGatePatchedRe = /[A-Za-z_$][\w$]*=\([A-Za-z_$][\w$]*\(`410065390`\),!0\),[A-Za-z_$][\w$]*;\/\*CODEX_BROWSER_EXTERNAL_GATE_V2\*\//;
+  const currentExternalConfigOriginalRe = /let ([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\),([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\.runCodexInWsl\),([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\),([A-Za-z_$][\w$]*)=\2===!0\|\|\3\.kind===`wsl`,([A-Za-z_$][\w$]*);/;
+  const currentExternalConfigPatchedRe = /let [A-Za-z_$][\w$]*=\{enabled:!0,isLoading:!1\},[A-Za-z_$][\w$]*=!1,[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\),[A-Za-z_$][\w$]*=!1,[A-Za-z_$][\w$]*;\/\*CODEX_BROWSER_EXTERNAL_CONFIG_V2\*\//;
+  const hasCurrentCompiledShape = before.includes('browser.in-app') &&
+    before.includes('410065390') &&
+    before.includes('410262010') &&
+    before.includes('.runCodexInWsl');
+  const currentCompiledMarkers = [
+    'CODEX_BROWSER_IN_APP_GATES_V2',
+    'CODEX_BROWSER_IN_APP_CONFIG_V2',
+    'CODEX_BROWSER_EXTERNAL_GATE_V2',
+    'CODEX_BROWSER_EXTERNAL_CONFIG_V2'
+  ];
+  if (hasCurrentCompiledShape && (
+      !(currentInAppPairOriginalRe.test(before) || currentInAppPairPatchedRe.test(before)) ||
+      !(currentInAppConfigOriginalRe.test(before) || currentInAppConfigPatchedRe.test(before)) ||
+      !(currentExternalGateOriginalRe.test(before) || currentExternalGatePatchedRe.test(before)) ||
+      !(currentExternalConfigOriginalRe.test(before) || currentExternalConfigPatchedRe.test(before)))) {
+    process.stderr.write('browser-use-current-feature-hook-incomplete\n');
+    process.exit(2);
+  }
+
+  let after = before;
+  if (hasCurrentCompiledShape) {
+    after = after.replace(
+      currentInAppPairOriginalRe,
+      'let $1=!0,$5=($6(`410262010`),!0),$7;/*CODEX_BROWSER_IN_APP_GATES_V2*/'
+    );
+    after = after.replace(
+      currentInAppConfigOriginalRe,
+      'let $1={enabled:!0,isLoading:!1},$2=!1,$3=$4($5),$6=!0,$7=!1,$8=!1,$9;/*CODEX_BROWSER_IN_APP_CONFIG_V2*/'
+    );
+    after = after.replace(
+      currentExternalGateOriginalRe,
+      '$1=($2(`410065390`),!0),$3;/*CODEX_BROWSER_EXTERNAL_GATE_V2*/'
+    );
+    after = after.replace(
+      currentExternalConfigOriginalRe,
+      'let $1={enabled:!0,isLoading:!1},$2=!1,$3=$4($5),$6=!1,$7;/*CODEX_BROWSER_EXTERNAL_CONFIG_V2*/'
+    );
+  }
+
+  after = after.replace(
     /let c=u\(s\),d=a===`chrome-extension`\|\|o&&c\.enabled&&!c\.isLoading,f=a===`chrome-extension`\?!1:c\.isLoading,p;/,
     'let c={enabled:!0,isLoading:!1},d=!0,f=!1,p;'
   );
@@ -1284,7 +1341,8 @@ function patchFeatureHook(file) {
       !before.includes('i=!0,a=!0,l;') &&
       !before.includes('let u={enabled:!0,isLoading:!1},d=!1,f=!0,p=!1,_=!1,v;') &&
       !/\{enabled:!0,isLoading:!1\},[A-Za-z_$][\w$]*=!0,[A-Za-z_$][\w$]*=!1/.test(before) &&
-      !/[A-Za-z_$][\w$]*=!0,[A-Za-z_$][\w$]*=!0,[A-Za-z_$][\w$]*;/.test(before)) {
+      !/[A-Za-z_$][\w$]*=!0,[A-Za-z_$][\w$]*=!0,[A-Za-z_$][\w$]*;/.test(before) &&
+      !currentCompiledMarkers.every(marker => before.includes(marker))) {
     process.stderr.write('browser-use-feature-hook-patch-target-not-found\n');
     process.exit(2);
   }
@@ -1310,9 +1368,15 @@ function patchSidebarAvailability(file) {
     /([A-Za-z_$][\w$]*)=`in_app_browser`,([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),\(\{get:[A-Za-z_$][\w$]*\}\)=>\{let\{data:([A-Za-z_$][\w$]*)\}=[\s\S]*?,[A-Za-z_$][\w$]*=\5\?\.find\([A-Za-z_$][\w$]*=>[A-Za-z_$][\w$]*\.name===\1\);return \5!=null&&[A-Za-z_$][\w$]*\?\.enabled!==!1\}\)/,
     '$1=`in_app_browser`,$2=$3($4,()=>!0)'
   );
+  after = after.replace(
+    /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\.isCapable,([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(`410262010`\)/,
+    '$1=!0,$5=($6(`410262010`),!0)/*CODEX_BROWSER_IN_APP_GATES_V2*/'
+  );
   if (after === before &&
-      !before.includes('a=t(n,()=>!0)') &&
-      !before.includes('()=>!0')) {
+       !before.includes('a=t(n,()=>!0)') &&
+       !/`in_app_browser`,[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*,\(\)=>!0\)/.test(before) &&
+       !/([A-Za-z_$][\w$]*)=!0,([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(`410262010`\)/.test(before) &&
+       !before.includes('CODEX_BROWSER_IN_APP_GATES_V2')) {
     process.stderr.write('browser-sidebar-availability-patch-target-not-found\n');
     process.exit(2);
   }
@@ -1453,6 +1517,46 @@ if (changed) {
 }
 '@
 
+  Set-Content -LiteralPath $nodeReplTrustedPathsPatcherPath -Encoding UTF8 -Value @'
+const fs = require('node:fs');
+const file = process.argv[2];
+const text = fs.readFileSync(file, 'utf8');
+const marker = 'CODEX_NODE_REPL_TRUSTED_PATHS_V1';
+const identifier = '[A-Za-z_$][\\w$]*';
+
+if (text.includes(marker)) {
+  process.stdout.write('already-patched');
+  process.exit(0);
+}
+
+const keyMatch = text.match(/([A-Za-z_$][\w$]*)=`NODE_REPL_TRUSTED_CODE_PATHS`/);
+if (!keyMatch) {
+  process.stderr.write('node-repl-trusted-paths-key-not-found\n');
+  process.exit(2);
+}
+
+const key = keyMatch[1];
+const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const originalRe = new RegExp(`\\[${escapedKey}\\]:(${identifier})\\(\\[(${identifier}),(${identifier})\\],(${identifier})\\)`);
+const patchedRe = new RegExp(`\\[${escapedKey}\\]:${identifier}\\(\\[${identifier},${identifier},process\\.env\\[${escapedKey}\\](?:\\?\\?\`\`)?\\],${identifier}\\)`);
+if (patchedRe.test(text)) {
+  process.stdout.write('already-patched');
+  process.exit(0);
+}
+
+const match = text.match(originalRe);
+if (!match) {
+  process.stderr.write('node-repl-trusted-paths-target-not-found\n');
+  process.exit(2);
+}
+
+const [, joinFunction, codexHome, nodeModuleDirs, platform] = match;
+const replacement = `[${key}]:${joinFunction}([${codexHome},${nodeModuleDirs},process.env[${key}]??\`\`],${platform})/*${marker}*/`;
+const next = text.replace(originalRe, replacement);
+fs.writeFileSync(file, next);
+process.stdout.write('patched');
+'@
+
   return [pscustomobject]@{
     Fast = $fastPatcherPath
     FastUi = $fastUiPatcherPath
@@ -1465,6 +1569,7 @@ if (changed) {
     ComputerUse = $computerUsePatcherPath
     BrowserUse = $browserUsePatcherPath
     BundledMarketplaceCopy = $bundledMarketplaceCopyPatcherPath
+    NodeReplTrustedPaths = $nodeReplTrustedPathsPatcherPath
   }
 }
 
@@ -1637,9 +1742,14 @@ function Find-PatchTargets {
     foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter 'app-initial-*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
       $text = Get-Content -Raw -LiteralPath $candidate
       if ($text.Contains('in_app_browser') -and
-          $text.Contains('experimental-features') -and
-          (($text -match '`in_app_browser`,\w+=\w+\(\w+,\(\{get:\w+\}\)=>\{let\{data:\w+\}=.+?;return \w+!=null&&\w+\?\.enabled!==!1\}\)') -or
-           ($text -match '`in_app_browser`,\w+=\w+\(\w+,\(\)=>!0\)'))) {
+           $text.Contains('experimental-features') -and
+           (($text -match '`in_app_browser`,\w+=\w+\(\w+,\(\{get:\w+\}\)=>\{let\{data:\w+\}=.+?;return \w+!=null&&\w+\?\.enabled!==!1\}\)') -or
+           ($text -match '`in_app_browser`,\w+=\w+\(\w+,\(\)=>!0\)') -or
+           ($text.Contains('CODEX_BROWSER_IN_APP_GATES_V2')) -or
+           ($text.Contains('browser.in-app') -and
+            $text.Contains('featureName:`browser_use`') -and
+            $text.Contains('410262010') -and
+            $text -match '[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*\)\.isCapable,[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\(`410262010`\)'))) {
         $browserSidebarAvailabilityTarget = $candidate
         break
       }
@@ -1849,6 +1959,20 @@ function Find-PatchTargets {
     Fail 'could not find Computer Use setup gate in extracted assets'
   }
 
+  $nodeReplTrustedPathsTarget = $null
+  foreach ($candidate in (Invoke-RgList $RgPath 'NODE_REPL_TRUSTED_CODE_PATHS' $viteBuildDir)) {
+    $text = Get-Content -Raw -LiteralPath $candidate
+    if ($text.Contains('NODE_REPL_NODE_MODULE_DIRS') -and
+        ($text.Contains('CODEX_NODE_REPL_TRUSTED_PATHS_V1') -or
+         $text -match '\[[A-Za-z_$][\w$]*\]:[A-Za-z_$][\w$]*\(\[[A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*\],[A-Za-z_$][\w$]*\)')) {
+      $nodeReplTrustedPathsTarget = $candidate
+      break
+    }
+  }
+  if ([string]::IsNullOrWhiteSpace($nodeReplTrustedPathsTarget)) {
+    Fail 'could not find Node REPL trusted-code-path generator in extracted main bundle'
+  }
+
   $bundledMarketplaceCopyTarget = $null
   foreach ($candidate in (Get-ChildItem -LiteralPath $viteBuildDir -Filter '*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
     $text = Get-Content -Raw -LiteralPath $candidate
@@ -1882,6 +2006,7 @@ function Find-PatchTargets {
   Write-Log "computer-use availability patch target: $computerUseAvailabilityTarget"
   Write-Log "computer-use install-flow patch target: $computerUseInstallFlowTarget"
   Write-Log "computer-use setup patch target: $computerUseSetupTarget"
+  Write-Log "Node REPL trusted-paths patch target: $nodeReplTrustedPathsTarget"
   Write-Log "bundled marketplace copy patch target: $bundledMarketplaceCopyTarget"
 
   return [pscustomobject]@{
@@ -1904,6 +2029,7 @@ function Find-PatchTargets {
     ComputerUseAvailability = $computerUseAvailabilityTarget
     ComputerUseInstallFlow = $computerUseInstallFlowTarget
     ComputerUseSetup = $computerUseSetupTarget
+    NodeReplTrustedPaths = $nodeReplTrustedPathsTarget
     BundledMarketplaceCopy = $bundledMarketplaceCopyTarget
   }
 }
@@ -2167,8 +2293,16 @@ function Invoke-PatchAppAsar {
   )
   $computerUse = Invoke-NodePatcher $nodePath $patchers.ComputerUse $computerUseArgs
   Write-Log "computer-use gate patch result: $computerUse"
+  $nodeReplTrustedPaths = Invoke-NodePatcher $nodePath $patchers.NodeReplTrustedPaths @($targets.NodeReplTrustedPaths)
+  Write-Log "Node REPL trusted-paths patch result: $nodeReplTrustedPaths"
   $bundledMarketplaceCopy = Invoke-NodePatcher $nodePath $patchers.BundledMarketplaceCopy @($targets.BundledMarketplaceCopy)
   Write-Log "bundled marketplace copy patch result: $bundledMarketplaceCopy"
+
+  & $nodePath --check $targets.NodeReplTrustedPaths
+  if ($LASTEXITCODE -ne 0) {
+    Fail "Node REPL trusted-paths target failed node --check: $($targets.NodeReplTrustedPaths)"
+  }
+  Write-Log 'Node REPL trusted-paths syntax check passed'
 
   if ($DryRun) {
     Write-Log 'dry run: patch target validation completed; no package was changed'
@@ -2185,6 +2319,7 @@ function Invoke-PatchAppAsar {
       $goal -eq 'already-patched' -and
       $browserUse -eq 'already-patched' -and
       $computerUse -eq 'already-patched' -and
+      $nodeReplTrustedPaths -eq 'already-patched' -and
       $bundledMarketplaceCopy -eq 'already-patched') {
     Write-Log 'asar patch already present'
     return $false
@@ -2281,10 +2416,30 @@ function Get-ManifestPublisher {
   return $manifest.Package.Identity.Publisher
 }
 
+function Test-CodeSigningCertificate {
+  param([object]$Certificate)
+  $codeSigningOid = '1.3.6.1.5.5.7.3.3'
+  foreach ($usage in @($Certificate.EnhancedKeyUsageList)) {
+    $objectId = [string]$usage.ObjectId
+    if ([string]::IsNullOrWhiteSpace($objectId)) {
+      $objectId = [string]$usage.ObjectId.Value
+    }
+    if ($objectId -eq $codeSigningOid) {
+      return $true
+    }
+  }
+  return $false
+}
+
 function Get-OrCreateSigningCertificate {
   param([string]$Publisher)
-  $cert = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert -ErrorAction SilentlyContinue |
-    Where-Object { $_.Subject -eq $Publisher } |
+  $cert = Get-ChildItem Cert:\CurrentUser\My -ErrorAction SilentlyContinue |
+    Where-Object {
+      $_.Subject -eq $Publisher -and
+      $_.HasPrivateKey -and
+      $_.NotAfter -gt (Get-Date) -and
+      (Test-CodeSigningCertificate $_)
+    } |
     Sort-Object NotAfter -Descending |
     Select-Object -First 1
   if ($cert) {
@@ -2297,15 +2452,29 @@ function Get-OrCreateSigningCertificate {
 
 function Trust-SigningCertificate {
   param([System.Security.Cryptography.X509Certificates.X509Certificate2]$Cert)
-  $tempCert = Join-Path $env:TEMP ('codex-msix-signing-' + $Cert.Thumbprint + '.cer')
-  Export-Certificate -Cert $Cert -FilePath $tempCert -Force | Out-Null
-  Import-Certificate -FilePath $tempCert -CertStoreLocation Cert:\CurrentUser\Root | Out-Null
-  Import-Certificate -FilePath $tempCert -CertStoreLocation Cert:\CurrentUser\TrustedPeople | Out-Null
+  $storeTargets = @(
+    [pscustomobject]@{ Name = 'Root'; Location = [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser },
+    [pscustomobject]@{ Name = 'TrustedPeople'; Location = [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser }
+  )
   if (Test-IsAdministrator) {
-    Import-Certificate -FilePath $tempCert -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
-    Import-Certificate -FilePath $tempCert -CertStoreLocation Cert:\LocalMachine\TrustedPeople | Out-Null
+    $storeTargets += @(
+      [pscustomobject]@{ Name = 'Root'; Location = [System.Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine },
+      [pscustomobject]@{ Name = 'TrustedPeople'; Location = [System.Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine }
+    )
   }
-  Remove-Item -LiteralPath $tempCert -Force -ErrorAction SilentlyContinue
+
+  foreach ($target in $storeTargets) {
+    $store = [System.Security.Cryptography.X509Certificates.X509Store]::new($target.Name, $target.Location)
+    try {
+      $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+      if (-not ($store.Certificates | Where-Object { $_.Thumbprint -eq $Cert.Thumbprint })) {
+        $store.Add($Cert)
+      }
+    } finally {
+      $store.Close()
+    }
+  }
+  Write-Log "trusted signing certificate in CurrentUser Root/TrustedPeople: $($Cert.Thumbprint)"
 }
 
 function Invoke-MakeAppxPack {

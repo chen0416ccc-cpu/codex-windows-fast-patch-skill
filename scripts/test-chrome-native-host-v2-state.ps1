@@ -94,6 +94,7 @@ $descriptorRoot = Join-Path $chromeRoot '.codex-plugin'
 $hostRoot = Join-Path $chromeRoot 'extension-host\windows\x64'
 $hostPath = Join-Path $hostRoot 'extension-host.exe'
 $browserClientPath = Join-Path $scriptsRoot 'browser-client.mjs'
+$browserServicePath = Join-Path $scriptsRoot 'browser-service.mjs'
 $runtimeBin = Join-Path $fixtureRoot 'runtime\cua_node\current\bin'
 $nodePath = Join-Path $runtimeBin 'node.exe'
 $nodeReplPath = Join-Path $runtimeBin 'node_repl.exe'
@@ -113,6 +114,7 @@ New-Item -ItemType Directory -Force -Path @(
 ) | Out-Null
 Set-Content -LiteralPath $hostPath -Value 'fixture extension host' -Encoding ASCII
 Set-Content -LiteralPath $browserClientPath -Value 'export const fixture = true;' -Encoding ASCII
+Set-Content -LiteralPath $browserServicePath -Value 'export const fixtureService = true;' -Encoding ASCII
 Set-Content -LiteralPath $codexCliPath -Value 'fixture codex' -Encoding ASCII
 Copy-Item -LiteralPath $nodeSource -Destination $nodePath -Force
 Set-Content -LiteralPath $nodeReplPath -Value 'fixture node repl' -Encoding ASCII
@@ -178,6 +180,7 @@ try {
     nativeHostVersion = '26.707.31428'
     paths = [ordered]@{
       browserClientPath = 'D:\missing\browser-client.mjs'
+      browserServicePath = 'D:\missing\browser-service.mjs'
       codexCliPath = 'D:\missing\codex.exe'
       codexHome = $script:CodexHome
       extensionHostPath = 'D:\missing\extension-host.exe'
@@ -201,9 +204,34 @@ try {
   Update-ChromeNativeHostV2State $chromeRoot $runtimeInventory $script:CodexHome
   Test-ChromeNativeHostV2State $chromeRoot $runtimeInventory $script:CodexHome
   $expected = Get-ChromeNativeHostV2ExpectedResource $chromeRoot $runtimeInventory $script:CodexHome
+  # pwsh 7 can materialize ISO timestamps as DateTime values during JSON round-trip;
+  # the production schema must accept that representation without loosening other fields.
+  $roundTripExpected = Copy-JsonValue $expected
+  if (-not (Test-ChromeNativeHostV2EntrySchema $roundTripExpected)) {
+    throw 'V2 schema rejected a JSON-round-tripped current entry (pwsh 7 timestamp compatibility)'
+  }
+  $roundTripUpdatedAt = $roundTripExpected.PSObject.Properties['updatedAt'].Value
+  if ($roundTripUpdatedAt -isnot [string] -and $roundTripUpdatedAt -isnot [datetime] -and $roundTripUpdatedAt -isnot [datetimeoffset]) {
+    throw "V2 JSON round-trip produced an unsupported updatedAt type: $($roundTripUpdatedAt.GetType().FullName)"
+  }
+  $roundTripPresence = $roundTripExpected.PSObject.Properties['presence']
+  if ($null -ne $roundTripPresence) {
+    foreach ($timestampName in @('lastSeenAt', 'startedAt')) {
+      $timestampProperty = $roundTripPresence.Value.PSObject.Properties[$timestampName]
+      if ($null -eq $timestampProperty -or
+          ($timestampProperty.Value -isnot [string] -and
+           $timestampProperty.Value -isnot [datetime] -and
+           $timestampProperty.Value -isnot [datetimeoffset])) {
+        throw "V2 JSON round-trip produced an unsupported presence.$timestampName type"
+      }
+    }
+  }
   if ($expected.entryId -cnotmatch '^codex-runtime-[0-9a-f]{32}$' -or
       $expected.installId -cnotmatch '^codex-install-[0-9a-f]{32}$') {
     throw 'Current v2 resource did not use the official truncated SHA-256 identity format'
+  }
+  if ([string]$expected.paths.browserServicePath -cne $browserServicePath) {
+    throw "Current v2 resource did not bind browserServicePath beside browserClientPath: actual=$($expected.paths.browserServicePath) expected=$browserServicePath"
   }
   if ($extensionIds.Count -ne 2) {
     throw "V2 identity fixture must contain exactly two independently hashed extension IDs: count=$($extensionIds.Count)"
@@ -268,6 +296,10 @@ try {
     if ($backupCount -ne 1) {
       throw "First v2 state replacement should create exactly one persistent backup: $statePath backups=$backupCount"
     }
+    $currentEntries[0].updatedAt = '2026-08-18T13:39:12.300Z'
+    $currentEntries[0].presence.lastSeenAt = '2026-08-18T13:39:12.300Z'
+    $currentEntries[0].presence.startedAt = '2026-08-18T13:39:11.300Z'
+    ConvertTo-JsonFile $statePath $document
     $beforeHashes[$statePath] = (Get-FileHash -LiteralPath $statePath -Algorithm SHA256).Hash
   }
 
@@ -294,6 +326,16 @@ try {
   $brokenEntry = @($brokenDocument.entries | Where-Object { $_.entryId -ceq $expected.entryId } | Select-Object -First 1)[0]
   $brokenEntry.paths.nodePath = Join-Path $fixtureRoot 'missing-node.exe'
   ConvertTo-JsonFile $brokenStatePath $brokenDocument
+  Assert-ThrowsLike {
+    Test-ChromeNativeHostV2State $chromeRoot $runtimeInventory $script:CodexHome
+  } '*has no current app-server entry*'
+  Update-ChromeNativeHostV2State $chromeRoot $runtimeInventory $script:CodexHome
+  Test-ChromeNativeHostV2State $chromeRoot $runtimeInventory $script:CodexHome
+
+  $brokenServiceDocument = Get-Content -Raw -Encoding UTF8 -LiteralPath $brokenStatePath | ConvertFrom-Json
+  $brokenServiceEntry = @($brokenServiceDocument.entries | Where-Object { $_.entryId -ceq $expected.entryId } | Select-Object -First 1)[0]
+  $brokenServiceEntry.paths.browserServicePath = Join-Path $fixtureRoot 'missing-browser-service.mjs'
+  ConvertTo-JsonFile $brokenStatePath $brokenServiceDocument
   Assert-ThrowsLike {
     Test-ChromeNativeHostV2State $chromeRoot $runtimeInventory $script:CodexHome
   } '*has no current app-server entry*'
@@ -332,7 +374,7 @@ try {
   Test-ChromeNativeHostV2State $chromeRoot $runtimeInventory $script:CodexHome
   $repairedUpdatedEntry = @((Get-Content -Raw -Encoding UTF8 -LiteralPath $brokenStatePath | ConvertFrom-Json).entries |
     Where-Object { $_.entryId -ceq $expected.entryId } | Select-Object -First 1)[0]
-  if (-not (Test-ChromeNativeHostV2JsonString $repairedUpdatedEntry.updatedAt)) {
+  if (-not (Test-ChromeNativeHostV2TimestampValue $repairedUpdatedEntry.updatedAt)) {
     throw 'V2 repair did not restore required updatedAt'
   }
 
