@@ -20,8 +20,9 @@ Use this profile only when all of the following are true:
 | `0.6.11` | `26.810.7004.0` | `7A95D14EBF992955D8AB8E6C57A75545ED7D18E864B0F5C1B9FE7F47685BD897` | `E84A4ECB473CF9D3B4B65BB27A298DE6602AD8A1A11B21EE0BA7BC9209FE4DA9` |
 | `0.6.16` | `26.814.5167.0` | `E40BE6145157885F0E155A4247DF3B64BD5D3455A04E276503B0E2821B3EA39E` | `F35CA6D89959EDEFB4DF46A5ECC6202091AB3C63E885E6CD6CF9824D92B66EB7` |
 | `0.6.16-202608171739-pr-1311460-c66628846294` | `26.814.5517.0` | `BEB498C287889D807DCCB0E1FAD8A39ED9BE6BDF084D10313B5D52BA26C1E370` | `AF7D14EE6E2B850E06798EC14117D29F1C839DB5C135A7F515DE37074DB66A23` |
+| `0.6.17-202608171537-pr-1300023-7efba775c041` | `26.818.2872.0` | `29D5E113A5D24A1DD3F3CCA4245CE5AE82A56E88AF5AFCD8E0AE4CC2E5C94992` | `DC83663FBF8DEF6749296B84EAE66054D2C07530CC42A87CA4503ECF86AD3767` |
 
-One `@oai/sky` version can ship more than one helper binary across Desktop builds, so the table is keyed by the complete hash pair, not by the version string alone. Both `0.6.11` rows use the same five guarded regions at the same offsets; `0.6.16` keeps the same callback paths but has its own wrapper padding location and exact hash pair. Both `0.6.16` rows also use the same five guarded regions at the same offsets, and their patched bytes are identical: Desktop `26.814.5517.0` changes the embedded version string, not the guarded code, so only the whole-file hash pair and the reported version string differ.
+One `@oai/sky` version can ship more than one helper binary across Desktop builds, so the table is keyed by the complete hash pair, not by the version string alone. Both `0.6.11` rows use the same five guarded regions at the same offsets; `0.6.16` keeps the same callback paths but has its own wrapper padding location and exact hash pair. Both `0.6.16` rows and the `0.6.17` row also use the same five guarded regions at the same offsets, and their patched bytes are identical: Desktop `26.814.5517.0` and `26.818.2872.0` change the embedded version string, not the guarded code, so only the whole-file hash pair and the reported version string differ. Three consecutive Desktop builds now share one guarded-code layout while each ships a distinct whole-file hash.
 
 The `0.4.20` original helper was also observed in Desktop `26.715.2305.0` by package inspection. That observation did not create a separate end-to-end profile. The patcher is `scripts/patch-computer-use-helper-win10.ps1`.
 
@@ -76,7 +77,7 @@ No executable is stored in this repository. The patcher reconstructs the validat
 | `0.6.16` | `0x001486AF-0x0014875D` | `0x1401492AF-0x14014935D` | Wrapper, thread creation/failure cleanup, and MTA worker. |
 | `0.6.16` | `0x0014B128` | `0x14014C928` | Redirect the `FrameArrived` delegate vtable entry to the wrapper. |
 
-The `0.6.16` rows apply unchanged to the `0.6.16-202608171739-pr-1311460-c66628846294` helper shipped with Desktop `26.814.5517.0`: same offsets, same original bytes, same patched bytes.
+The `0.6.16` rows apply unchanged to the `0.6.16-202608171739-pr-1311460-c66628846294` helper shipped with Desktop `26.814.5517.0` and to the `0.6.17-202608171537-pr-1300023-7efba775c041` helper shipped with Desktop `26.818.2872.0`: same offsets, same original bytes, same patched bytes.
 
 ## Apply and verify
 
@@ -262,6 +263,33 @@ Windows 10 validation on build `19045` reported:
 | Error signature | No `SetIsBorderRequired / 0x80004002` occurred in any capture or in the Desktop logs for the session. |
 
 As with every other profile, this is an exact input/output hash pair. Because two Desktop builds now ship different helper binaries under the same `0.6.16` family, select a profile by the complete hash and never by the version prefix.
+
+### `@oai/sky 0.6.17-202608171537-pr-1300023-7efba775c041` helper `29D5E113` / Desktop 26.818.2872.0 validation
+
+Desktop `26.818.2872.0` reports `@oai/sky 0.6.17-202608171537-pr-1300023-7efba775c041` and ships a helper whose complete SHA-256 is `29D5E113A5D24A1DD3F3CCA4245CE5AE82A56E88AF5AFCD8E0AE4CC2E5C94992`. The `0.6.16` profiles were not reused, because the patcher requires the reported version string to equal the profile's declared `SkyVersion` and the whole-file hash to match. Region analysis found the five guarded regions unchanged from both `0.6.16` profiles: same file offsets, same original bytes, and the same patched bytes, including the `0x14B128` vtable redirect from `43db044001000000` to `af92144001000000`. Three consecutive Desktop builds now share one guarded-code layout while each ships a distinct whole-file hash.
+
+- The guarded rewrite produces complete candidate SHA-256 `DC83663FBF8DEF6749296B84EAE66054D2C07530CC42A87CA4503ECF86AD3767`.
+- The original backup is stored under `.codex\backups\computer-use-helper\26.818.2872.0-sky-0.6.17-202608171537-pr-1300023-7efba775c041-29D5E113`, so no two helper profiles share a backup directory.
+- No executable under `WindowsApps` is modified. The helper lives in the user-level `cua_node` runtime at `bin\node_modules\@oai\sky\bin\windows\codex-computer-use.exe`.
+- `scripts/test-computer-use-helper-win10-patch.ps1 -SkyVersion 0.6.17-29D5E113` passed `original -> patched -> idempotent install -> rollback -> idempotent rollback` with complete input/output hash checks and unknown-hash rejection, reporting `ALL_TESTS_PASSED`. Re-running the harness for `0.6.16` and `0.6.11-7A95D14E` still reports `ALL_TESTS_PASSED`.
+- A read-only run of the patcher reports `State: patched`, `EndToEndValidatedDesktopVersion` equal to `CurrentDesktopVersion` (`26.818.2872.0`), and Windows build `19045`.
+
+Windows 10 validation on build `19045` reported:
+
+| Test | Result |
+| --- | --- |
+| Runtime import | `runtime import ok` with `method=list_windows` returning the animated capture target. |
+| Static capture | Eight captures, all eight frames unique; no cached first frame was returned. |
+| Dynamic capture | Twenty captures of a continuously animating view, all twenty frames unique; twenty-eight unique frames across both batches. |
+| Resource stability | Helper worker threads went `57 -> 59` and then stayed at `59` for every later capture; handles went `693 -> 699` and then oscillated between `697` and `699`; working set stayed at `56 MB`; the broker process stayed flat at `4` threads / `164` handles. No linear growth. |
+| Error signature | No `SetIsBorderRequired`, `0x80004002`, or `E_NOINTERFACE` occurred in any capture, and the helper wrote nothing to stderr. |
+
+Two capture-target constraints were confirmed while building that evidence, and both are independent of this patch:
+
+- Computer Use refuses to act on a browser window on Windows and ends the turn with `could not determine the current browser URL on Windows with enough confidence to enforce policy`. A dynamic-capture target must therefore be a non-browser window.
+- `list_windows` does not enumerate a window hosted by `powershell.exe`; it attributes windows to the owning image and reports an unknown owner as `process:<full path>`. A dynamic-capture fixture must be a real executable.
+
+As with every other profile, this is an exact input/output hash pair. A later helper hash requires independent PE/code analysis and real static/dynamic Computer Use validation.
 
 ### Desktop 26.715 upgrade-repair regressions
 
