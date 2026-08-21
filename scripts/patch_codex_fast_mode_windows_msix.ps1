@@ -1297,8 +1297,20 @@ function patchFeatureHook(file) {
       /(let|var) ([A-Za-z_$][\w$]*)=GNr\([A-Za-z_$][\w$]*\),/,
       '$1 $2={enabled:!0,isLoading:!1},'
     );
+    if (patchedSegment === segment) {
+      // The feature-state helper is renamed by the minifier on every release, so anchor on
+      // the object literal that carries featureName instead of a fixed identifier.
+      const holderMatch = segment.match(/([A-Za-z_$][\w$]*)=\{[^{}]*featureName:`[\w-]+`[^{}]*\}/);
+      if (holderMatch) {
+        const holder = holderMatch[1].replace(/\$/g, '\\$');
+        patchedSegment = segment.replace(
+          new RegExp('(let |var |,)([A-Za-z_$][\\w$]*)=[A-Za-z_$][\\w$]*\\(' + holder + '\\),'),
+          '$1$2={enabled:!0,isLoading:!1},'
+        );
+      }
+    }
     patchedSegment = patchedSegment.replace(
-      /([A-Za-z_$][\w$]*)=Px\(`\d+`\),/g,
+      /([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\(`\d+`\),/g,
       '$1=!0,'
     );
     return source.slice(0, functionStart) + patchedSegment + source.slice(functionEnd);
@@ -1315,7 +1327,7 @@ function patchFeatureHook(file) {
     const nextFunction = source.indexOf('function ', markerIndex + marker.length);
     const functionEnd = nextFunction < 0 ? source.length : nextFunction;
     const segment = source.slice(functionStart, functionEnd);
-    return /\{enabled:!0,isLoading:!1\}/.test(segment) && !/Px\(`\d+`\)/.test(segment);
+    return /\{enabled:!0,isLoading:!1\}/.test(segment) && !/[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\(`\d+`\),/.test(segment);
   }
 
   if (after === before &&
