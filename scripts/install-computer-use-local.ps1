@@ -997,6 +997,107 @@ function Get-StableBundledMarketplaceRoot {
   return Join-Path $CodexHomeResolved 'marketplaces\openai-bundled-local'
 }
 
+function Get-ReservedBundledMarketplaceRoot {
+  param([string]$CodexHomeResolved)
+
+  return Join-Path $CodexHomeResolved '.tmp\bundled-marketplaces\openai-bundled'
+}
+
+function Test-BundledMarketplaceRootUsable {
+  param([string]$Root)
+
+  if ([string]::IsNullOrWhiteSpace($Root)) {
+    return $false
+  }
+  $manifest = Join-Path $Root '.agents\plugins\marketplace.json'
+  if (-not (Test-Path -LiteralPath $manifest -PathType Leaf)) {
+    return $false
+  }
+  try {
+    $json = [System.IO.File]::ReadAllText($manifest, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+  } catch {
+    return $false
+  }
+  return ([string]$json.name -eq 'openai-bundled')
+}
+
+function Test-BundledMarketplaceLoadedWithCodexCli {
+  $codexPath = $null
+  try {
+    $codexPath = Get-UsableCodexCliPath 'inspect loaded marketplaces'
+  } catch {
+    return $null
+  }
+  $output = @(& $codexPath plugin marketplace list --json 2>&1)
+  if ($LASTEXITCODE -ne 0) {
+    return $null
+  }
+  try {
+    $json = (($output | ForEach-Object { [string]$_ }) -join [Environment]::NewLine) | ConvertFrom-Json -ErrorAction Stop
+  } catch {
+    return $null
+  }
+  return [bool](@($json.marketplaces) | Where-Object { [string]$_.name -eq 'openai-bundled' })
+}
+
+function Get-ConfiguredBundledMarketplaceRoot {
+  param([string]$StableMarketplaceRoot)
+
+  # codex-cli 0.149 made `openai-bundled` a reserved marketplace name that is
+  # only loaded from the Desktop-materialized root. Older CLIs load the stable
+  # local copy. Probe the loaded marketplaces instead of guessing from a version
+  # string: this must run after the stable source has been written, so a `false`
+  # result means the CLI silently dropped that source and the reserved root is
+  # the only one it will load.
+  $reservedRoot = Get-ReservedBundledMarketplaceRoot (Resolve-OrCreateDirectory $CodexHome)
+  if (-not (Test-BundledMarketplaceRootUsable $reservedRoot)) {
+    return $StableMarketplaceRoot
+  }
+  if ([System.IO.Path]::GetFullPath($StableMarketplaceRoot) -eq [System.IO.Path]::GetFullPath($reservedRoot)) {
+    return $StableMarketplaceRoot
+  }
+  if ((Test-BundledMarketplaceLoadedWithCodexCli) -eq $false) {
+    return $reservedRoot
+  }
+  return $StableMarketplaceRoot
+}
+
+function Get-PreferredBundledMarketplaceRoot {
+  param(
+    [string]$ConfigPath,
+    [string]$StableMarketplaceRoot
+  )
+
+  # Prefer whatever root the previous run settled on, so a machine that already
+  # needs the reserved root does not get rewritten to the stable copy and back
+  # on every call.
+  $reservedRoot = Get-ReservedBundledMarketplaceRoot (Resolve-OrCreateDirectory $CodexHome)
+  if (-not (Test-BundledMarketplaceRootUsable $reservedRoot)) {
+    return $StableMarketplaceRoot
+  }
+  if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
+    return $StableMarketplaceRoot
+  }
+  $content = [System.IO.File]::ReadAllText($ConfigPath, [System.Text.UTF8Encoding]::new($false))
+  $match = [regex]::Match($content, '(?ms)^\[marketplaces\.openai-bundled\]\s*\r?\n(?:(?!^\[).)*?^\s*source\s*=\s*[''"](?<value>[^''"]+)[''"]\s*$')
+  if (-not $match.Success) {
+    return $StableMarketplaceRoot
+  }
+  $current = $match.Groups['value'].Value
+  if ($current.StartsWith('\\?\')) {
+    $current = $current.Substring(4)
+  }
+  try {
+    $current = [System.IO.Path]::GetFullPath($current)
+  } catch {
+    return $StableMarketplaceRoot
+  }
+  if ($current -eq [System.IO.Path]::GetFullPath($reservedRoot)) {
+    return $reservedRoot
+  }
+  return $StableMarketplaceRoot
+}
+
 function Get-ComputerUsePipeConfigState {
   param([string]$ConfigPath)
 
@@ -1028,11 +1129,20 @@ function Update-CodexConfig {
   param([string]$MarketplaceRoot)
 
   $configPath = Join-Path $CodexHome 'config.toml'
-  $source = '\\?\' + $MarketplaceRoot
+  $preferredRoot = Get-PreferredBundledMarketplaceRoot $configPath $MarketplaceRoot
   Set-TomlTable $configPath '[marketplaces.openai-bundled]' @{
     last_updated = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
-    source = $source
+    source = '\\?\' + $preferredRoot
     source_type = 'local'
+  }
+  $effectiveRoot = Get-ConfiguredBundledMarketplaceRoot $preferredRoot
+  if ([System.IO.Path]::GetFullPath($effectiveRoot) -ne [System.IO.Path]::GetFullPath($preferredRoot)) {
+    Write-Log "codex-cli refused the local bundled marketplace source; repointing marketplaces.openai-bundled at the reserved root: $effectiveRoot"
+    Set-TomlTable $configPath '[marketplaces.openai-bundled]' @{
+      last_updated = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+      source = '\\?\' + $effectiveRoot
+      source_type = 'local'
+    }
   }
   Set-TomlTable $configPath '[plugins."computer-use@openai-bundled"]' @{
     enabled = $true
@@ -2845,6 +2955,8 @@ function Test-CodexConfig {
 
   Test-TomlSyntax $ConfigPath
   $expectedSource = '\\?\' + $MarketplaceRoot
+  $reservedRoot = Get-ReservedBundledMarketplaceRoot (Resolve-OrCreateDirectory $CodexHome)
+  $reservedSource = if (Test-BundledMarketplaceRootUsable $reservedRoot) { '\\?\' + $reservedRoot } else { $expectedSource }
   $python = Get-Command python -ErrorAction SilentlyContinue | Select-Object -First 1
   if (-not $python) {
     $content = [System.IO.File]::ReadAllText($ConfigPath, [System.Text.UTF8Encoding]::new($false))
@@ -2877,7 +2989,7 @@ import sys
 import tomllib
 
 config_path = pathlib.Path(sys.argv[1])
-expected_source = sys.argv[2]
+expected_sources = [source for source in sys.argv[2:] if source]
 data = tomllib.loads(config_path.read_text(encoding="utf-8"))
 errors = []
 
@@ -2887,8 +2999,8 @@ if not isinstance(marketplace, dict):
 else:
     if marketplace.get("source_type") != "local":
         errors.append("marketplaces.openai-bundled.source_type must be local")
-    if marketplace.get("source") != expected_source:
-        errors.append("marketplaces.openai-bundled.source does not point at the local bundled marketplace")
+    if marketplace.get("source") not in expected_sources:
+        errors.append("marketplaces.openai-bundled.source does not point at a loadable local bundled marketplace")
 
 plugins = data.get("plugins", {})
 plugin = plugins.get("computer-use@openai-bundled")
@@ -2932,12 +3044,18 @@ if errors:
   $temp = Join-Path $env:TEMP ('codex-config-validate-' + [guid]::NewGuid().ToString('N') + '.py')
   try {
     Write-Utf8NoBom $temp $script
-    & $python.Source $temp $ConfigPath $expectedSource
+    & $python.Source $temp $ConfigPath $expectedSource $reservedSource
     if ($LASTEXITCODE -ne 0) {
       throw "semantic config validation failed for $ConfigPath"
     }
   } finally {
     Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+  }
+
+  # A configured source is not proof the CLI accepts it: codex-cli 0.149 silently
+  # drops reserved marketplace names loaded from a non-allowed root.
+  if ((Test-BundledMarketplaceLoadedWithCodexCli) -eq $false) {
+    throw 'codex-cli does not load the openai-bundled marketplace from the configured source'
   }
 }
 
