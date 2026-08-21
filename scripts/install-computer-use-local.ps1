@@ -1812,7 +1812,8 @@ function Test-FilesMatchByContent {
 function Get-CurrentCodexAppServerRuntimeInventory {
   param(
     [string]$PackageResourcesRoot,
-    [string]$LocalCodexRoot = (Join-Path $env:LOCALAPPDATA 'OpenAI\Codex')
+    [string]$LocalCodexRoot = (Join-Path $env:LOCALAPPDATA 'OpenAI\Codex'),
+    [string]$CodexHomeRoot = $CodexHome
   )
 
   if ([string]::IsNullOrWhiteSpace($PackageResourcesRoot)) {
@@ -1845,6 +1846,15 @@ function Get-CurrentCodexAppServerRuntimeInventory {
       }
     }
   }
+  $desktopManagedCodexCliPaths = @()
+  $codexHomeForAppServer = $CodexHomeRoot
+  if ([string]::IsNullOrWhiteSpace($codexHomeForAppServer)) {
+    $codexHomeForAppServer = Join-Path $env:USERPROFILE '.codex'
+  }
+  $desktopManagedCodex = Join-Path $codexHomeForAppServer 'plugins\.plugin-appserver\codex.exe'
+  if (Test-FilesMatchByContent $desktopManagedCodex $packageCodex) {
+    $desktopManagedCodexCliPaths += [System.IO.Path]::GetFullPath($desktopManagedCodex)
+  }
   $cuaCandidates = @()
   $localCuaRoot = Join-Path $LocalCodexRoot 'runtimes\cua_node'
   if (Test-Path -LiteralPath $localCuaRoot -PathType Container) {
@@ -1875,6 +1885,7 @@ function Get-CurrentCodexAppServerRuntimeInventory {
     NodePath = $selectedCua.NodePath
     NodeReplPath = $selectedCua.NodeReplPath
     AllowedCodexCliPaths = @($codexCandidates | ForEach-Object { $_.Path })
+    DesktopManagedCodexCliPaths = @($desktopManagedCodexCliPaths)
     AllowedCuaBinRoots = @($cuaCandidates | ForEach-Object { $_.BinRoot })
     ReferenceCodexCliPath = $packageCodex
     ReferenceNodePath = $packageNode
@@ -2097,7 +2108,8 @@ function Get-ChromeNativeHostV2ExpectedResource {
   param(
     [string]$ChromeCacheRoot,
     [pscustomobject]$RuntimeInventory,
-    [string]$CodexHomeResolved
+    [string]$CodexHomeResolved,
+    [string]$CodexCliPathOverride
   )
 
   $settings = Get-ChromeNativeMessagingSettings $ChromeCacheRoot
@@ -2125,10 +2137,14 @@ function Get-ChromeNativeHostV2ExpectedResource {
     throw "Chrome plugin version is not valid for the v2 native-host manifest: $pluginVersion"
   }
   $nodeModuleRoot = Join-Path (Split-Path -Parent $RuntimeInventory.NodePath) 'node_modules'
+  $appServerCliPath = $RuntimeInventory.CodexCliPath
+  if (-not [string]::IsNullOrWhiteSpace($CodexCliPathOverride)) {
+    $appServerCliPath = $CodexCliPathOverride
+  }
   $requiredFiles = @(
     $extensionHostPath,
     ([string]$hostConfig.browserClientPath),
-    $RuntimeInventory.CodexCliPath,
+    $appServerCliPath,
     $RuntimeInventory.NodePath,
     $RuntimeInventory.NodeReplPath
   )
@@ -2145,7 +2161,7 @@ function Get-ChromeNativeHostV2ExpectedResource {
 
   $paths = [ordered]@{
     browserClientPath = [string]$hostConfig.browserClientPath
-    codexCliPath = $RuntimeInventory.CodexCliPath
+    codexCliPath = $appServerCliPath
     codexHome = $CodexHomeResolved
     extensionHostPath = $extensionHostPath
     nodePath = $RuntimeInventory.NodePath
@@ -2194,6 +2210,27 @@ function Get-ChromeNativeHostV2ExpectedResource {
     proxyPort = 0
     updatedAt = $now
   }
+}
+
+function Get-ChromeNativeHostV2AcceptableResources {
+  param(
+    [string]$ChromeCacheRoot,
+    [pscustomobject]$RuntimeInventory,
+    [string]$CodexHomeResolved
+  )
+
+  $resources = @(Get-ChromeNativeHostV2ExpectedResource $ChromeCacheRoot $RuntimeInventory $CodexHomeResolved)
+  foreach ($desktopManagedPath in @($RuntimeInventory.DesktopManagedCodexCliPaths)) {
+    if ([string]::IsNullOrWhiteSpace($desktopManagedPath)) {
+      continue
+    }
+    if (Test-PathMatchesAnyCurrentFile $desktopManagedPath @($resources[0].paths.codexCliPath)) {
+      continue
+    }
+    $resources += (Get-ChromeNativeHostV2ExpectedResource `
+      $ChromeCacheRoot $RuntimeInventory $CodexHomeResolved -CodexCliPathOverride $desktopManagedPath)
+  }
+  return @($resources)
 }
 
 function Test-ChromeNativeHostV2JsonObject {
@@ -2435,9 +2472,14 @@ function Test-ChromeNativeHostV2EntryReplacedBy {
 function Write-ChromeNativeHostV2State {
   param(
     [string]$StatePath,
-    [pscustomobject]$ExpectedResource
+    [pscustomobject]$ExpectedResource,
+    [pscustomobject[]]$AcceptableResources
   )
 
+  $acceptable = @($AcceptableResources | Where-Object { $null -ne $_ })
+  if ($acceptable.Count -eq 0) {
+    $acceptable = @($ExpectedResource)
+  }
   $raw = $null
   $entries = @()
   if (Test-Path -LiteralPath $StatePath -PathType Leaf) {
@@ -2455,7 +2497,8 @@ function Write-ChromeNativeHostV2State {
   }
 
   $existingCurrent = @($entries | Where-Object {
-    Test-ChromeNativeHostV2EntryCoreEqual $_ $ExpectedResource
+    $entry = $_
+    @($acceptable | Where-Object { Test-ChromeNativeHostV2EntryCoreEqual $entry $_ }).Count -gt 0
   } | Select-Object -First 1)
   $resource = if ($existingCurrent.Count -gt 0) { $existingCurrent[0] } else { $ExpectedResource }
   $nextEntries = @($entries | Where-Object {
@@ -2494,7 +2537,7 @@ function Write-ChromeNativeHostV2State {
     Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $replaceBackupPath -Force -ErrorAction SilentlyContinue
   }
-  Write-Log "updated Chrome native-host v2 state: $StatePath entry=$($ExpectedResource.entryId)"
+  Write-Log "updated Chrome native-host v2 state: $StatePath entry=$($resource.entryId)"
   return $true
 }
 
@@ -2505,9 +2548,10 @@ function Update-ChromeNativeHostV2State {
     [string]$CodexHomeResolved = (Resolve-OrCreateDirectory $CodexHome)
   )
 
-  $expected = Get-ChromeNativeHostV2ExpectedResource $ChromeCacheRoot $RuntimeInventory $CodexHomeResolved
+  $acceptable = @(Get-ChromeNativeHostV2AcceptableResources $ChromeCacheRoot $RuntimeInventory $CodexHomeResolved)
+  $expected = $acceptable[0]
   foreach ($statePath in @(Get-ChromeNativeHostV2StatePaths $CodexHomeResolved)) {
-    Write-ChromeNativeHostV2State $statePath $expected | Out-Null
+    Write-ChromeNativeHostV2State $statePath $expected -AcceptableResources $acceptable | Out-Null
   }
 }
 
@@ -2518,8 +2562,10 @@ function Test-ChromeNativeHostV2State {
     [string]$CodexHomeResolved = (Resolve-ExistingDirectory $CodexHome)
   )
 
-  $expected = Get-ChromeNativeHostV2ExpectedResource $ChromeCacheRoot $RuntimeInventory $CodexHomeResolved
+  $acceptable = @(Get-ChromeNativeHostV2AcceptableResources $ChromeCacheRoot $RuntimeInventory $CodexHomeResolved)
+  $expected = $acceptable[0]
   $verifiedPaths = @()
+  $matchedEntryIds = @()
   foreach ($statePath in @(Get-ChromeNativeHostV2StatePaths $CodexHomeResolved)) {
     if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) {
       throw "Chrome native-host v2 state is missing: $statePath"
@@ -2533,14 +2579,17 @@ function Test-ChromeNativeHostV2State {
       throw "Chrome native-host v2 state has an invalid schemaVersion or entries array: $statePath"
     }
     $matching = @($document.entries | Where-Object {
-      Test-ChromeNativeHostV2EntryCoreEqual $_ $expected
+      $entry = $_
+      @($acceptable | Where-Object { Test-ChromeNativeHostV2EntryCoreEqual $entry $_ }).Count -gt 0
     } | Select-Object -First 1)
     if ($matching.Count -eq 0) {
       throw "Chrome native-host v2 state has no current app-server entry: $statePath expected=$($expected.entryId)"
     }
     $verifiedPaths += $statePath
+    $matchedEntryIds += [string]$matching[0].entryId
   }
-  Write-Log "Chrome native-host v2 state verification ok: entry=$($expected.entryId) files=$($verifiedPaths.Count)"
+  $matchedSummary = @($matchedEntryIds | Sort-Object -Unique) -join ','
+  Write-Log "Chrome native-host v2 state verification ok: entry=$matchedSummary files=$($verifiedPaths.Count)"
 }
 
 function Test-OrdinalStringArrayEqual {

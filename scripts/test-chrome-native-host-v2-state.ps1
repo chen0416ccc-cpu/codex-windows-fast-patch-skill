@@ -132,11 +132,16 @@ ConvertTo-JsonFile (Join-Path $scriptsRoot 'extension-ids.json') ([ordered]@{
   }
 })
 
+$desktopManagedCodexCliPath = Join-Path $script:CodexHome 'plugins\.plugin-appserver\codex.exe'
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $desktopManagedCodexCliPath) | Out-Null
+Copy-Item -LiteralPath $codexCliPath -Destination $desktopManagedCodexCliPath -Force
+
 $runtimeInventory = [pscustomobject]@{
   CodexCliPath = $codexCliPath
   NodePath = $nodePath
   NodeReplPath = $nodeReplPath
   AllowedCodexCliPaths = @($codexCliPath)
+  DesktopManagedCodexCliPaths = @($desktopManagedCodexCliPath)
   AllowedCuaBinRoots = @($runtimeBin)
   PackageResourcesRoot = $packageResourcesRoot
 }
@@ -288,6 +293,62 @@ try {
       throw "V2 atomic replacement left transient files behind: $($transientFiles.FullName -join ',')"
     }
   }
+
+  $desktopManagedResource = Get-ChromeNativeHostV2ExpectedResource `
+    $chromeRoot $runtimeInventory $script:CodexHome -CodexCliPathOverride $desktopManagedCodexCliPath
+  if ([string]$desktopManagedResource.paths.codexCliPath -cne $desktopManagedCodexCliPath) {
+    throw 'The app-server path override did not reach the v2 entry paths'
+  }
+  if ([string]$desktopManagedResource.entryId -ceq [string]$expected.entryId) {
+    throw 'A different app-server path must produce a different v2 entryId'
+  }
+  if ([string]$desktopManagedResource.installId -cne [string]$expected.installId) {
+    throw 'The Desktop-managed app-server variant must keep the same v2 installId'
+  }
+  if (Test-ChromeNativeHostV2EntryCoreEqual $desktopManagedResource $expected) {
+    throw 'The Desktop-managed app-server variant must not core-equal the preferred entry'
+  }
+  $acceptableResources = @(Get-ChromeNativeHostV2AcceptableResources $chromeRoot $runtimeInventory $script:CodexHome)
+  if ($acceptableResources.Count -ne 2) {
+    throw "Acceptable v2 resources must cover the preferred and Desktop-managed app-server paths: count=$($acceptableResources.Count)"
+  }
+  if ([string]$acceptableResources[0].entryId -cne [string]$expected.entryId) {
+    throw 'The preferred v2 resource must stay first in the acceptable list'
+  }
+
+  # Desktop registers its own entry with the app-server copy it extracts under
+  # CODEX_HOME\plugins\.plugin-appserver. Verification must accept that entry
+  # instead of reporting a healthy install as missing, and repair must not keep
+  # trading the entry back and forth with Desktop.
+  foreach ($statePath in $statePaths) {
+    ConvertTo-JsonFile $statePath ([ordered]@{
+      schemaVersion = 2
+      entries = @($staleEntry, (Copy-JsonValue $desktopManagedResource))
+    })
+  }
+  Test-ChromeNativeHostV2State $chromeRoot $runtimeInventory $script:CodexHome
+  Update-ChromeNativeHostV2State $chromeRoot $runtimeInventory $script:CodexHome
+  foreach ($statePath in $statePaths) {
+    $desktopDocument = Get-Content -Raw -Encoding UTF8 -LiteralPath $statePath | ConvertFrom-Json
+    $keptEntries = @($desktopDocument.entries | Where-Object { $_.entryId -ceq $desktopManagedResource.entryId })
+    if ($keptEntries.Count -ne 1) {
+      throw "V2 repair replaced the Desktop-managed app-server entry: $statePath"
+    }
+    $preferredEntries = @($desktopDocument.entries | Where-Object { $_.entryId -ceq $expected.entryId })
+    if ($preferredEntries.Count -ne 0) {
+      throw "V2 repair added a duplicate entry for the same install: $statePath"
+    }
+  }
+  Test-ChromeNativeHostV2State $chromeRoot $runtimeInventory $script:CodexHome
+
+  foreach ($statePath in $statePaths) {
+    ConvertTo-JsonFile $statePath ([ordered]@{
+      schemaVersion = 2
+      entries = @($staleEntry)
+    })
+  }
+  Update-ChromeNativeHostV2State $chromeRoot $runtimeInventory $script:CodexHome
+  Test-ChromeNativeHostV2State $chromeRoot $runtimeInventory $script:CodexHome
 
   $brokenStatePath = $statePaths[0]
   $brokenDocument = Get-Content -Raw -Encoding UTF8 -LiteralPath $brokenStatePath | ConvertFrom-Json
