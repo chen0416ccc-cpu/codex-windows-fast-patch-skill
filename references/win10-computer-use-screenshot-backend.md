@@ -19,10 +19,11 @@ Use this profile only when all of the following are true:
 | `0.6.11` | `26.810.6296.0` | `DE07F17A7206588687A8F722E4EBFC5A4FB1BD87F91DF2C60BB5C777C6D5CDCD` | `40530E628C91EF510F81A02FD3394C18E0D322C3D68D4A0277F0B0C56A2D43CC` |
 | `0.6.11` | `26.810.7004.0` | `7A95D14EBF992955D8AB8E6C57A75545ED7D18E864B0F5C1B9FE7F47685BD897` | `E84A4ECB473CF9D3B4B65BB27A298DE6602AD8A1A11B21EE0BA7BC9209FE4DA9` |
 | `0.6.16` | `26.814.5167.0` | `E40BE6145157885F0E155A4247DF3B64BD5D3455A04E276503B0E2821B3EA39E` | `F35CA6D89959EDEFB4DF46A5ECC6202091AB3C63E885E6CD6CF9824D92B66EB7` |
+| `0.6.16-202608171739-pr-1311460-c66628846294` | `26.814.5517.0` | `BEB498C287889D807DCCB0E1FAD8A39ED9BE6BDF084D10313B5D52BA26C1E370` | `AF7D14EE6E2B850E06798EC14117D29F1C839DB5C135A7F515DE37074DB66A23` |
 | `0.6.17-202608171537-pr-1300023-7efba775c041` | `26.818.2872.0` | `29D5E113A5D24A1DD3F3CCA4245CE5AE82A56E88AF5AFCD8E0AE4CC2E5C94992` | `DC83663FBF8DEF6749296B84EAE66054D2C07530CC42A87CA4503ECF86AD3767` |
 | `0.6.17-202608171537-pr-1300023-7efba775c041` | `26.818.3698.0` | `DB8F4486D527C91B80266FAF77FDC38266B1D3960EFBBA35D0A6AAB4CAAF6AEE` | `6495168DC16A35CDC33230E6512D64E660B56D13E99FE239426D228B9F86E157` |
 
-One `@oai/sky` version can ship more than one helper binary across Desktop builds, so the table is keyed by the complete hash pair, not by the version string alone. Both `0.6.11` rows use the same five guarded regions at the same offsets; `0.6.16` keeps the same callback paths but has its own wrapper padding location and exact hash pair. Both `0.6.17` rows reuse the `0.6.16` regions unchanged: same file offsets, same original bytes, and the same patched bytes, so only the whole-file hash pair differs. The two `0.6.17` helpers even report an identical version string, so a version comparison cannot tell them apart.
+One `@oai/sky` version can ship more than one helper binary across Desktop builds, so the table is keyed by the complete hash pair, not by the version string alone. Both `0.6.11` rows use the same five guarded regions at the same offsets; `0.6.16` and `0.6.17` keep the same callback paths and guarded bytes, but each build family has distinct whole-file hashes. Identical reported versions can still cover different binaries, so a version comparison cannot tell them apart.
 
 The `0.4.20` original helper was also observed in Desktop `26.715.2305.0` by package inspection. That observation did not create a separate end-to-end profile. The patcher is `scripts/patch-computer-use-helper-win10.ps1`.
 
@@ -77,7 +78,7 @@ No executable is stored in this repository. The patcher reconstructs the validat
 | `0.6.16` | `0x001486AF-0x0014875D` | `0x1401492AF-0x14014935D` | Wrapper, thread creation/failure cleanup, and MTA worker. |
 | `0.6.16` | `0x0014B128` | `0x14014C928` | Redirect the `FrameArrived` delegate vtable entry to the wrapper. |
 
-The `0.6.16` rows apply unchanged to both `0.6.17-202608171537-pr-1300023-7efba775c041` helpers, shipped with Desktop `26.818.2872.0` and `26.818.3698.0`: same offsets, same original bytes, same patched bytes.
+The `0.6.16` rows apply unchanged to the `0.6.16-202608171739-pr-1311460-c66628846294` helper shipped with Desktop `26.814.5517.0`, and to both `0.6.17-202608171537-pr-1300023-7efba775c041` helpers shipped with Desktop `26.818.2872.0` and `26.818.3698.0`: same offsets, same original bytes, same patched bytes.
 
 ## Apply and verify
 
