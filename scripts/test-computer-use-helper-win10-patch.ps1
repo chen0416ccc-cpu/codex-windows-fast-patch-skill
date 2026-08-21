@@ -3,7 +3,7 @@ param(
   [string]$HelperPath,
   # Profile labels, not raw @oai/sky versions: one sky version can ship more than one
   # helper binary across Desktop builds, so each label pins its own hash pair.
-  [ValidateSet('0.6.6', '0.6.11', '0.6.11-7A95D14E', '0.6.16')]
+  [ValidateSet('0.6.6', '0.6.11', '0.6.11-7A95D14E', '0.6.16', '0.6.17-29D5E113', '0.6.17-DB8F4486')]
   [string]$SkyVersion = '0.6.16'
 )
 
@@ -29,6 +29,16 @@ $Profiles = @{
     OriginalHash = 'E40BE6145157885F0E155A4247DF3B64BD5D3455A04E276503B0E2821B3EA39E'
     PatchedHash = 'F35CA6D89959EDEFB4DF46A5ECC6202091AB3C63E885E6CD6CF9824D92B66EB7'
   }
+  '0.6.17-29D5E113' = [ordered]@{
+    SkyVersion = '0.6.17-202608171537-pr-1300023-7efba775c041'
+    OriginalHash = '29D5E113A5D24A1DD3F3CCA4245CE5AE82A56E88AF5AFCD8E0AE4CC2E5C94992'
+    PatchedHash = 'DC83663FBF8DEF6749296B84EAE66054D2C07530CC42A87CA4503ECF86AD3767'
+  }
+  '0.6.17-DB8F4486' = [ordered]@{
+    SkyVersion = '0.6.17-202608171537-pr-1300023-7efba775c041'
+    OriginalHash = 'DB8F4486D527C91B80266FAF77FDC38266B1D3960EFBBA35D0A6AAB4CAAF6AEE'
+    PatchedHash = '6495168DC16A35CDC33230E6512D64E660B56D13E99FE239426D228B9F86E157'
+  }
 }
 $ProfileLabel = $SkyVersion
 $ExpectedSkyVersion = $Profiles[$ProfileLabel].SkyVersion
@@ -45,6 +55,27 @@ function Assert-Equal {
   if ([string]$Actual -cne [string]$Expected) {
     throw "$Message / expected=$Expected actual=$Actual"
   }
+}
+
+function Get-CodexPackageInstallLocations {
+  $locations = New-Object System.Collections.Generic.List[string]
+  foreach ($scope in @($false, $true)) {
+    try {
+      $packages = if ($scope) {
+        Get-AppxPackage -Name 'OpenAI.Codex' -AllUsers -ErrorAction Stop
+      } else {
+        Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction Stop
+      }
+    } catch {
+      continue
+    }
+    foreach ($package in ($packages | Sort-Object { [version]$_.Version } -Descending)) {
+      if (-not [string]::IsNullOrWhiteSpace($package.InstallLocation) -and -not $locations.Contains($package.InstallLocation)) {
+        $locations.Add($package.InstallLocation)
+      }
+    }
+  }
+  return $locations
 }
 
 function Resolve-OriginalHelper {
@@ -77,6 +108,17 @@ function Resolve-OriginalHelper {
       Select-Object -First 1
     if ($backup) {
       return $backup.FullName
+    }
+  }
+
+  # A freshly published Desktop build ships its helper inside the installed package and the
+  # user-local runtime only appears after the app has been launched once, so fall back to the
+  # bundled copy. Read-only, and every candidate is still hash-pinned to the profile.
+  foreach ($installLocation in (Get-CodexPackageInstallLocations)) {
+    $candidate = Join-Path $installLocation 'app\resources\cua_node\bin\node_modules\@oai\sky\bin\windows\codex-computer-use.exe'
+    if ((Test-Path -LiteralPath $candidate -PathType Leaf) -and
+        (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash -eq $ExpectedOriginalHash) {
+      return $candidate
     }
   }
 
