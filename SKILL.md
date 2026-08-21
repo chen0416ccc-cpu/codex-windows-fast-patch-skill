@@ -483,7 +483,7 @@ $helperPatcher = "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\script
 powershell -NoProfile -ExecutionPolicy Bypass -File $helperPatcher
 ```
 
-Only an `original-patchable` result for one of the documented complete helper SHA-256 profiles authorizes further evaluation. A real write additionally requires Windows 10 and the exact `SetIsBorderRequired / 0x80004002` screenshot failure; a matching hash on Windows 11 is not authorization. The current profiles include `@oai/sky 0.4.20` / Desktop `26.707.12708.0`, `0.5.2` / `26.721.4979.0`, `0.6.6` / `26.803.10989.0`, `0.6.11` / `26.810.6296.0` and `26.810.7004.0`, `0.6.16` / `26.814.5167.0` and `26.814.5517.0`, and `0.6.17` / `26.818.2872.0`; the helper hash, not the Desktop version, is the binary compatibility boundary:
+Only an `original-patchable` result for one of the documented complete helper SHA-256 profiles authorizes further evaluation. A real write additionally requires Windows 10 and the exact `SetIsBorderRequired / 0x80004002` screenshot failure; a matching hash on Windows 11 is not authorization. The current profiles include `@oai/sky 0.4.20` / Desktop `26.707.12708.0`, `0.5.2` / `26.721.4979.0`, `0.6.6` / `26.803.10989.0`, `0.6.11` / `26.810.6296.0` and `26.810.7004.0`, `0.6.16` / `26.814.5167.0` and `26.814.5517.0`, and `0.6.17` / `26.818.2872.0` and `26.818.3698.0`; the helper hash, not the Desktop version, is the binary compatibility boundary, and the two `0.6.17` profiles prove that even an identical reported version string can cover two different binaries:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File $helperPatcher -Install
