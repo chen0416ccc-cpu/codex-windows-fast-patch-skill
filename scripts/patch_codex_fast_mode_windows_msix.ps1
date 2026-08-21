@@ -2515,7 +2515,12 @@ function Add-LocalMarketplace {
   if ($json.metadata -and $json.metadata.displayName -eq 'Codex official') {
     $json.metadata.displayName = 'Codex official local'
   }
-  $json | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $jsonPath -Encoding UTF8
+  # Set-Content -Encoding UTF8 emits a BOM on PowerShell 5.1 and the Rust JSON parser
+  # then rejects the file with "expected value at line 1 column 1".
+  [System.IO.File]::WriteAllText(
+    $jsonPath,
+    ($json | ConvertTo-Json -Depth 100),
+    [System.Text.UTF8Encoding]::new($false))
   $codex = Find-CodexCli
   if (-not $codex) {
     Write-Log "codex CLI not found; marketplace copied but not registered: $dest"
