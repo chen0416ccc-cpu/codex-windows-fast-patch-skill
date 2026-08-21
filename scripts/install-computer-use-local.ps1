@@ -251,6 +251,36 @@ function Set-TomlTableKey {
   Write-Utf8NoBom $ConfigPath $content
 }
 
+function Get-TomlTableStringValue {
+  param(
+    [string]$ConfigPath,
+    [string]$Header,
+    [string]$Key
+  )
+
+  if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
+    return ''
+  }
+  $content = [System.IO.File]::ReadAllText($ConfigPath, [System.Text.UTF8Encoding]::new($false))
+  $escapedHeader = [regex]::Escape($Header)
+  $tableMatch = [regex]::Match($content, "(?ms)^$escapedHeader\s*\r?\n(?<body>(?:(?!^\[).)*)")
+  if (-not $tableMatch.Success) {
+    return ''
+  }
+  $escapedKey = [regex]::Escape($Key)
+  $keyMatch = [regex]::Match(
+    $tableMatch.Groups['body'].Value,
+    "(?m)^\s*$escapedKey\s*=\s*(?:'(?<single>(?:[^']|'')*)'|""(?<double>(?:[^""\\]|\\.)*)"")\s*$"
+  )
+  if (-not $keyMatch.Success) {
+    return ''
+  }
+  if ($keyMatch.Groups['single'].Success) {
+    return $keyMatch.Groups['single'].Value -replace "''", "'"
+  }
+  return $keyMatch.Groups['double'].Value
+}
+
 function Remove-TomlTableKeys {
   param(
     [string]$ConfigPath,
@@ -1088,11 +1118,122 @@ function Get-ComputerUsePipeConfigState {
   return [pscustomobject]@{ Present = $true; Active = $active; PipePath = $pipePath }
 }
 
+function Test-CodexReservedMarketplaceSourceRestricted {
+  # Recent Codex CLI builds treat `openai-bundled` as a reserved marketplace name
+  # and only load it from the bundled marketplace root Desktop stages under
+  # CODEX_HOME\.tmp\bundled-marketplaces. Configuring the reserved name with any
+  # other local source makes the CLI drop the marketplace outright, which hides
+  # every bundled plugin instead of failing loudly.
+  #
+  # Probe the behaviour with a throwaway CODEX_HOME rather than sniffing versions.
+  # The control arm registers the same fixture under a non-reserved name, so a
+  # fixture the CLI rejects for unrelated reasons reports "unknown" instead of
+  # falsely reporting a restriction. Returns $true, $false, or $null (unknown).
+  $codexPath = ''
+  try {
+    $codexPath = Get-UsableCodexCliPath 'probe reserved marketplace sources'
+  } catch {
+    Write-Log "warning: cannot probe reserved marketplace sources: $($_.Exception.Message)"
+    return $null
+  }
+
+  $probeRoot = Join-Path $env:TEMP ('codex-marketplace-probe-' + [guid]::NewGuid().ToString('N'))
+  $previousCodexHome = $env:CODEX_HOME
+  $previousErrorActionPreference = $ErrorActionPreference
+  try {
+    $observed = @{}
+    foreach ($marketplaceName in @('codex-reserved-probe', 'openai-bundled')) {
+      $probeHome = Join-Path $probeRoot $marketplaceName
+      $mirrorRoot = Join-Path $probeHome 'marketplaces\mirror'
+      $pluginRoot = Join-Path $mirrorRoot 'plugins\computer-use'
+      $manifestRoot = Join-Path $mirrorRoot '.agents\plugins'
+      New-Item -ItemType Directory -Force -Path @($pluginRoot, $manifestRoot) | Out-Null
+      ConvertTo-JsonFile (Join-Path $pluginRoot 'plugin.json') ([ordered]@{
+        name = 'computer-use'
+        version = '0.0.0-probe'
+      })
+      ConvertTo-JsonFile (Join-Path $manifestRoot 'marketplace.json') ([ordered]@{
+        name = $marketplaceName
+        interface = [ordered]@{ displayName = 'Codex marketplace source probe' }
+        plugins = @(
+          [ordered]@{
+            name = 'computer-use'
+            source = [ordered]@{ source = 'local'; path = './plugins/computer-use' }
+            policy = [ordered]@{ installation = 'AVAILABLE'; authentication = 'ON_INSTALL' }
+          }
+        )
+      })
+      Write-Utf8NoBom (Join-Path $probeHome 'config.toml') (
+        "[marketplaces.$marketplaceName]`r`nsource_type = 'local'`r`nsource = '$mirrorRoot'`r`n"
+      )
+
+      $env:CODEX_HOME = $probeHome
+      # The CLI writes unrelated warnings to stderr (for example when it declines to
+      # create PATH aliases under a temporary CODEX_HOME). Under the script's default
+      # Stop preference those would surface as terminating errors and abort the probe,
+      # so relax the preference for the invocation only.
+      $ErrorActionPreference = 'Continue'
+      $output = @(& $codexPath plugin marketplace list 2>&1)
+      $ErrorActionPreference = $previousErrorActionPreference
+      # Match on the listing itself rather than the exit code: the resolved CLI can
+      # be a .cmd or .ps1 shim that does not set $LASTEXITCODE reliably.
+      $observed[$marketplaceName] =
+        @($output | Where-Object { "$_" -match "^\s*$([regex]::Escape($marketplaceName))\s" }).Count -gt 0
+    }
+
+    if (-not $observed['codex-reserved-probe']) {
+      Write-Log 'warning: reserved marketplace source probe was inconclusive; leaving the bundled marketplace pin unchanged'
+      return $null
+    }
+    return -not $observed['openai-bundled']
+  } catch {
+    Write-Log "warning: reserved marketplace source probe failed: $($_.Exception.Message)"
+    return $null
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+    $env:CODEX_HOME = $previousCodexHome
+    Remove-Item -LiteralPath $probeRoot -Recurse -Force -ErrorAction SilentlyContinue
+  }
+}
+
+function Get-BundledMarketplaceConfigSource {
+  param(
+    [string]$MarketplaceRoot,
+    [string]$ConfigPath
+  )
+
+  $preferred = '\\?\' + $MarketplaceRoot
+  $codexHomeResolved = Resolve-OrCreateDirectory $CodexHome
+  $stagedRoot = Join-Path $codexHomeResolved '.tmp\bundled-marketplaces\openai-bundled'
+  if ($MarketplaceRoot -ieq $stagedRoot) {
+    return $preferred
+  }
+
+  $restricted = Test-CodexReservedMarketplaceSourceRestricted
+  if ($restricted -ne $true) {
+    return $preferred
+  }
+
+  if (Test-Path -LiteralPath $stagedRoot -PathType Container) {
+    Write-Log "reserved bundled marketplace source enforced; pinning the Desktop-staged root instead of $MarketplaceRoot"
+    return '\\?\' + $stagedRoot
+  }
+
+  $existing = Get-TomlTableStringValue $ConfigPath '[marketplaces.openai-bundled]' 'source'
+  if (-not [string]::IsNullOrWhiteSpace($existing)) {
+    Write-Log "reserved bundled marketplace source enforced and no staged root present; keeping the configured source"
+    return $existing
+  }
+
+  Write-Log 'warning: reserved bundled marketplace source enforced with no staged root or configured source; the CLI will ignore this marketplace'
+  return $preferred
+}
+
 function Update-CodexConfig {
   param([string]$MarketplaceRoot)
 
   $configPath = Join-Path $CodexHome 'config.toml'
-  $source = '\\?\' + $MarketplaceRoot
+  $source = Get-BundledMarketplaceConfigSource $MarketplaceRoot $configPath
   Set-TomlTable $configPath '[marketplaces.openai-bundled]' @{
     last_updated = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
     source = $source
