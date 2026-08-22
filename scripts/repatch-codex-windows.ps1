@@ -27,6 +27,8 @@ if ([string]::IsNullOrWhiteSpace($PatchScript)) {
 $ComputerUseScript = Join-Path $ScriptRoot 'install-computer-use-local.ps1'
 $ModelInstructionsScript = Join-Path $ScriptRoot 'install-model-instructions-file.ps1'
 $script:ConfigBackupBeforeOverwrite = @{}
+$script:ComputerUsePackageGateFallback = $false
+$ComputerUsePackageGateFallbackMessage = 'installed app.asar does not preserve external NODE_REPL_TRUSTED_CODE_PATHS across Desktop config regeneration'
 
 function Write-Log {
   param([string]$Message)
@@ -261,7 +263,8 @@ function Invoke-ComputerUseInstaller {
   param(
     [string]$Stage,
     [switch]$VerifyOnly,
-    [switch]$VerifyAllBundledPluginsAvailable
+    [switch]$VerifyAllBundledPluginsAvailable,
+    [switch]$AllowPackageGateFallback
   )
 
   if (-not (Test-Path -LiteralPath $ComputerUseScript)) {
@@ -279,9 +282,39 @@ function Invoke-ComputerUseInstaller {
   }
 
   Write-Log "Computer Use ${mode}: $Stage"
-  Invoke-Checked 'powershell' $args "Computer Use $mode failed"
+  if ($AllowPackageGateFallback) {
+    $previousErrorAction = $ErrorActionPreference
+    try {
+      $ErrorActionPreference = 'Continue'
+      $captured = @(
+        & powershell @args 2>&1 | ForEach-Object {
+          $line = [string]$_
+          Write-Host $line
+          $line
+        }
+      )
+    } finally {
+      $ErrorActionPreference = $previousErrorAction
+    }
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) {
+      $output = (($captured -join "`n") -replace '\s+', '')
+      $needle = ($ComputerUsePackageGateFallbackMessage -replace '\s+', '')
+      if ($output.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        $script:ComputerUsePackageGateFallback = $true
+        Write-Log "Computer Use preflight hit the package-gated trusted-paths check; continuing to MSIX patch: $ComputerUsePackageGateFallbackMessage"
+        $env:CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE = '1'
+        Enable-ComputerUseFeature
+        return $false
+      }
+      throw "Computer Use $mode failed (exit code $exitCode)"
+    }
+  } else {
+    Invoke-Checked 'powershell' $args "Computer Use $mode failed"
+  }
   $env:CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE = '1'
   Enable-ComputerUseFeature
+  return $true
 }
 
 function Enable-ComputerUseFeature {
@@ -436,9 +469,9 @@ if (-not $SkipMarketplace) {
 
 if (-not $SkipComputerUse) {
   if ($DryRun) {
-    Invoke-ComputerUseInstaller -Stage 'preflight before MSIX dry run' -VerifyOnly -VerifyAllBundledPluginsAvailable:$VerifyAllBundledPluginsAvailable
+    Invoke-ComputerUseInstaller -Stage 'preflight before MSIX dry run' -VerifyOnly -VerifyAllBundledPluginsAvailable:$VerifyAllBundledPluginsAvailable -AllowPackageGateFallback
   } else {
-    Invoke-ComputerUseInstaller -Stage 'preflight before MSIX patch' -VerifyAllBundledPluginsAvailable:$VerifyAllBundledPluginsAvailable
+    Invoke-ComputerUseInstaller -Stage 'preflight before MSIX patch' -VerifyAllBundledPluginsAvailable:$VerifyAllBundledPluginsAvailable -AllowPackageGateFallback
   }
 }
 
@@ -520,7 +553,11 @@ for ($patchAttempt = 1; $patchAttempt -le $maxPatchAttempts; $patchAttempt++) {
 
   if (-not $SkipComputerUse) {
     if ($DryRun) {
-      Invoke-ComputerUseInstaller -Stage 'post-dry-run final verification' -VerifyOnly -VerifyAllBundledPluginsAvailable:$VerifyAllBundledPluginsAvailable
+      if ($script:ComputerUsePackageGateFallback) {
+        Write-Log 'post-dry-run Computer Use verification skipped because the installed package is expected to fail the same package-gated trusted-paths check until MSIX installation'
+      } else {
+        Invoke-ComputerUseInstaller -Stage 'post-dry-run final verification' -VerifyOnly -VerifyAllBundledPluginsAvailable:$VerifyAllBundledPluginsAvailable
+      }
     } else {
       Invoke-ComputerUseInstaller -Stage 'post-patch refresh after Codex startup' -VerifyAllBundledPluginsAvailable:$VerifyAllBundledPluginsAvailable
       Invoke-ComputerUseInstaller -Stage 'post-patch final verification' -VerifyOnly -VerifyAllBundledPluginsAvailable:$VerifyAllBundledPluginsAvailable

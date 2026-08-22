@@ -68,6 +68,8 @@ Before choosing the full MSIX repack path, identify whether the current failure 
 - Do not put Phone Remote Control into the default full repatch path unless the user asked for it. It is an opt-in workflow because it can require isolated remote-control OAuth, ASAR changes, a native app-server replacement binary, SQLite enrollment cleanup, and post-pairing API endpoint diagnosis.
 - If evidence is mixed, use the lowest-disruption path first: run read-only triage, then `scripts\install-computer-use-local.ps1 -VerifyOnly` for local plugin evidence, restart Codex Desktop only if needed, and escalate to MSIX only when logs or extracted ASAR checks still show a closed gate.
 
+The normal `scripts\repatch-codex-windows.ps1` preflight recognizes one package-gated Computer Use case: `installed app.asar does not preserve external NODE_REPL_TRUSTED_CODE_PATHS across Desktop config regeneration`. This means the installed app must be repatched before external D: marketplace/cache roots can survive Desktop config regeneration. For this exact message only, the wrapper records the fallback and continues into its MSIX dry run or install; unrelated Computer Use failures still stop the workflow. After installation, the wrapper runs the normal Computer Use refresh and strict verification. During a dry run, post-dry-run local verification is skipped only for this recognized case because the currently installed package is intentionally still unpatched.
+
 ## External Executor For Desktop-Restarting Repairs
 
 If a repair can stop, uninstall, reinstall, repackage, or relaunch Codex Desktop, do not run it from the Codex Desktop session being repaired. Use an external Windows PowerShell session, the VS Code Codex extension, or another agent environment that will survive the Desktop restart.
@@ -406,6 +408,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\ski
 - `-RegisterMarketplaceOnly`: only register `openai-curated-local`; do not patch Codex.
 - `-PatchScript <path>`: override the bundled patch script only when testing a newer patcher.
 - `-SkipComputerUse`: skip installing/verifying the local Computer Use compatibility plugin.
+- The wrapper may continue past Computer Use preflight only for the exact package-gated trusted-paths error documented above; use `-SkipComputerUse` only when intentionally separating local runtime repair from package patching.
 - `-VerifyAllBundledPluginsAvailable`: add an assertion that the stable `openai-bundled` descriptor names and versions exactly match the installed package and every entry appears with that version in structured CLI output as installed or available with an existing local source. The assertion never calls `plugin add`, but the main wrapper still performs its normal repair or DryRun behavior. For a fully read-only check, run `install-computer-use-local.ps1 -StrictVerifyOnly -VerifyAllBundledPluginsAvailable` directly.
 - `-InstallModelInstructionsFile`: optional; copy the bundled prompt asset to `$env:USERPROFILE\.codex\prompts\system-prompt.md` and set top-level `model_instructions_file` in `$env:USERPROFILE\.codex\config.toml`.
 - `-ModelInstructionsSource <path>`: optional source override for `-InstallModelInstructionsFile`; defaults to `assets\system-prompt.md`.
