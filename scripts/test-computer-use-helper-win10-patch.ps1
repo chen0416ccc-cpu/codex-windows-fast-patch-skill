@@ -3,7 +3,7 @@ param(
   [string]$HelperPath,
   # Profile labels, not raw @oai/sky versions: one sky version can ship more than one
   # helper binary across Desktop builds, so each label pins its own hash pair.
-  [ValidateSet('0.6.6', '0.6.11', '0.6.11-7A95D14E', '0.6.16', '0.6.16-BEB498C2', '0.6.17-29D5E113', '0.6.17-DB8F4486', '0.6.17-4250FF66', '0.6.17-4319D3A2')]
+  [ValidateSet('0.6.6', '0.6.11', '0.6.11-7A95D14E', '0.6.16', '0.6.16-BEB498C2', '0.6.17-29D5E113', '0.6.17-DB8F4486', '0.6.17-4250FF66', '0.6.17-4319D3A2', '0.6.17-D967386B')]
   [string]$SkyVersion = '0.6.16'
 )
 
@@ -53,6 +53,11 @@ $Profiles = @{
     SkyVersion = '0.6.17-202608171537-pr-1300023-7efba775c041'
     OriginalHash = '4319D3A23F6B21370205425203BD46E76E7F3BB7EA5AC263851DCC5B8727AAE5'
     PatchedHash = '338D32A33BB7C034FEBCA79D23EF2337BCCE1CC9741784C1C11CE64F3A508368'
+  }
+  '0.6.17-D967386B' = [ordered]@{
+    SkyVersion = '0.6.17-202608171537-pr-1300023-7efba775c041'
+    OriginalHash = 'D967386B8943355017B7CFC1044A6F39AF41A38A3731088C4191123CE7F86018'
+    PatchedHash = 'B43B12A8A23BE7CED3CCB64C56CC6885A483DBD482891116AB78C35CC3ACFB30'
   }
 }
 $ProfileLabel = $SkyVersion
