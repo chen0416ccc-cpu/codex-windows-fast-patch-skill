@@ -794,6 +794,14 @@ const visibilityPatterns = [
     modelGroup: 2,
     isReturn: true,
   },
+  {
+    // 0.6.24+ inserts a `hasConfiguredModelCatalog&&!model.hidden||` disjunct
+    // ahead of the useHiddenModels ternary and wraps that ternary in one more
+    // paren layer.
+    re: /return ([$A-Za-z_][$\w]*)\?\.has\(([$A-Za-z_][$\w]*)\.model\)===!0\|\|\2\.model!==`codex-auto-review`&&\(([$A-Za-z_][$\w]*)&&!\2\.hidden\|\|\(([$A-Za-z_][$\w]*)&&!([$A-Za-z_][$\w]*)&&([$A-Za-z_][$\w]*)!==`amazonBedrock`\?([$A-Za-z_][$\w]*)\.has\(\2\.model\):!\2\.hidden\)\)\}/,
+    modelGroup: 2,
+    isReturn: true,
+  },
 ];
 const target = visibilityPatterns
   .map(({ re, modelGroup, isReturn }) => ({ match: text.match(re), modelGroup, isReturn }))
@@ -894,14 +902,19 @@ const [, mutationFn, mutationScope, enabled, snapshot, userSettingsQuery, previo
 const mutationReplacement = `async function ${mutationFn}(${mutationScope},${enabled}){let ${snapshot}=${mutationScope}.query.snapshot(${userSettingsQuery}),${previous}=${snapshot}.getData();${snapshot}.setData(${cached}=>${cached}==null?${cached}:{...${cached},ultraEffortEnabled:${enabled}});if(${previous}?.ultraEffortLocalFallback===!0){try{await ${writeConfig}(${mutationScope},${settings}.showUltraInModelPickerSlider,${enabled});return}catch(codexUltraLocalError){throw ${snapshot}.setData(${previous}),codexUltraLocalError}}try{await ${mutationScope}.get(${client}).setUltraEffortEnabled(${enabled}),await Promise.all([${snapshot}.invalidate(),${mutationScope}.query.snapshot(${tppQuery}).invalidate()])}catch(codexUltraRemoteError){throw ${snapshot}.setData(${previous}),codexUltraRemoteError}}`;
 let next = text.replace(mutationRe, mutationReplacement);
 
-const queryRe = /queryFn:async\(\)=>\{let ([$A-Za-z_][$\w]*)=([$A-Za-z_][$\w]*)\.parse\(await ([$A-Za-z_][$\w]*)\.get\(([$A-Za-z_][$\w]*)\)\.userSettings\(\)\);return\{((?:eligibleAnnouncements:[^,]+,)?)lockdownModeEnabled:\1\.settings\?\.lockdown_mode_enabled===!0,ultraEffortEnabled:\1\.settings\?\.model_picker_persists_ultra_effort===!0\}\}/;
+// 0.6.24+ moves the conversation client behind a dynamic import inside the
+// queryFn and adds keys (chatTheme) to the returned object, so tolerate an
+// arbitrary prologue and any number of extra keys. The whole success body is
+// captured verbatim and re-emitted inside the try, which keeps every returned
+// field intact instead of rebuilding the object from named groups.
+const queryRe = /queryFn:async\(\)=>\{(let(?:\{[\s\S]{0,800}?import\.meta\.url\),|\s)([$A-Za-z_][$\w]*)=([$A-Za-z_][$\w]*)\.parse\(await ([$A-Za-z_][$\w]*)\.get\(([$A-Za-z_][$\w]*)\)\.userSettings\(\)\);return\{(?:[$A-Za-z_][$\w]*:[^,]+,)*?lockdownModeEnabled:\2\.settings\?\.lockdown_mode_enabled===!0,ultraEffortEnabled:\2\.settings\?\.model_picker_persists_ultra_effort===!0\})\}/;
 const queryMatch = next.match(queryRe);
 if (!queryMatch) {
   process.stderr.write('ultra-user-settings-query-target-not-found\n');
   process.exit(2);
 }
-const [, parsed, schema, queryScope, queryClient, eligiblePrefix] = queryMatch;
-const queryReplacement = `queryFn:async()=>{try{let ${parsed}=${schema}.parse(await ${queryScope}.get(${queryClient}).userSettings());return{${eligiblePrefix}lockdownModeEnabled:${parsed}.settings?.lockdown_mode_enabled===!0,ultraEffortEnabled:${parsed}.settings?.model_picker_persists_ultra_effort===!0}}catch{return{lockdownModeEnabled:!1,ultraEffortEnabled:await ${readConfig}(${settings}.showUltraInModelPickerSlider).catch(()=>!1)===!0,ultraEffortLocalFallback:!0/*${marker}*/}}}`;
+const querySuccessBody = queryMatch[1];
+const queryReplacement = `queryFn:async()=>{try{${querySuccessBody}}catch{return{lockdownModeEnabled:!1,ultraEffortEnabled:await ${readConfig}(${settings}.showUltraInModelPickerSlider).catch(()=>!1)===!0,ultraEffortLocalFallback:!0/*${marker}*/}}}`;
 next = next.replace(queryRe, queryReplacement);
 
 const migrationKey = 'queryKey:[`chatgpt-ultra-effort-migration`]';
@@ -1372,11 +1385,31 @@ function patchSidebarAvailability(file) {
     /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\.isCapable,([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(`410262010`\)/,
     '$1=!0,$5=($6(`410262010`),!0)/*CODEX_BROWSER_IN_APP_GATES_V2*/'
   );
+  // 0.6.24+ drops the `410262010` statsig literal entirely and prefixes the
+  // capability entry with accessPolicy, so anchor on the capability table
+  // instead. Strip every requirement key rather than just configFeatures: the
+  // capability atom short-circuits to isCapable:!0 only when the whole
+  // requirement list comes out empty.
+  const modernCapabilityPattern = /("browser\.in-app":\{)(?:accessPolicy:`[\w-]+`,|configFeatures:\[\{key:`in_app_browser`,host:`default`\}\],)+/;
+  const modernCapabilityPatched = /"browser\.in-app":\{supportedClients:\[`electron`\]\}/.test(before);
+  const beforeModernCapability = after;
+  after = after.replace(modernCapabilityPattern, '$1');
+  if (after === beforeModernCapability && !modernCapabilityPatched) {
+    after = after.replace(
+      // The capability-read helper is renamed by the minifier on every release,
+      // so match any identifier rather than a fixed one.
+      /(name:`browser\.in-app`[\s\S]{0,1800}?)(let|var) ([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*\)\.isCapable,/g,
+      '$1$2 $3=!0,'
+    );
+  }
+  const modernSidebarPatched = modernCapabilityPatched ||
+    /name:`browser\.in-app`[\s\S]{0,1800}?(?:let|var) [A-Za-z_$][\w$]*=!0,/.test(before);
   if (after === before &&
        !before.includes('a=t(n,()=>!0)') &&
        !/`in_app_browser`,[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*,\(\)=>!0\)/.test(before) &&
        !/([A-Za-z_$][\w$]*)=!0,([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(`410262010`\)/.test(before) &&
-       !before.includes('CODEX_BROWSER_IN_APP_GATES_V2')) {
+       !before.includes('CODEX_BROWSER_IN_APP_GATES_V2') &&
+       !modernSidebarPatched) {
     process.stderr.write('browser-sidebar-availability-patch-target-not-found\n');
     process.exit(2);
   }
@@ -1591,7 +1624,8 @@ function Test-CustomModelVisibilityExpression {
     'if\([$A-Za-z_][$\w]*\?[$A-Za-z_][$\w]*\.has\((?<model>[$A-Za-z_][$\w]*)\.model\):!\k<model>\.hidden\)\{',
     'if\([$A-Za-z_][$\w]*\?\.has\((?<model>[$A-Za-z_][$\w]*)\.model\)===!0\|\|\([$A-Za-z_][$\w]*\?[$A-Za-z_][$\w]*\.has\(\k<model>\.model\):!\k<model>\.hidden\)\)\{',
     '\?\.has\(\w+\.model\)===!0\|\|\(\w+(?:&&\w+!==`amazonBedrock`)?\?\w+\.has\(\w+\.model\):!\w+\.hidden\)',
-    '\?\.has\((?<model>[$A-Za-z_][$\w]*)\.model\)===!0\|\|\k<model>\.model!==`codex-auto-review`&&\((?<showHidden>[$A-Za-z_][$\w]*)&&!(?<customProvider>[$A-Za-z_][$\w]*)&&(?<authMethod>[$A-Za-z_][$\w]*)!==`amazonBedrock`\?(?<availableModels>[$A-Za-z_][$\w]*)\.has\(\k<model>\.model\):!\k<model>\.hidden\)'
+    '\?\.has\((?<model>[$A-Za-z_][$\w]*)\.model\)===!0\|\|\k<model>\.model!==`codex-auto-review`&&\((?<showHidden>[$A-Za-z_][$\w]*)&&!(?<customProvider>[$A-Za-z_][$\w]*)&&(?<authMethod>[$A-Za-z_][$\w]*)!==`amazonBedrock`\?(?<availableModels>[$A-Za-z_][$\w]*)\.has\(\k<model>\.model\):!\k<model>\.hidden\)',
+    '\?\.has\((?<model>[$A-Za-z_][$\w]*)\.model\)===!0\|\|\k<model>\.model!==`codex-auto-review`&&\((?<hasCatalog>[$A-Za-z_][$\w]*)&&!\k<model>\.hidden\|\|\((?<showHidden>[$A-Za-z_][$\w]*)&&!(?<customProvider>[$A-Za-z_][$\w]*)&&(?<authMethod>[$A-Za-z_][$\w]*)!==`amazonBedrock`\?(?<availableModels>[$A-Za-z_][$\w]*)\.has\(\k<model>\.model\):!\k<model>\.hidden\)\)'
   )
   foreach ($pattern in $patterns) {
     if ($Text -match $pattern) {
