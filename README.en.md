@@ -47,7 +47,6 @@ Do not run it on macOS. A macOS version needs a separate workflow for the Codex 
 - `scripts/sync-codex-provider-history.ps1`: Sync local conversation provider metadata so conversations hidden after a `model_provider` switch reappear in the official list; `-RepairMissingCwdDirs` can also repair restored conversations that cannot continue because the recorded `cwd` directory is missing. It does not modify `config.toml` or workspace/project roots by default.
 - `scripts/install-model-instructions-file.ps1`: Optional installer for the bundled `model_instructions_file` prompt asset.
 - `scripts/manage-codex-backups.ps1`: Backup manager for local Codex config, MCP, skills, and marketplaces.
-- `scripts/update-skill-from-github.ps1`: Best-effort self-update script that syncs the latest GitHub version before use.
 - `assets/system-prompt.md`: Bundled prompt asset used only when optional model instructions setup is requested.
 - `references/restriction-debug-cases.md`: On-demand cases for restriction gates, Chrome/browser_use, Computer Use, and Fast Mode.
 - `references/win10-computer-use-screenshot-backend.md`: Root cause, binary boundary, guarded workflow, and validation evidence for the Windows 10 screenshot backend.
@@ -58,31 +57,29 @@ Do not run it on macOS. A macOS version needs a separate workflow for the Codex 
 
 ## Install
 
-Clone this repository, open PowerShell in the repository root, then copy only the skill files:
+The skill directory is a clone of this repository, so `git clone` it straight into your agent's skills directory. The destination depends on the harness you use; the skill itself does not care which harness it lives under:
 
 ```powershell
-$source = (Get-Location).ProviderPath
-if (-not (Test-Path -LiteralPath (Join-Path $source 'SKILL.md'))) {
-  throw 'Run this command from the codex-windows-fast-patch-skill repository root.'
-}
+# Codex
+git clone https://github.com/chen0416ccc-cpu/codex-windows-fast-patch-skill.git "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch"
 
-$dest = Join-Path $env:USERPROFILE '.codex\skills\codex-windows-fast-patch'
-New-Item -ItemType Directory -Force -Path $dest | Out-Null
-
-Copy-Item -Force -LiteralPath (Join-Path $source 'SKILL.md') -Destination $dest
-Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'agents') -Destination $dest
-Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'scripts') -Destination $dest
-Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'references') -Destination $dest
-Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'assets') -Destination $dest
+# Claude Code
+git clone https://github.com/chen0416ccc-cpu/codex-windows-fast-patch-skill.git "$env:USERPROFILE\.claude\skills\codex-windows-fast-patch"
 ```
 
-After installing into Codex, restart Codex so it reloads skill metadata.
+Any other agent that supports Agent Skills works the same way: point the destination at its own skills root. The full history takes about 800 KB, less than the working tree itself.
+
+Restart the agent afterwards so it reloads skill metadata.
+
+If your harness installs skills through a plugin or marketplace mechanism, that copy is not a git working tree and cannot self-update; everything else keeps working.
 
 ## Usage
 
 After installation, ask an agent that supports Agent Skills to use the `codex-windows-fast-patch` workflow for the Codex Desktop issue on the current machine.
 
-This skill supports self-updating: before each substantive use, the agent first tries to check GitHub and sync the latest version, so you do not need to repeatedly return to GitHub and pull updates manually. The sync covers the tracked top-level files (`SKILL.md`, both READMEs, `AGENTS.md`, `SECURITY.md`) plus the `agents`, `scripts`, `references`, and `assets` directories, so the commit recorded in `.skill-version` always matches the installed acceptance checklists. An installation containing `.skill-local-overlay` must also provide `.skill-update-source.json` with `owner`, `repo`, and `branch`, or the caller must pass an explicit source; otherwise self-update refuses to replace the overlay with the default upstream. This keeps the local skill as close as possible to the latest known workflow for newly discovered issues; if the network is unavailable, GitHub cannot be reached, or the download fails, that update step is skipped and the agent should continue with the currently installed local version.
+Updating this skill is `git pull`. Before substantive work the agent runs a cheap check — `git fetch` plus `git rev-list --count HEAD..@{u}` — and skips the rest when the count is `0`; only a non-zero count makes it read `git log` and decide whether to pull. It checks again when a patch step fails (a missing helper profile, a pattern that no longer matches, an unrecognized Desktop build), because that is exactly the case where upstream may already carry the fix.
+
+Local edits are not wiped out: `git pull --ff-only` refuses to run when the working tree carries local modifications or local commits, so they must be resolved deliberately (`git stash`, pull, `git stash pop`; or commit locally and `git pull --rebase`). Helper profiles and repair guards you added yourself are therefore safe. Change the update source with `git remote set-url origin <your-fork>`, and roll back with `git checkout <older-commit>`. When the network is unavailable the update step is skipped, the agent continues with the currently installed local version, and it states in the conclusion that the update did not run.
 
 The scripts are reference implementations and operational templates, not a one-command fix that is guaranteed to work on every machine. A real run should first read `SKILL.md`, inspect the current Codex installation method, MSIX package path, ASAR contents, signing tools, plugin directories, and Computer Use file state, then decide whether to execute, adapt, or only borrow steps from the scripts.
 
@@ -150,19 +147,19 @@ Expected verification after a full run:
 Repair scripts automatically back up the previous `config.toml` into `.codex\backups\config\` before writing it. To manually back up or migrate important local Codex state, use the standalone backup manager:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\manage-codex-backups.ps1" -Action Backup
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\manage-codex-backups.ps1" -Action Backup
 ```
 
 List existing backups:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\manage-codex-backups.ps1" -Action List
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\manage-codex-backups.ps1" -Action List
 ```
 
 Restore from a backup:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\manage-codex-backups.ps1" -Action Restore -BackupPath "<backup path>"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\manage-codex-backups.ps1" -Action Restore -BackupPath "<backup path>"
 ```
 
 By default, the backup includes custom skills, marketplaces, `config.toml`, extracted `mcp_servers.json`, and `chrome-native-hosts.json`, while excluding easy-to-grow directories such as `.git`, `node_modules`, build outputs, and virtual environments. Use `-IncludeDependencyDirs` only when an exact offline dependency copy is needed; plugin cache and `.tmp\bundled-marketplaces` can also be large, so include them only when needed with `-IncludePluginCache` or `-IncludeTmpBundledMarketplaces`.

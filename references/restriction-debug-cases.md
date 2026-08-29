@@ -2,6 +2,8 @@
 
 Use this reference only when the main `SKILL.md` workflow does not explain the current Codex Desktop restriction, plugin gate, Computer Use failure, browser_use failure, or Model Experience failure. Model Experience covers Fast Mode request/UI behavior, custom models hidden by the Desktop model filter, and the dependent compact Power slider. Keep the investigation evidence-based: prefer package status, config, plugin list output, Desktop logs, sandbox logs, and captured network requests over assumptions.
 
+Commands below refer to the skill directory as `$SkillRoot`. Resolve it with the probe in the `Skill Root` section of `SKILL.md` before running any of them.
+
 ## Model Experience Is Partially Broken
 
 Symptoms:
@@ -33,7 +35,7 @@ Action:
 - Run the unified Model Experience dry run so the request gate, UI gate, and model filter are checked separately and only broken components are changed:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch_codex_fast_mode_windows_msix.ps1" -OnlyModelExperience -DryRun -OutputRoot "<large-local-build-root>"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\patch_codex_fast_mode_windows_msix.ps1" -OnlyModelExperience -DryRun -OutputRoot "<large-local-build-root>"
 ```
 
 - If the dry run reports any `patched` result, install the same targeted workflow from an external executor. If all three results are `already-patched`, do not rebuild the package; continue with provider/proxy and model-cache diagnosis.
@@ -90,8 +92,8 @@ Action:
 - For the Desktop dynamicTools branch, run the targeted script instead of the full default repatch:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-dynamic-tools-windows-msix.ps1" -DryRun -OutputRoot "<large-local-build-root>"
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-dynamic-tools-windows-msix.ps1" -Install -Launch -InstallPrerequisites -OutputRoot "<large-local-build-root>"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\patch-dynamic-tools-windows-msix.ps1" -DryRun -OutputRoot "<large-local-build-root>"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\patch-dynamic-tools-windows-msix.ps1" -Install -Launch -InstallPrerequisites -OutputRoot "<large-local-build-root>"
 ```
 
 - After the dynamicTools branch, verify actual Desktop new-chat/thread creation or newest Desktop logs. CLI-only success is insufficient because CLI smoke tests can bypass Desktop `dynamicTools`.
@@ -372,32 +374,33 @@ Action:
 
 Symptoms:
 
-- The skill self-update helper cannot reach GitHub, cannot download the archive, or cannot resolve remote HEAD.
+- `git -C "$SkillRoot" fetch` cannot reach GitHub, or `$SkillRoot` has no `.git` directory at all.
 
 Action:
 
 - Do not block the repair.
 - Continue with the currently installed local skill.
 - Mention that self-update was skipped, then rely on local scripts and local evidence.
+- When `.git` is missing, note that this copy was not installed with `git clone`, so it can never self-update; suggest reinstalling with `git clone` for future runs.
 
-## Self-Update Reports A New Commit But Acceptance Criteria Are Stale
+## Self-Update Reports A New Commit But The Working Tree Stays Behind
 
 Symptoms:
 
-- Self-update logs `updated skill from GitHub: <sha>` and `.skill-version` holds that commit, but the installed `README.md` / `README.en.md` still describe the previous acceptance criteria.
+- `git fetch` reports new commits, but `git pull --ff-only` fails and the installed `README.md` / `README.en.md` still describe the previous acceptance criteria.
 - A verification step that the upstream commit added is missing from the installed checklist, so a real defect is never checked and the run is reported as complete.
 
 Checks:
 
-- Compare the installed top-level files with the commit in `.skill-version`, not just `SKILL.md` and `scripts`.
-- Confirm the self-update copy list covers every tracked top-level file. Only `agents`, `scripts`, `references`, and `assets` are mirrored as directories; top-level files are copied one by one from an explicit list.
-- Read `.skill-version` as bytes. A UTF-8 BOM makes non-PowerShell tooling compare the marker as unequal even when the skill is current.
+- `git -C "$SkillRoot" status --short` — local modifications or local commits block a fast-forward.
+- `git -C "$SkillRoot" log --oneline HEAD..@{u}` — confirm which commits are still missing.
+- `git -C "$SkillRoot" rev-parse HEAD` — the commit actually installed, rather than what any marker claims.
 
 Action:
 
-- Sync the missing top-level files from the commit recorded in `.skill-version` before trusting any acceptance checklist.
-- Keep the copy list and the tracked top-level file set aligned, and cover it with `scripts/test-skill-self-update-file-coverage.ps1`.
-- Write `.skill-version` as UTF-8 without BOM, and tolerate a BOM left by an older install when comparing against remote HEAD.
+- Resolve the local edits deliberately: `git stash`, then `git pull --ff-only`, then `git stash pop`; or commit locally and `git pull --rebase`.
+- Never use `git reset --hard` or `git checkout -- .` to force the pull through, because local helper profiles and repair guards live in those edits.
+- Re-read the acceptance checklists from `README.md` / `README.en.md` after the working tree is genuinely up to date.
 
 ## Manual ASAR Extraction Leaves Temp Directory
 

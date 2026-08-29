@@ -48,7 +48,6 @@
 - `scripts/sync-codex-provider-history.ps1`：同步本地会话 provider 元数据，让切换 `model_provider` 后消失的会话重新出现在官方列表中；也可用 `-RepairMissingCwdDirs` 修复恢复后会话无法继续的缺失 `cwd` 目录。默认不改 `config.toml`，也不改 workspace/project roots。
 - `scripts/install-model-instructions-file.ps1`：可选安装内置 `model_instructions_file` 提示词资源。
 - `scripts/manage-codex-backups.ps1`：本地 Codex 配置、MCP、skills 和 marketplaces 的备份管理脚本。
-- `scripts/update-skill-from-github.ps1`：使用前尽力同步 GitHub 最新版本的自更新脚本。
 - `assets/system-prompt.md`：仅在用户明确要求可选提示词配置时使用的内置提示词资源。
 - `references/restriction-debug-cases.md`：限制解除、Chrome/browser_use、Computer Use 和 Fast Mode 的按需诊断案例。
 - `references/win10-computer-use-screenshot-backend.md`：Win10 原生截图 helper 的 `0x80004002`、`FrameArrived` 死锁、补丁边界和验收证据。
@@ -59,31 +58,29 @@
 
 ## 安装
 
-先克隆仓库，然后在仓库根目录打开 PowerShell，只复制 skill 需要的文件：
+skill 目录就是这个仓库的一份克隆，直接 `git clone` 到你的智能体的 skills 目录即可。目标路径取决于你用的 harness，skill 本身不关心装在哪个 harness 下面：
 
 ```powershell
-$source = (Get-Location).ProviderPath
-if (-not (Test-Path -LiteralPath (Join-Path $source 'SKILL.md'))) {
-  throw '请在 codex-windows-fast-patch-skill 仓库根目录运行此命令。'
-}
+# Codex
+git clone https://github.com/chen0416ccc-cpu/codex-windows-fast-patch-skill.git "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch"
 
-$dest = Join-Path $env:USERPROFILE '.codex\skills\codex-windows-fast-patch'
-New-Item -ItemType Directory -Force -Path $dest | Out-Null
-
-Copy-Item -Force -LiteralPath (Join-Path $source 'SKILL.md') -Destination $dest
-Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'agents') -Destination $dest
-Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'scripts') -Destination $dest
-Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'references') -Destination $dest
-Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'assets') -Destination $dest
+# Claude Code
+git clone https://github.com/chen0416ccc-cpu/codex-windows-fast-patch-skill.git "$env:USERPROFILE\.claude\skills\codex-windows-fast-patch"
 ```
 
-安装到 Codex 后，重启 Codex，让它重新加载 skill 元数据。
+其它支持 Agent Skills 的智能体同理，把目标目录换成它自己的 skills 根就行。完整历史只占约 800 KB，比工作树本身还小。
+
+装完重启智能体，让它重新加载 skill 元数据。
+
+如果你的 harness 用插件或 marketplace 机制安装 skill，那份副本不是 git 工作树，自更新不可用，其余功能不受影响。
 
 ## 使用
 
 安装后，让支持 Agent Skills 的智能体使用 `codex-windows-fast-patch` 工作流处理当前机器上的 Codex Desktop 问题。
 
-这个 skill 支持自更新：智能体每次正式使用前会先尝试从 GitHub 检查并同步最新版本，同步范围包括已跟踪的顶层文件（`SKILL.md`、两份 README、`AGENTS.md`、`SECURITY.md`）和 `agents`、`scripts`、`references`、`assets` 四个目录，因此 `.skill-version` 记录的提交和本机验收清单始终一致。存在 `.skill-local-overlay` 的安装副本还必须提供 `.skill-update-source.json`（包含 `owner`、`repo`、`branch`），或在调用时显式传入更新源；否则自更新会拒绝用默认上游覆盖本地 overlay。网络不可用、GitHub 访问失败或下载失败时，更新步骤会被跳过，智能体应继续使用当前本地版本处理问题。
+这个 skill 的更新就是 `git pull`。智能体正式开工前先做一次极轻的检查：`git fetch` 加 `git rev-list --count HEAD..@{u}`，计数为 0 就直接跳过，非 0 才看 `git log` 决定是否拉取。补丁步骤失败时（helper profile 缺失、pattern 不再命中、Desktop 版本不认识）会再检查一次，因为这正是上游可能已经修好的情况。
+
+本地改动不会被抹掉：`git pull --ff-only` 遇到本地修改或本地提交会拒绝执行，需要显式处理（`git stash` 后拉取再 `git stash pop`，或本地 commit 后 `git pull --rebase`），你自己加的 helper profile 和修复护栏因此是安全的。想换更新源就 `git remote set-url origin <你的 fork>`，想回退就 `git checkout <旧提交>`。网络不通时更新会被跳过，智能体继续用当前本地版本处理问题，并在结论里说明未能更新。
 
 这些脚本是参考实现和操作模板，不是跨所有机器都能直接运行的一键方案。实际处理时应先读取 `SKILL.md`，检查当前机器的 Codex 安装方式、MSIX 包路径、ASAR 内容、签名工具、插件目录、Computer Use 文件状态和远控相关日志，再决定执行、改写或只借鉴其中步骤。
 
@@ -159,19 +156,19 @@ Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'assets') -Destination
 修复脚本在写入 `config.toml` 前会自动把旧文件备份到 `.codex\backups\config\`。如果要手动备份或迁移本地 Codex 的关键状态，可以使用独立备份脚本：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\manage-codex-backups.ps1" -Action Backup
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\manage-codex-backups.ps1" -Action Backup
 ```
 
 列出现有备份：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\manage-codex-backups.ps1" -Action List
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\manage-codex-backups.ps1" -Action List
 ```
 
 从某个备份恢复：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\manage-codex-backups.ps1" -Action Restore -BackupPath "<backup path>"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\manage-codex-backups.ps1" -Action Restore -BackupPath "<backup path>"
 ```
 
 默认备份自定义 skills、marketplaces、`config.toml`、解析出的 `mcp_servers.json` 和 `chrome-native-hosts.json`，并排除 `.git`、`node_modules`、构建产物和虚拟环境等容易变大的目录。需要完整离线依赖副本时再加 `-IncludeDependencyDirs`；插件缓存和 `.tmp\bundled-marketplaces` 也可能较大，需要时再加 `-IncludePluginCache` 或 `-IncludeTmpBundledMarketplaces`。
