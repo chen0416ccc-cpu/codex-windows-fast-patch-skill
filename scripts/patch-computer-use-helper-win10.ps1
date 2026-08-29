@@ -608,13 +608,15 @@ $PatchProfiles = @(
     )
   },
   # Desktop 26.825.5331.0 ships a fourth binary reporting the same 0.6.24 sky
-  # version string. It is the 4DB7B670 helper re-signed: all ten section headers
-  # and bodies are byte-identical, and the 1964 differing whole-file bytes are
-  # fully accounted for by the optional-header checksum (2 bytes at 0xD8..0xDB,
-  # 0x00173283 -> 0x0017A30C) plus the Authenticode certificate table (1962
-  # bytes at 0x0016D000..0x00170D2F); zero bytes differ outside those two areas.
-  # All five regions verified present at the same offsets with the same original
-  # bytes, so they carry over unchanged and only the whole-file hashes move.
+  # version string. It is the 4DB7B670 helper re-signed: the 400-byte section
+  # table is byte-identical, all nine sections that carry raw data have identical
+  # bodies (.bss has none), and even the COFF timestamp is unchanged. The 1964
+  # differing whole-file bytes are fully accounted for by the optional-header
+  # checksum (2 bytes at 0xD8..0xD9, 0x00173283 -> 0x0017A30C) plus the
+  # Authenticode certificate table (1962 bytes, last difference at 0x00170D2C);
+  # zero bytes differ outside those two areas. All five regions verified present
+  # at the same offsets with the same original bytes, so they carry over
+  # unchanged and only the whole-file hashes move.
   [ordered]@{
     Name = '@oai/sky 0.6.24 helper 9BAB6E1B / Windows 10 screenshot backend'
     ValidatedDesktopVersion = '26.825.5331.0'
