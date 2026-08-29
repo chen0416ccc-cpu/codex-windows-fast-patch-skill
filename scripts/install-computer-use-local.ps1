@@ -3423,16 +3423,16 @@ function Test-ComputerUseRuntimeImport {
     throw "independent Computer Use runtime entry is missing: $entryPath"
   }
 
+  # Do not define globalThis.nodeRepl here. sky >= 0.6.24 branches three ways on
+  # it: undefined falls back to the standalone create_client(load_options()),
+  # which is exactly what an independent runtime import should exercise; defined
+  # with an rpc function routes every call over that RPC channel; defined without
+  # one throws "sky requires node_repl; configure NODE_REPL_TRUSTED_SERVICES" as
+  # soon as a method is touched. The stub removed here was that third shape, so
+  # this verification could never pass on 0.6.24. It only mirrored process.env
+  # values back, so it carried no information the standalone loader cannot read
+  # itself.
   $script = @'
-globalThis.nodeRepl = {
-  config: {},
-  nativePipe: {},
-  env: {
-    NODE_REPL_NODE_MODULE_DIRS:
-      process.env.NODE_REPL_NODE_MODULE_DIRS ?? process.env.NODE_PATH ?? "",
-  },
-  notify: () => {},
-};
 const mod = await import(process.argv[2]);
 if (typeof mod.sky !== "object" || mod.sky === null) {
   throw new Error("sky export is missing");
