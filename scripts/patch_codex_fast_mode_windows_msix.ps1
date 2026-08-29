@@ -1385,15 +1385,21 @@ function patchSidebarAvailability(file) {
     /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\.isCapable,([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(`410262010`\)/,
     '$1=!0,$5=($6(`410262010`),!0)/*CODEX_BROWSER_IN_APP_GATES_V2*/'
   );
-  // 0.6.24+ drops the `410262010` statsig literal entirely and prefixes the
-  // capability entry with accessPolicy, so anchor on the capability table
-  // instead. Strip every requirement key rather than just configFeatures: the
-  // capability atom short-circuits to isCapable:!0 only when the whole
-  // requirement list comes out empty.
+  // 0.6.24+ prefixes the capability entry with accessPolicy, and on some builds
+  // the `410262010` statsig literal no longer sits next to the isCapable read,
+  // so anchor on the capability table instead. Strip every requirement key
+  // rather than just configFeatures: the capability atom short-circuits to
+  // isCapable:!0 only when the whole requirement list comes out empty.
   const modernCapabilityPattern = /("browser\.in-app":\{)(?:accessPolicy:`[\w-]+`,|configFeatures:\[\{key:`in_app_browser`,host:`default`\}\],)+/;
-  const modernCapabilityPatched = /"browser\.in-app":\{supportedClients:\[`electron`\]\}/.test(before);
+  // Leave an `in_app_browser` marker behind. In the shipped bundle that literal
+  // occurs exactly once -- inside the configFeatures entry being stripped -- and
+  // both the entry guard above and the target-file discovery in
+  // patch_codex_fast_mode_windows_msix.ps1 key on it, so a bare strip would make
+  // this patcher unable to find its own target on a second run.
+  const modernCapabilityMarker = '/*in_app_browser CODEX_BROWSER_IN_APP_GATES_V2*/';
+  const modernCapabilityPatched = before.includes('"browser.in-app":{' + modernCapabilityMarker);
   const beforeModernCapability = after;
-  after = after.replace(modernCapabilityPattern, '$1');
+  after = after.replace(modernCapabilityPattern, '$1' + modernCapabilityMarker);
   if (after === beforeModernCapability && !modernCapabilityPatched) {
     after = after.replace(
       // The capability-read helper is renamed by the minifier on every release,
