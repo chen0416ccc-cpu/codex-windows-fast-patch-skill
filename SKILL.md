@@ -36,13 +36,15 @@ The skill directory is a git working tree, so updating is `git pull`. Run the ch
 
 ```powershell
 git -C "$SkillRoot" fetch --quiet origin
-git -C "$SkillRoot" rev-list --count HEAD..@{u}
+git -C "$SkillRoot" rev-list --count 'HEAD..@{u}'
 ```
+
+Keep `'HEAD..@{u}'` single-quoted. PowerShell parses a bare `@{u}` as a hashtable literal and fails before git runs at all. `HEAD..origin/HEAD` is equivalent here and needs no quoting.
 
 A count of `0` means the skill is current: skip the update and start the task. For a non-zero count, read what actually changed, then pull, then reload this `SKILL.md`:
 
 ```powershell
-git -C "$SkillRoot" log --oneline HEAD..@{u}
+git -C "$SkillRoot" log --oneline 'HEAD..@{u}'
 git -C "$SkillRoot" pull --ff-only
 ```
 
@@ -51,7 +53,7 @@ If `@{u}` reports no upstream configured, substitute the tracking ref explicitly
 Rules:
 
 - Never block the repair on the update. When `fetch` fails because the network is unavailable, GitHub is unreachable, or a proxy is down, continue with the installed version and state in the conclusion that the update was skipped.
-- Local edits are preserved by git, not silently discarded. `git pull --ff-only` refuses to run when the working tree carries local modifications or local commits. Inspect with `git -C "$SkillRoot" status --short` and `git -C "$SkillRoot" diff`, then resolve deliberately: `git stash`, pull, `git stash pop`; or commit locally and `git pull --rebase`. Never use `git reset --hard` or `git checkout -- .` to force a pull through, because local helper profiles and repair guards live in those edits.
+- Local edits are preserved by git, not silently discarded. Inspect with `git -C "$SkillRoot" status --short` and `git -C "$SkillRoot" diff` before pulling. Uncommitted edits to files the update does not touch survive `git pull --ff-only` untouched. Uncommitted edits to a file the update also changes make git refuse the pull, name the blocking file, and leave the edit on disk; recover with `git stash`, `git pull --ff-only`, `git stash pop`, and expect `stash pop` to leave conflict markers when the local edit and the upstream change touch the same lines. Local commits make `--ff-only` refuse because the branches diverged; `git pull --rebase` replays them on top of the update. Never use `git reset --hard` or `git checkout -- .` to force a pull through, because local helper profiles and repair guards live in those edits.
 - A fork is just a different remote. `git -C "$SkillRoot" remote set-url origin <fork-url>` pins the update source, and no extra configuration file is involved.
 - Roll back with git. `git -C "$SkillRoot" log --oneline -10`, then `git -C "$SkillRoot" checkout <sha>` returns to any earlier version.
 - When a patch step fails, check for updates again before concluding. A missing helper profile, a pattern that no longer matches, or an unrecognized Desktop build is exactly the case where upstream may already carry the fix, so repeat the fetch and log check at that point even if it already ran at the start of the task.

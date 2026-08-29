@@ -392,13 +392,15 @@ Symptoms:
 
 Checks:
 
-- `git -C "$SkillRoot" status --short` — local modifications or local commits block a fast-forward.
-- `git -C "$SkillRoot" log --oneline HEAD..@{u}` — confirm which commits are still missing.
+- `git -C "$SkillRoot" status --short` — the only things that block a fast-forward are uncommitted edits to a file the update also changes, and local commits. Uncommitted edits elsewhere in the tree do not block the pull.
+- `git -C "$SkillRoot" pull --ff-only` — the failure message names the blocking file, or reports diverging branches when the block is a local commit.
+- `git -C "$SkillRoot" log --oneline 'HEAD..@{u}'` — confirm which commits are still missing. Keep the single quotes; PowerShell parses a bare `@{u}` as a hashtable.
 - `git -C "$SkillRoot" rev-parse HEAD` — the commit actually installed, rather than what any marker claims.
 
 Action:
 
-- Resolve the local edits deliberately: `git stash`, then `git pull --ff-only`, then `git stash pop`; or commit locally and `git pull --rebase`.
+- For a blocking uncommitted edit: `git stash`, then `git pull --ff-only`, then `git stash pop`. When the local edit and the upstream change touch the same lines, `stash pop` reports a conflict and leaves conflict markers; resolve them by hand.
+- For a local commit: `git pull --rebase` replays it on top of the update.
 - Never use `git reset --hard` or `git checkout -- .` to force the pull through, because local helper profiles and repair guards live in those edits.
 - Re-read the acceptance checklists from `README.md` / `README.en.md` after the working tree is genuinely up to date.
 
