@@ -655,6 +655,55 @@ $PatchProfiles = @(
         PatchedHex = '20fb114001000000'
       }
     )
+  },
+  # Desktop 26.825.6671.0 ships a fifth binary reporting the same 0.6.24 sky
+  # version string. It is the 9BAB6E1B helper re-signed: the 400-byte section
+  # table is byte-identical, all nine sections that carry raw data have identical
+  # bodies (.bss has none), and the COFF timestamp is unchanged (0x6A8F8FF4). The
+  # 4225 differing whole-file bytes are fully accounted for by the optional-header
+  # checksum (2 bytes at 0xD8..0xD9, 0x0017A30C -> 0x0017D62D) plus the
+  # Authenticode certificate table (4223 bytes, last difference at 0x00170D2C);
+  # zero bytes differ outside those two areas. All five regions verified present
+  # at the same offsets with the same original bytes, so they carry over
+  # unchanged and only the whole-file hashes move.
+  [ordered]@{
+    Name = '@oai/sky 0.6.24 helper 3B60A7E0 / Windows 10 screenshot backend'
+    ValidatedDesktopVersion = '26.825.6671.0'
+    SkyVersion = '0.6.24-premerge-pr-1369830-395ab116910c'
+    OriginalSha256 = '3B60A7E0746C9FCEEBC3E0735C33BF97734B4B2AA04E0ED030201251E48D1BB6'
+    PatchedSha256 = '8B09F9EFD541E059D6611B0D00C6984A2ACF19971B45F292DF3EE13F746009D7'
+    Regions = @(
+      [ordered]@{
+        Name = 'optional-border-interface'
+        Offset = 0x0003D71A
+        OriginalHex = '4889c64189d6eb4c'
+        PatchedHex = 'e96f000000909090'
+      },
+      [ordered]@{
+        Name = 'frame-arrived-busy-return'
+        Offset = 0x0004133E
+        OriginalHex = '0f8543310000'
+        PatchedHex = '0f8525310000'
+      },
+      [ordered]@{
+        Name = 'frame-arrived-once-flag'
+        Offset = 0x0004134F
+        OriginalHex = '740d'
+        PatchedHex = 'eb0d'
+      },
+      [ordered]@{
+        Name = 'mta-worker-wrapper'
+        Offset = 0x0011EF20
+        OriginalHex = (('00' * 169) -join '')
+        PatchedHex = '4883ec3848894c24304c8b510831c0b201f0410fb052117536488b01ff500831c931d24c8d05490000004c8b4c2430488364242000488364242800ff1507d404004885c074104889c1ff15c1d3040031c04883c438c3488b4c2430488b4108c6401100488b01ff5010b8054000804883c438c34883ec3848894c2428b901000000ff1501d30400488b4c2428e85823f2ffff15f9d20400488b4c2428488b01ff501031c04883c438c3'
+      },
+      [ordered]@{
+        Name = 'frame-arrived-vtable'
+        Offset = 0x00124C10
+        OriginalHex = '091f044001000000'
+        PatchedHex = '20fb114001000000'
+      }
+    )
   }
 )
 
