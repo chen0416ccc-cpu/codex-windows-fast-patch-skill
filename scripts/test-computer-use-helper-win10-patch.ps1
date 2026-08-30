@@ -3,12 +3,22 @@ param(
   [string]$HelperPath,
   # Profile labels, not raw @oai/sky versions: one sky version can ship more than one
   # helper binary across Desktop builds, so each label pins its own hash pair.
-  [ValidateSet('0.6.6', '0.6.11', '0.6.11-7A95D14E', '0.6.16', '0.6.16-BEB498C2', '0.6.17-29D5E113', '0.6.17-DB8F4486')]
+  [ValidateSet('0.4.20-F2B2F56F', '0.5.2-2C4CAC16', '0.6.6', '0.6.11', '0.6.11-7A95D14E', '0.6.16', '0.6.16-BEB498C2', '0.6.17-29D5E113', '0.6.17-DB8F4486', '0.6.17-4250FF66', '0.6.17-4319D3A2', '0.6.17-D967386B', '0.6.23-8423CA8C', '0.6.24-DE3696C0', '0.6.24-4DB7B670', '0.6.24-9BAB6E1B')]
   [string]$SkyVersion = '0.6.16'
 )
 
 $ErrorActionPreference = 'Stop'
 $Profiles = @{
+  '0.4.20-F2B2F56F' = [ordered]@{
+    SkyVersion = '0.4.20'
+    OriginalHash = 'F2B2F56FCD1699B0FA32DEC3214A56A1D36B937A2ECF58CC822AB4A904551E03'
+    PatchedHash = '71A13CBC4BB333F0707D2311C99DBA54D8B24D1BBB9F7CE25C3B9386577FFDDA'
+  }
+  '0.5.2-2C4CAC16' = [ordered]@{
+    SkyVersion = '0.5.2'
+    OriginalHash = '2C4CAC168200520C2752058177EA9FE7D1CCF9A26B7287DDDFF669D41CA9AF16'
+    PatchedHash = 'D816B14A80370697380BA702863DA9528AA5B73ED34C2B189ACE2BF9E103BEFF'
+  }
   '0.6.6' = [ordered]@{
     SkyVersion = '0.6.6'
     OriginalHash = 'BE488E66C38E12FA46850EE48C1F5E44ECDB0A3A64042E064E3A1A1DA286AC42'
@@ -43,6 +53,43 @@ $Profiles = @{
     SkyVersion = '0.6.17-202608171537-pr-1300023-7efba775c041'
     OriginalHash = 'DB8F4486D527C91B80266FAF77FDC38266B1D3960EFBBA35D0A6AAB4CAAF6AEE'
     PatchedHash = '6495168DC16A35CDC33230E6512D64E660B56D13E99FE239426D228B9F86E157'
+  }
+  '0.6.17-4250FF66' = [ordered]@{
+    SkyVersion = '0.6.17-202608171537-pr-1300023-7efba775c041'
+    OriginalHash = '4250FF66B8EE598931DBE782E1CC76133FBE7650CCE225C4FC232155F7054350'
+    PatchedHash = 'F4408E2C59F037D8B96ADAF3DE48846DB2921A9F007BC3CCAE34C1407A609ACC'
+  }
+  '0.6.17-4319D3A2' = [ordered]@{
+    SkyVersion = '0.6.17-202608171537-pr-1300023-7efba775c041'
+    OriginalHash = '4319D3A23F6B21370205425203BD46E76E7F3BB7EA5AC263851DCC5B8727AAE5'
+    PatchedHash = '338D32A33BB7C034FEBCA79D23EF2337BCCE1CC9741784C1C11CE64F3A508368'
+  }
+  '0.6.17-D967386B' = [ordered]@{
+    SkyVersion = '0.6.17-202608171537-pr-1300023-7efba775c041'
+    OriginalHash = 'D967386B8943355017B7CFC1044A6F39AF41A38A3731088C4191123CE7F86018'
+    PatchedHash = 'B43B12A8A23BE7CED3CCB64C56CC6885A483DBD482891116AB78C35CC3ACFB30'
+  }
+  '0.6.23-8423CA8C' = [ordered]@{
+    SkyVersion = '0.6.23-202608251207-pr-1350514-1bc5ee2d44ce'
+    OriginalHash = '8423CA8C5B75BD2ADCDC0E0BB0242A8F5422D16E12505753E84728D4A112458F'
+    PatchedHash = 'E7C020B3451F6F2EF300D725A6B2AFC45A223A07C87D6D053B93BF3B28F0B661'
+  }
+  '0.6.24-DE3696C0' = [ordered]@{
+    SkyVersion = '0.6.24-premerge-pr-1369830-395ab116910c'
+    OriginalHash = 'DE3696C0E35CB4A00A77F284779E03FBED6B46D9EE00CA261D2B467064A3D149'
+    PatchedHash = '1AB5261A714BDD10BCE038319A4668E366B679691A746B569731ED994FAC80E3'
+  }
+  # Same sky version string as DE3696C0, different binary: keyed on hash, not version.
+  '0.6.24-4DB7B670' = [ordered]@{
+    SkyVersion = '0.6.24-premerge-pr-1369830-395ab116910c'
+    OriginalHash = '4DB7B6709F5B6DB2AE6DF60A1BDE026CF8A3582EEB616AF6B6529150E11B5CE1'
+    PatchedHash = '986AA8DC4F6B2DC0A9551617120AF82915EC42C9F745BDE5F474EEB44A6ACCBD'
+  }
+  # Third binary on the same sky version string, shipped by Desktop 26.825.5331.0.
+  '0.6.24-9BAB6E1B' = [ordered]@{
+    SkyVersion = '0.6.24-premerge-pr-1369830-395ab116910c'
+    OriginalHash = '9BAB6E1B59D31D97530F2F6681DAEF76E39C7AD0836147C6E0B55A9B47A33EBF'
+    PatchedHash = 'B86B1FCB9EBD7184526AF49D40333FDA02F774FA62E0E9A3528BA5F87EB68AB7'
   }
 }
 $ProfileLabel = $SkyVersion
@@ -238,7 +285,7 @@ try {
   }
 
   $unknownBytes = [IO.File]::ReadAllBytes($testHelper)
-  $unknownBytes[0x47E01] = $unknownBytes[0x47E01] -bxor 1
+  $unknownBytes[$unknownBytes.Length - 1] = $unknownBytes[$unknownBytes.Length - 1] -bxor 1
   [IO.File]::WriteAllBytes($testHelper, $unknownBytes)
   $unknown = Get-Status $testHelper $codexHome
   Assert-Equal $unknown.State 'unsupported' 'unknown hash state mismatch'

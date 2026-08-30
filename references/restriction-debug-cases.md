@@ -146,7 +146,7 @@ Checks:
 Action:
 
 - Do not patch `browser-client.mjs`, fabricate `nodeRepl.config`, or add the modified hash to `app.asar`. Preserve the vendor trust contract instead.
-- Run `install-computer-use-local.ps1 -VerifyOnly`. The repair restores the exact packaged browser-client bytes into the stable marketplace and versioned cache; `-StrictVerifyOnly` requires those hashes to match and accepts only the legacy installed-`app.asar` hash list or the current packaged `NODE_REPL_TRUSTED_SERVICES` plus `browserServicePath` service contract.
+- Run `install-computer-use-local.ps1 -VerifyOnly`. The repair restores the exact packaged browser-client bytes into the stable marketplace and versioned cache; `-StrictVerifyOnly` requires those hashes to match and accepts only the legacy installed-`app.asar` hash list, the current packaged `NODE_REPL_TRUSTED_SERVICES` plus `browserServicePath` service contract, or the complete native-host path contract. For an external physical cache root, it also requires the resolved marketplace/cache roots in `NODE_REPL_TRUSTED_CODE_PATHS` and the installed-ASAR marker `CODEX_NODE_REPL_TRUSTED_PATHS_V1`.
 - Reset the current Node REPL kernel after repair, import the active cached browser client, require `setupBrowserRuntime()` to succeed, and confirm `agent.browsers.get("chrome")` returns the real Chrome extension backend.
 - Finish with a real controlled page smoke test: open `https://example.com/`, verify the final URL, title `Example Domain`, exactly one `h1`, and heading text `Example Domain`, then close the temporary tab.
 - If the official diagnostics fail, repair the concrete extension/native-host problem instead and rerun the same diagnostics before attempting browser-client setup again.

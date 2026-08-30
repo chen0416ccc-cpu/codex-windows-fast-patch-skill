@@ -208,6 +208,49 @@ function Set-TomlTable {
   Write-Utf8NoBom $ConfigPath $content
 }
 
+function Set-TomlTableKey {
+  param(
+    [string]$ConfigPath,
+    [string]$Header,
+    [string]$Key,
+    [string]$Value,
+    [string]$Reason = 'set-table-key'
+  )
+
+  $content = ''
+  if (Test-Path -LiteralPath $ConfigPath) {
+    $content = [System.IO.File]::ReadAllText($ConfigPath, [System.Text.UTF8Encoding]::new($false))
+  }
+  $escapedHeader = [regex]::Escape($Header)
+  $tablePattern = "(?ms)^(?<header>$escapedHeader)\s*\r?\n(?<body>(?:(?!^\[).)*)"
+  $tableMatch = [regex]::Match($content, $tablePattern)
+  $escapedValue = [string]$Value -replace "'", "''"
+  $line = "$Key = '$escapedValue'"
+  if ($tableMatch.Success) {
+    $body = $tableMatch.Groups['body'].Value
+    $escapedKey = [regex]::Escape($Key)
+    $keyPattern = "(?m)^\s*$escapedKey\s*=.*$"
+    if ([regex]::IsMatch($body, $keyPattern)) {
+      $body = [regex]::Replace($body, $keyPattern, $line, 1)
+    } else {
+      $body = $line + "`r`n" + $body
+    }
+    $replacement = $tableMatch.Groups['header'].Value + "`r`n" + $body
+    $content = $content.Substring(0, $tableMatch.Index) + $replacement + $content.Substring($tableMatch.Index + $tableMatch.Length)
+  } else {
+    if ($content.Length -gt 0 -and -not $content.EndsWith("`n")) {
+      $content += "`r`n"
+    }
+    if ($content.Length -gt 0 -and -not $content.EndsWith("`r`n`r`n")) {
+      $content += "`r`n"
+    }
+    $content += "$Header`r`n$line`r`n"
+  }
+
+  Backup-ConfigBeforeOverwrite $ConfigPath $Reason
+  Write-Utf8NoBom $ConfigPath $content
+}
+
 function Remove-TomlTableKeys {
   param(
     [string]$ConfigPath,
@@ -316,6 +359,8 @@ function Get-ChromeUserDataDirectoryOverride {
 }
 
 function Enable-UserEnvironment {
+  param([string]$MarketplaceRoot)
+
   if ($SkipUserEnvironment) {
     Write-Log 'skipping user environment update'
     return
@@ -323,6 +368,13 @@ function Enable-UserEnvironment {
 
   [Environment]::SetEnvironmentVariable('CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE', '1', 'User')
   $env:CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE = '1'
+
+  $trustedRoots = @(Get-NodeReplTrustedRoots $MarketplaceRoot)
+  if ($trustedRoots.Count -gt 0) {
+    $trustedCodePaths = $trustedRoots -join ';'
+    [Environment]::SetEnvironmentVariable('NODE_REPL_TRUSTED_CODE_PATHS', $trustedCodePaths, 'User')
+    $env:NODE_REPL_TRUSTED_CODE_PATHS = $trustedCodePaths
+  }
 
   $chromeUserDataDirectory = Get-ChromeUserDataDirectoryOverride
   if ($chromeUserDataDirectory) {
@@ -351,6 +403,9 @@ public static class CodexEnvBroadcast {
   }
 
   Write-Log 'enabled CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE=1 for this process and the current user'
+  if ($trustedRoots.Count -gt 0) {
+    Write-Log "enabled NODE_REPL_TRUSTED_CODE_PATHS=$trustedCodePaths for this process and the current user"
+  }
   if ($chromeUserDataDirectory) {
     Write-Log "enabled CODEX_CHROME_USER_DATA_DIR=$chromeUserDataDirectory for this process and the current user"
   }
@@ -997,6 +1052,15 @@ function Get-StableBundledMarketplaceRoot {
   return Join-Path $CodexHomeResolved 'marketplaces\openai-bundled-local'
 }
 
+function Get-NodeReplTrustedRoots {
+  param([string]$MarketplaceRoot)
+
+  return @($MarketplaceRoot, (Join-Path (Split-Path -Parent $MarketplaceRoot) 'openai-bundled-cache')) |
+    Where-Object { Test-Path -LiteralPath $_ -PathType Container } |
+    ForEach-Object { (Resolve-Path -LiteralPath $_).Path } |
+    Select-Object -Unique
+}
+
 function Get-ReservedBundledMarketplaceRoot {
   param([string]$CodexHomeResolved)
 
@@ -1155,6 +1219,19 @@ function Update-CodexConfig {
   }
   Set-TomlTable $configPath '[windows]' @{
     sandbox = 'unelevated'
+  }
+  $trustedRoots = @(Get-NodeReplTrustedRoots $MarketplaceRoot)
+  if ($trustedRoots.Count -gt 0) {
+    Set-TomlTableKey $configPath '[mcp_servers.node_repl.env]' 'NODE_REPL_TRUSTED_CODE_PATHS' ($trustedRoots -join ';') 'set-node-repl-trusted-code-paths'
+  }
+  $browserPluginRoot = Join-Path $MarketplaceRoot 'plugins\browser'
+  if (Test-Path -LiteralPath $browserPluginRoot -PathType Container) {
+    $browserVersion = Get-PluginVersion $browserPluginRoot
+    $browserServicePath = Join-Path (Split-Path -Parent $MarketplaceRoot) "openai-bundled-cache\browser\$browserVersion\scripts\browser-service.mjs"
+    if (Test-Path -LiteralPath $browserServicePath -PathType Leaf) {
+      $trustedServices = '{"browser":"' + ($browserServicePath -replace '\\', '/') + '","sky":"@oai/sky/service"}'
+      Set-TomlTableKey $configPath '[mcp_servers.node_repl.env]' 'NODE_REPL_TRUSTED_SERVICES' $trustedServices 'set-node-repl-trusted-services'
+    }
   }
   $pipeState = Get-ComputerUsePipeConfigState $configPath
   if ($pipeState.Present -and $pipeState.Active) {
@@ -2137,13 +2214,16 @@ function Get-ChromeNativeHostV2ExpectedResource {
     throw "Chrome plugin version is not valid for the v2 native-host manifest: $pluginVersion"
   }
   $nodeModuleRoot = Join-Path (Split-Path -Parent $RuntimeInventory.NodePath) 'node_modules'
+  $browserClientPath = [string]$hostConfig.browserClientPath
+  $browserServicePath = Join-Path (Split-Path -Parent $browserClientPath) 'browser-service.mjs'
   $appServerCliPath = $RuntimeInventory.CodexCliPath
   if (-not [string]::IsNullOrWhiteSpace($CodexCliPathOverride)) {
     $appServerCliPath = $CodexCliPathOverride
   }
   $requiredFiles = @(
     $extensionHostPath,
-    ([string]$hostConfig.browserClientPath),
+    $browserClientPath,
+    $browserServicePath,
     $appServerCliPath,
     $RuntimeInventory.NodePath,
     $RuntimeInventory.NodeReplPath
@@ -2160,7 +2240,8 @@ function Get-ChromeNativeHostV2ExpectedResource {
   }
 
   $paths = [ordered]@{
-    browserClientPath = [string]$hostConfig.browserClientPath
+    browserClientPath = $browserClientPath
+    browserServicePath = $browserServicePath
     codexCliPath = $appServerCliPath
     codexHome = $CodexHomeResolved
     extensionHostPath = $extensionHostPath
@@ -2282,6 +2363,15 @@ function Test-ChromeNativeHostV2JsonString {
   return $Value -is [string] -and -not [string]::IsNullOrWhiteSpace([string]$Value)
 }
 
+function Test-ChromeNativeHostV2TimestampValue {
+  param([object]$Value)
+
+  if ($Value -is [datetime] -or $Value -is [datetimeoffset]) {
+    return $true
+  }
+  return Test-ChromeNativeHostV2JsonString $Value
+}
+
 function Test-ChromeNativeHostV2JsonStringArray {
   param([object]$Value)
 
@@ -2336,13 +2426,16 @@ function Test-ChromeNativeHostV2EntrySchema {
     'entryId',
     'installId',
     'nativeHostVersion',
-    'proxyHost',
-    'updatedAt'
+    'proxyHost'
   )) {
     $property = $Entry.PSObject.Properties[$propertyName]
     if ($null -eq $property -or -not (Test-ChromeNativeHostV2JsonString $property.Value)) {
       return $false
     }
+  }
+  $updatedAtProperty = $Entry.PSObject.Properties['updatedAt']
+  if ($null -eq $updatedAtProperty -or -not (Test-ChromeNativeHostV2TimestampValue $updatedAtProperty.Value)) {
+    return $false
   }
   foreach ($propertyName in @('appVersion', 'cliVersion', 'nativeHostVersion')) {
     if ([string]$Entry.$propertyName -cnotmatch '^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$') {
@@ -2368,7 +2461,7 @@ function Test-ChromeNativeHostV2EntrySchema {
       return $false
     }
   }
-  foreach ($propertyName in @('browserClientPath', 'nodeReplPath')) {
+  foreach ($propertyName in @('browserClientPath', 'browserServicePath', 'nodeReplPath')) {
     $property = $paths.PSObject.Properties[$propertyName]
     if ($null -ne $property -and -not (Test-ChromeNativeHostV2JsonString $property.Value)) {
       return $false
@@ -2387,7 +2480,7 @@ function Test-ChromeNativeHostV2EntrySchema {
     }
     foreach ($propertyName in @('lastSeenAt', 'startedAt')) {
       $property = $presence.PSObject.Properties[$propertyName]
-      if ($null -eq $property -or -not (Test-ChromeNativeHostV2JsonString $property.Value)) {
+      if ($null -eq $property -or -not (Test-ChromeNativeHostV2TimestampValue $property.Value)) {
         return $false
       }
     }
@@ -2433,6 +2526,7 @@ function Test-ChromeNativeHostV2EntryCoreEqual {
   }
   foreach ($propertyName in @(
     'browserClientPath',
+    'browserServicePath',
     'codexCliPath',
     'codexHome',
     'extensionHostPath',
@@ -2508,6 +2602,18 @@ function Write-ChromeNativeHostV2State {
     $hostName = [string]@($_.nativeHostNames)[0]
     "$hostName`:$($_.channel)`:$($_.entryId)"
   })
+  $entriesChanged = $entries.Count -ne $nextEntries.Count
+  if (-not $entriesChanged) {
+    for ($index = 0; $index -lt $entries.Count; $index++) {
+      if (-not [object]::ReferenceEquals($entries[$index], $nextEntries[$index])) {
+        $entriesChanged = $true
+        break
+      }
+    }
+  }
+  if (-not $entriesChanged) {
+    return $false
+  }
   $nextDocument = [ordered]@{
     schemaVersion = 2
     entries = $nextEntries
@@ -2815,6 +2921,40 @@ function Test-FileContainsAsciiText {
   return $false
 }
 
+function Get-ChromeBrowserClientTrustMode {
+  param(
+    [string]$AppAsarPath,
+    [string]$BrowserClientSha256,
+    [string]$BrowserClientPath
+  )
+
+  if (Test-FileContainsAsciiText $AppAsarPath $BrowserClientSha256) {
+    return 'asar-sha256'
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($BrowserClientPath) -and
+      (Test-FileContainsAsciiText $AppAsarPath 'NODE_REPL_TRUSTED_SERVICES') -and
+      (Test-FileContainsAsciiText $AppAsarPath 'browserServicePath') -and
+      (Test-FileContainsAsciiText $BrowserClientPath 'Browser use requires a trusted Node REPL browser service') -and
+      (Test-FileContainsAsciiText $BrowserClientPath 'setupBrowserRuntime')) {
+    return 'node-repl-service'
+  }
+
+  $nativeHostMarkers = @(
+    'browserClientPath',
+    'browserServicePath',
+    'codex-host-chunked-message-v1',
+    'Chrome native host did not provide a browser-client path'
+  )
+  foreach ($marker in $nativeHostMarkers) {
+    if (-not (Test-FileContainsAsciiText $AppAsarPath $marker)) {
+      throw "installed app.asar contains neither the packaged Chrome browser client hash nor the complete native-host path contract: sha256=$BrowserClientSha256 missing=$marker"
+    }
+  }
+
+  return 'native-host-paths'
+}
+
 function Get-InstalledChromeBrowserClientTrust {
   param([string]$InstalledMarketplaceRoot)
 
@@ -2826,28 +2966,14 @@ function Get-InstalledChromeBrowserClientTrust {
   $sha256 = (Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash.ToLowerInvariant()
   $resourcesRoot = Split-Path -Parent (Split-Path -Parent $InstalledMarketplaceRoot)
   $appAsarPath = Join-Path $resourcesRoot 'app.asar'
-  $hashTrusted = Test-FileContainsAsciiText $appAsarPath $sha256
-  $nodeReplServiceTrusted = $false
-  if (-not $hashTrusted) {
-    # Codex 26.814 lightweight browser clients are packaged outside app.asar.
-    # The Desktop bundle provisions NODE_REPL_TRUSTED_SERVICES and the
-    # browser service path; the client enforces the same contract through
-    # globalThis.nodeRepl.rpc.
-    $nodeReplServiceTrusted =
-      (Test-FileContainsAsciiText $appAsarPath 'NODE_REPL_TRUSTED_SERVICES') -and
-      (Test-FileContainsAsciiText $appAsarPath 'browserServicePath') -and
-      (Test-FileContainsAsciiText $sourcePath 'Browser use requires a trusted Node REPL browser service') -and
-      (Test-FileContainsAsciiText $sourcePath 'setupBrowserRuntime')
-  }
-  if (-not $hashTrusted -and -not $nodeReplServiceTrusted) {
-    throw "installed app.asar does not trust the packaged Chrome browser client hash: $sha256"
-  }
+  $trustMode = Get-ChromeBrowserClientTrustMode $appAsarPath $sha256 $sourcePath
+  Write-Log "installed Chrome browser client contract: mode=$trustMode sha256=$sha256"
 
   return [pscustomobject]@{
     SourcePath = $sourcePath
     Sha256 = $sha256
     AppAsarPath = $appAsarPath
-    TrustMode = if ($hashTrusted) { 'asar-hash' } else { 'node-repl-service' }
+    TrustMode = $trustMode
   }
 }
 
@@ -3108,6 +3234,58 @@ if errors:
   }
 }
 
+function Test-NodeReplTrustedPathRepair {
+  param(
+    [string]$ConfigPath,
+    [string]$MarketplaceRoot,
+    [string]$InstalledMarketplaceRoot,
+    [string]$CodexHomeResolved
+  )
+
+  $trustedRoots = @(Get-NodeReplTrustedRoots $MarketplaceRoot)
+  if ($trustedRoots.Count -eq 0) {
+    return
+  }
+
+  $configContent = [System.IO.File]::ReadAllText($ConfigPath, [System.Text.UTF8Encoding]::new($false))
+  $configMatch = [regex]::Match($configContent, '(?m)^\s*NODE_REPL_TRUSTED_CODE_PATHS\s*=\s*[''"](?<value>[^''"]*)[''"]\s*$')
+  if (-not $configMatch.Success) {
+    throw 'config.toml is missing mcp_servers.node_repl.env.NODE_REPL_TRUSTED_CODE_PATHS'
+  }
+  $configRoots = @($configMatch.Groups['value'].Value -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+  $userRoots = @(([Environment]::GetEnvironmentVariable('NODE_REPL_TRUSTED_CODE_PATHS', 'User')) -split ';' |
+    Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+
+  foreach ($root in $trustedRoots) {
+    if (-not ($configRoots | Where-Object { $_.TrimEnd('\') -ieq $root.TrimEnd('\') })) {
+      throw "config.toml Node REPL trusted paths do not include the stable physical root: $root"
+    }
+    if (-not ($userRoots | Where-Object { $_.TrimEnd('\') -ieq $root.TrimEnd('\') })) {
+      throw "user NODE_REPL_TRUSTED_CODE_PATHS does not include the stable physical root: $root"
+    }
+  }
+
+  $codexHomePrefix = [System.IO.Path]::GetFullPath($CodexHomeResolved).TrimEnd('\') + '\'
+  $externalRoots = @($trustedRoots | Where-Object {
+      -not ([System.IO.Path]::GetFullPath($_).TrimEnd('\') + '\').StartsWith(
+        $codexHomePrefix,
+        [System.StringComparison]::OrdinalIgnoreCase
+      )
+    })
+  if ($externalRoots.Count -gt 0) {
+    $resourcesRoot = Split-Path -Parent (Split-Path -Parent $InstalledMarketplaceRoot)
+    $asarPath = Join-Path $resourcesRoot 'app.asar'
+    if (-not (Test-Path -LiteralPath $asarPath -PathType Leaf)) {
+      throw "installed app.asar is missing: $asarPath"
+    }
+    if (-not (Test-FileContainsAsciiText $asarPath 'CODEX_NODE_REPL_TRUSTED_PATHS_V1')) {
+      throw 'installed app.asar does not preserve external NODE_REPL_TRUSTED_CODE_PATHS across Desktop config regeneration'
+    }
+  }
+
+  Write-Log "Node REPL trusted physical roots verification ok: $($trustedRoots -join ';')"
+}
+
 function Test-HelperTransport {
   param(
     [string]$HelperTransportPath,
@@ -3259,10 +3437,8 @@ function Test-ComputerUseRuntimeImport {
   # which is exactly what an independent runtime import should exercise; defined
   # with an rpc function routes every call over that RPC channel; defined without
   # one throws "sky requires node_repl; configure NODE_REPL_TRUSTED_SERVICES" as
-  # soon as a method is touched. The stub removed here was that third shape, so
-  # this verification could never pass on 0.6.24. It only mirrored process.env
-  # values back, so it carried no information the standalone loader cannot read
-  # itself.
+  # soon as a method is touched. The old stub was that third shape and made the
+  # runtime check fail on 0.6.24.
   $script = @'
 const mod = await import(process.argv[2]);
 if (typeof mod.sky !== "object" || mod.sky === null) {
@@ -3389,7 +3565,7 @@ function Test-OfficialComputerUseCache {
   foreach ($browserClientPath in $chromeBrowserClientPaths) {
     Assert-ChromeBrowserClientTrustedBytes $browserClientPath $trustedChromeBrowserClient
   }
-  Write-Log "official lightweight cache verification ok: computer-use@$version / runtime=$runtimeSkyRoot / chrome-browser-client=$($trustedChromeBrowserClient.Sha256)"
+  Write-Log "official lightweight cache verification ok: computer-use@$version / runtime=$runtimeSkyRoot / chrome-browser-client=$($trustedChromeBrowserClient.Sha256) / trust=$($trustedChromeBrowserClient.TrustMode)"
 }
 
 function Install-ComputerUse {
@@ -3413,7 +3589,7 @@ function Install-ComputerUse {
   Write-PluginTree $pluginSourceRoot
   Update-BundledMarketplaceManifest $marketplaceRoot
   Update-CodexConfig $marketplaceRoot
-  Enable-UserEnvironment
+  Enable-UserEnvironment $marketplaceRoot
 
   $computerUseCacheRoot = Sync-OpenAiBundledPluginCache $installedMarketplaceRoot 'computer-use'
   Write-PluginTree $computerUseCacheRoot
@@ -3481,6 +3657,12 @@ function Test-ComputerUse {
     # keep @oai/sky in the independent cua_node runtime. In that supported
     # layout `latest` can be absent or stale and has no usable node_modules.
     Test-OfficialComputerUseCache $codexHomeResolved $installedMarketplaceRoot
+    $marketplaceRoot = Get-StableBundledMarketplaceRoot $codexHomeResolved
+    Test-NodeReplTrustedPathRepair `
+      (Join-Path $codexHomeResolved 'config.toml') `
+      $marketplaceRoot `
+      $installedMarketplaceRoot `
+      $codexHomeResolved
     Write-Log 'verification ok'
     return
   }
@@ -3617,6 +3799,11 @@ function Test-ComputerUse {
   }
 
   Test-CodexConfig (Join-Path $codexHomeResolved 'config.toml') $marketplaceRoot
+  Test-NodeReplTrustedPathRepair `
+    (Join-Path $codexHomeResolved 'config.toml') `
+    $marketplaceRoot `
+    $installedMarketplaceRoot `
+    $codexHomeResolved
   Test-ComputerUseClientImport $computerUseClientPath
   Test-HelperTransport $helperTransportPath
   Test-ComputerUseNodeReplContextPatch $helperTransportPath
