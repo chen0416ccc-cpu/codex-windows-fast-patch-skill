@@ -915,15 +915,47 @@ let next = text.replace(mutationRe, mutationReplacement);
 // arbitrary prologue and any number of extra keys. The whole success body is
 // captured verbatim and re-emitted inside the try, which keeps every returned
 // field intact instead of rebuilding the object from named groups.
-const queryRe = /queryFn:async\(\)=>\{(let(?:\{[\s\S]{0,800}?import\.meta\.url\),|\s)([$A-Za-z_][$\w]*)=([$A-Za-z_][$\w]*)\.parse\(await ([$A-Za-z_][$\w]*)\.get\(([$A-Za-z_][$\w]*)\)\.userSettings\(\)\);return\{(?:[$A-Za-z_][$\w]*:[^,]+,)*?lockdownModeEnabled:\2\.settings\?\.lockdown_mode_enabled===!0,ultraEffortEnabled:\2\.settings\?\.model_picker_persists_ultra_effort===!0\})\}/;
-const queryMatch = next.match(queryRe);
-if (!queryMatch) {
+// The user-settings queryFn returns one alphabetically sorted object, and both its
+// key set and key order drift between builds. 26.831.1445 put 17 keys between
+// lockdownModeEnabled and ultraEffortEnabled and 5 more after it, so the previous
+// regex - which required the two to be adjacent and ultraEffortEnabled to be the
+// terminal key - could not match even though the gate was intact. Anchor on the
+// stable prologue and take the body by brace balancing instead, so key reordering
+// and added keys no longer break discovery.
+const queryHeadRe = /queryFn:async\(\)=>\{(?=let(?:\{[\s\S]{0,800}?import\.meta\.url\),|\s)([$A-Za-z_][$\w]*)=([$A-Za-z_][$\w]*)\.parse\(await ([$A-Za-z_][$\w]*)\.get\(([$A-Za-z_][$\w]*)\)\.userSettings\(\)\);return\{)/;
+const queryHead = next.match(queryHeadRe);
+if (!queryHead) {
   process.stderr.write('ultra-user-settings-query-target-not-found\n');
   process.exit(2);
 }
-const querySuccessBody = queryMatch[1];
+const parsedVar = queryHead[1];
+const bodyOpen = queryHead.index + queryHead[0].length - 1;
+let queryDepth = 0;
+let bodyClose = -1;
+for (let i = bodyOpen; i < next.length; i += 1) {
+  const ch = next[i];
+  if (ch === '{') {
+    queryDepth += 1;
+  } else if (ch === '}') {
+    queryDepth -= 1;
+    if (queryDepth === 0) {
+      bodyClose = i;
+      break;
+    }
+  }
+}
+if (bodyClose < 0) {
+  process.stderr.write('ultra-user-settings-query-body-unbalanced\n');
+  process.exit(2);
+}
+const querySuccessBody = next.slice(bodyOpen + 1, bodyClose);
+const ultraKeyLiteral = 'ultraEffortEnabled:' + parsedVar + '.settings?.model_picker_persists_ultra_effort===!0';
+if (!querySuccessBody.includes(ultraKeyLiteral)) {
+  process.stderr.write('ultra-user-settings-query-key-not-found\n');
+  process.exit(2);
+}
 const queryReplacement = `queryFn:async()=>{try{${querySuccessBody}}catch{return{lockdownModeEnabled:!1,ultraEffortEnabled:await ${readConfig}(${settings}.showUltraInModelPickerSlider).catch(()=>!1)===!0,ultraEffortLocalFallback:!0/*${marker}*/}}}`;
-next = next.replace(queryRe, queryReplacement);
+next = next.slice(0, queryHead.index) + queryReplacement + next.slice(bodyClose + 1);
 
 const migrationKey = 'queryKey:[`chatgpt-ultra-effort-migration`]';
 const migrationKeyIndex = next.indexOf(migrationKey);
@@ -1276,7 +1308,21 @@ function patchFeatureHook(file) {
     'CODEX_BROWSER_EXTERNAL_GATE_V2',
     'CODEX_BROWSER_EXTERNAL_CONFIG_V2'
   ];
-  if (hasCurrentCompiledShape && (
+  // The four currentXxx shapes describe one particular compiled layout. This
+  // completeness check exists so a partially drifted legacy build fails loudly
+  // instead of getting a half-open gate, but it must not fire when the generic
+  // modern path below can handle the build on its own: 26.831.1445 keeps both
+  // numeric gate literals and runCodexInWsl (so hasCurrentCompiledShape is true)
+  // while the two config `let` runs gained bindings and moved their
+  // enabled/isLoading source to a variable bound in an earlier statement, so the
+  // two config regexes cannot match even though nothing is actually wrong.
+  // patchModernFeatureHook is pure, so applying it here is a safe dry probe.
+  const modernPathHandlesHooks =
+    (modernFeatureHookAlreadyPatched(before, 'browser_use_external') ||
+      patchModernFeatureHook(before, 'browser_use_external') !== before) &&
+    (modernFeatureHookAlreadyPatched(before, 'browser_use') ||
+      patchModernFeatureHook(before, 'browser_use') !== before);
+  if (hasCurrentCompiledShape && !modernPathHandlesHooks && (
       !(currentInAppPairOriginalRe.test(before) || currentInAppPairPatchedRe.test(before)) ||
       !(currentInAppConfigOriginalRe.test(before) || currentInAppConfigPatchedRe.test(before)) ||
       !(currentExternalGateOriginalRe.test(before) || currentExternalGatePatchedRe.test(before)) ||
@@ -1996,9 +2042,14 @@ function Find-PatchTargets {
   if ([string]::IsNullOrWhiteSpace($goalSlashTarget)) {
     foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter 'app-initial-*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
       $text = Get-Content -Raw -LiteralPath $candidate
-      if ($text.Contains('id:`goal`') -and
-          $text.Contains('getSearchQuery') -and
-          $text -match 'Math\.max\([A-Za-z_$][\w$]*\(e\.title,[A-Za-z_$][\w$]*\),[A-Za-z_$][\w$]*\(e\.id,[A-Za-z_$][\w$]*\),\.\.\.\(e\.searchAliases\?\?\[\]\)\.map') {
+      # Unified command registry shape. The `id:`goal`` literal lives in this chunk on
+      # builds up to 26.825.x, but 26.831.1445+ split the command table into app-primary
+      # while the scorer stayed here, so accept the cmdk registry marker as an equivalent
+      # witness. Requiring only one of the two would misfire; requiring both fails on
+      # 1445+. See the JS-side cmdk arm in PatchGoal.cjs, which is what consumes this.
+      if ($text.Contains('getSearchQuery') -and
+          $text -match 'Math\.max\([A-Za-z_$][\w$]*\(e\.title,[A-Za-z_$][\w$]*\),[A-Za-z_$][\w$]*\(e\.id,[A-Za-z_$][\w$]*\),\.\.\.\(e\.searchAliases\?\?\[\]\)\.map' -and
+          ($text.Contains('id:`goal`') -or $text.Contains('cmdk-item'))) {
         $goalSlashTarget = $candidate
         break
       }
