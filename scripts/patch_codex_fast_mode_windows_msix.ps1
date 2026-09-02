@@ -907,6 +907,45 @@ let next = text.replace(mutationRe, mutationReplacement);
 // arbitrary prologue and any number of extra keys. The whole success body is
 // captured verbatim and re-emitted inside the try, which keeps every returned
 // field intact instead of rebuilding the object from named groups.
+// 26.831+ adds settings keys both before lockdownModeEnabled and after
+// ultraEffortEnabled, so locate the userSettings queryFn by anchor, capture its
+// whole body with brace matching, and re-emit it verbatim inside the try. The
+// enumerated-key regex stays below as a fallback for older build shapes.
+let queryPatched = false;
+{
+  const anchor = '.userSettings());';
+  let probe = 0;
+  for (;;) {
+    const anchorIdx = next.indexOf(anchor, probe);
+    if (anchorIdx < 0) break;
+    const windowStart = next.lastIndexOf('queryFn:async()=>{', anchorIdx);
+    if (windowStart < 0) break;
+    if (anchorIdx - windowStart >= 4000) {
+      probe = anchorIdx + anchor.length;
+      continue;
+    }
+    const bodyStart = windowStart + 'queryFn:async()=>{'.length;
+    let depth = 1;
+    let i = bodyStart;
+    while (i < next.length && depth > 0) {
+      const ch = next[i];
+      if (ch === '{') depth++;
+      else if (ch === '}') depth--;
+      i++;
+    }
+    if (depth === 0) {
+      const bodyEnd = i - 1;
+      const successBody = next.slice(bodyStart, bodyEnd);
+      if (successBody.includes('model_picker_persists_ultra_effort')) {
+        const queryReplacement = `queryFn:async()=>{try{${successBody}}catch{return{lockdownModeEnabled:!1,ultraEffortEnabled:await ${readConfig}(${settings}.showUltraInModelPickerSlider).catch(()=>!1)===!0,ultraEffortLocalFallback:!0/*${marker}*/}}}`;
+        next = next.slice(0, windowStart) + queryReplacement + next.slice(bodyEnd + 1);
+        queryPatched = true;
+      }
+    }
+    break;
+  }
+}
+if (!queryPatched) {
 const queryRe = /queryFn:async\(\)=>\{(let(?:\{[\s\S]{0,800}?import\.meta\.url\),|\s)([$A-Za-z_][$\w]*)=([$A-Za-z_][$\w]*)\.parse\(await ([$A-Za-z_][$\w]*)\.get\(([$A-Za-z_][$\w]*)\)\.userSettings\(\)\);return\{(?:[$A-Za-z_][$\w]*:[^,]+,)*?lockdownModeEnabled:\2\.settings\?\.lockdown_mode_enabled===!0,ultraEffortEnabled:\2\.settings\?\.model_picker_persists_ultra_effort===!0\})\}/;
 const queryMatch = next.match(queryRe);
 if (!queryMatch) {
@@ -916,6 +955,7 @@ if (!queryMatch) {
 const querySuccessBody = queryMatch[1];
 const queryReplacement = `queryFn:async()=>{try{${querySuccessBody}}catch{return{lockdownModeEnabled:!1,ultraEffortEnabled:await ${readConfig}(${settings}.showUltraInModelPickerSlider).catch(()=>!1)===!0,ultraEffortLocalFallback:!0/*${marker}*/}}}`;
 next = next.replace(queryRe, queryReplacement);
+}
 
 const migrationKey = 'queryKey:[`chatgpt-ultra-effort-migration`]';
 const migrationKeyIndex = next.indexOf(migrationKey);
@@ -1099,6 +1139,11 @@ if (!nextSlash.includes(slashPatched) && !slashPatchedRe.test(nextSlash)) {
     changedSlash = true;
   } else if (cmdkSlashRe.test(nextSlash) && (cmdkKeywordSearchRe.test(nextSlash) || nextSlash.includes('keywords:r'))) {
     // Codex 26.519+ moved slash filtering to cmdk keywords; command id matching is already handled there.
+  } else if (nextSlash.includes('requiresEmptyComposer') &&
+             /\w\.getSearchQuery\?\.\(/.test(nextSlash) &&
+             /Math\.max\([A-Za-z_$][\w$]*\(e\.title,[A-Za-z_$][\w$]*\),[A-Za-z_$][\w$]*\(e\.id,[A-Za-z_$][\w$]*\),\.\.\.\(e\.searchAliases\?\?\[\]\)\.map/.test(nextSlash)) {
+    // Codex 26.831+ splits the command registry (app-primary) from the unified scorer (app-initial);
+    // the scorer already matches command ids and search aliases, so /goal is searchable by id.
   } else if (nextSlash.includes('id:`goal`') &&
              nextSlash.includes('getSearchQuery') &&
              /Math\.max\([A-Za-z_$][\w$]*\(e\.title,[A-Za-z_$][\w$]*\),[A-Za-z_$][\w$]*\(e\.id,[A-Za-z_$][\w$]*\),\.\.\.\(e\.searchAliases\?\?\[\]\)\.map/.test(nextSlash)) {
@@ -1268,11 +1313,23 @@ function patchFeatureHook(file) {
     'CODEX_BROWSER_EXTERNAL_GATE_V2',
     'CODEX_BROWSER_EXTERNAL_CONFIG_V2'
   ];
+  // 26.831+ splits each browser_use feature hook across several let statements
+  // with React-compiler memo-cache blocks in between, so the hook result, the
+  // WSL read, and the derived availability vars no longer sit in one let chain.
+  // Match the two split declarations by their stable neighbor expressions and
+  // force the WSL availability result separately.
+  const inAppConfigV3OriginalRe = /let ([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\)(,[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\),([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\?\.authMethod\?\?null,([A-Za-z_$][\w$]*);)/;
+  const externalConfigV3OriginalRe = /let ([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\)(,[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\),([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\|\|[A-Za-z_$][\w$]*===`chrome-extension`,)/;
+  const wslResultV3Re = /([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*===!0\|\|[A-Za-z_$][\w$]*\.kind===`wsl`/g;
+  const v3ConfigPatched = before.includes('/*CODEX_BROWSER_IN_APP_CONFIG_V3*/') &&
+                          before.includes('/*CODEX_BROWSER_EXTERNAL_CONFIG_V3*/');
+  const v3ConfigOriginal = inAppConfigV3OriginalRe.test(before) &&
+                           externalConfigV3OriginalRe.test(before);
   if (hasCurrentCompiledShape && (
       !(currentInAppPairOriginalRe.test(before) || currentInAppPairPatchedRe.test(before)) ||
-      !(currentInAppConfigOriginalRe.test(before) || currentInAppConfigPatchedRe.test(before)) ||
+      !((currentInAppConfigOriginalRe.test(before) || currentInAppConfigPatchedRe.test(before)) || v3ConfigOriginal || v3ConfigPatched) ||
       !(currentExternalGateOriginalRe.test(before) || currentExternalGatePatchedRe.test(before)) ||
-      !(currentExternalConfigOriginalRe.test(before) || currentExternalConfigPatchedRe.test(before)))) {
+      !((currentExternalConfigOriginalRe.test(before) || currentExternalConfigPatchedRe.test(before)) || v3ConfigOriginal || v3ConfigPatched))) {
     process.stderr.write('browser-use-current-feature-hook-incomplete\n');
     process.exit(2);
   }
@@ -1294,6 +1351,18 @@ function patchFeatureHook(file) {
     after = after.replace(
       currentExternalConfigOriginalRe,
       'let $1={enabled:!0,isLoading:!1},$2=!1,$3=$4($5),$6=!1,$7;/*CODEX_BROWSER_EXTERNAL_CONFIG_V2*/'
+    );
+    after = after.replace(
+      inAppConfigV3OriginalRe,
+      'let $1={enabled:!0,isLoading:!1}/*CODEX_BROWSER_IN_APP_CONFIG_V3*/$2'
+    );
+    after = after.replace(
+      externalConfigV3OriginalRe,
+      'let $1={enabled:!0,isLoading:!1}/*CODEX_BROWSER_EXTERNAL_CONFIG_V3*/$2'
+    );
+    after = after.replace(
+      wslResultV3Re,
+      '$1=!1/*CODEX_BROWSER_WSL_RESULT_V3*/'
     );
   }
 
@@ -1355,7 +1424,8 @@ function patchFeatureHook(file) {
       !before.includes('let u={enabled:!0,isLoading:!1},d=!1,f=!0,p=!1,_=!1,v;') &&
       !/\{enabled:!0,isLoading:!1\},[A-Za-z_$][\w$]*=!0,[A-Za-z_$][\w$]*=!1/.test(before) &&
       !/[A-Za-z_$][\w$]*=!0,[A-Za-z_$][\w$]*=!0,[A-Za-z_$][\w$]*;/.test(before) &&
-      !currentCompiledMarkers.every(marker => before.includes(marker))) {
+      !currentCompiledMarkers.every(marker => before.includes(marker)) &&
+      !v3ConfigPatched) {
     process.stderr.write('browser-use-feature-hook-patch-target-not-found\n');
     process.exit(2);
   }
@@ -1940,6 +2010,17 @@ function Find-PatchTargets {
       $text = Get-Content -Raw -LiteralPath $candidate
       if ($text.Contains('id:`goal`') -and
           $text.Contains('getSearchQuery') -and
+          $text -match 'Math\.max\([A-Za-z_$][\w$]*\(e\.title,[A-Za-z_$][\w$]*\),[A-Za-z_$][\w$]*\(e\.id,[A-Za-z_$][\w$]*\),\.\.\.\(e\.searchAliases\?\?\[\]\)\.map') {
+        $goalSlashTarget = $candidate
+        break
+      }
+    }
+  }
+  if ([string]::IsNullOrWhiteSpace($goalSlashTarget)) {
+    foreach ($candidate in (Invoke-RgList $RgPath 'getSearchQuery\?\.' $assetsDir)) {
+      $text = Get-Content -Raw -LiteralPath $candidate
+      if ($text.Contains('requiresEmptyComposer') -and
+          $text.Contains('searchAliases') -and
           $text -match 'Math\.max\([A-Za-z_$][\w$]*\(e\.title,[A-Za-z_$][\w$]*\),[A-Za-z_$][\w$]*\(e\.id,[A-Za-z_$][\w$]*\),\.\.\.\(e\.searchAliases\?\?\[\]\)\.map') {
         $goalSlashTarget = $candidate
         break
