@@ -3,7 +3,7 @@ param(
   [string]$HelperPath,
   # Profile labels, not raw @oai/sky versions: one sky version can ship more than one
   # helper binary across Desktop builds, so each label pins its own hash pair.
-  [ValidateSet('0.4.20-F2B2F56F', '0.5.2-2C4CAC16', '0.6.6', '0.6.11', '0.6.11-7A95D14E', '0.6.16', '0.6.16-BEB498C2', '0.6.17-29D5E113', '0.6.17-DB8F4486', '0.6.17-4250FF66', '0.6.17-4319D3A2', '0.6.17-D967386B', '0.6.23-8423CA8C', '0.6.24-DE3696C0', '0.6.24-4DB7B670', '0.6.24-9BAB6E1B')]
+  [ValidateSet('0.4.20-F2B2F56F', '0.5.2-2C4CAC16', '0.6.6', '0.6.11', '0.6.11-7A95D14E', '0.6.16', '0.6.16-BEB498C2', '0.6.17-29D5E113', '0.6.17-DB8F4486', '0.6.17-4250FF66', '0.6.17-4319D3A2', '0.6.17-D967386B', '0.6.23-8423CA8C', '0.6.24-DE3696C0', '0.6.24-4DB7B670', '0.6.24-9BAB6E1B', '0.6.24-3B60A7E0', '0.6.26-7D9EB53D', '0.6.26-52928CCC')]
   [string]$SkyVersion = '0.6.16'
 )
 
@@ -90,6 +90,25 @@ $Profiles = @{
     SkyVersion = '0.6.24-premerge-pr-1369830-395ab116910c'
     OriginalHash = '9BAB6E1B59D31D97530F2F6681DAEF76E39C7AD0836147C6E0B55A9B47A33EBF'
     PatchedHash = 'B86B1FCB9EBD7184526AF49D40333FDA02F774FA62E0E9A3528BA5F87EB68AB7'
+  }
+  # Fourth binary on the same 0.6.24 sky version string, shipped by Desktop 26.825.6671.0.
+  '0.6.24-3B60A7E0' = [ordered]@{
+    SkyVersion = '0.6.24-premerge-pr-1369830-395ab116910c'
+    OriginalHash = '3B60A7E0746C9FCEEBC3E0735C33BF97734B4B2AA04E0ED030201251E48D1BB6'
+    PatchedHash = '8B09F9EFD541E059D6611B0D00C6984A2ACF19971B45F292DF3EE13F746009D7'
+  }
+  # First 0.6.26 helper, shipped by Desktop 26.831.1445.0 with a bare version string.
+  '0.6.26-7D9EB53D' = [ordered]@{
+    SkyVersion = '0.6.26'
+    OriginalHash = '7D9EB53D9C7C6AFFD05443227C9D93720B9FBD7EADF9B98D7A83D28703ACA95D'
+    PatchedHash = '79EF9E7971E3B7BBF0FFFA6D096107196F08F008BF70D73E9141D96991748228'
+  }
+  # Same code as 7D9EB53D re-signed under a prerelease version string, shipped by
+  # Desktop 26.831.2377.0. Selection needs SkyVersion equality, so it needs its own entry.
+  '0.6.26-52928CCC' = [ordered]@{
+    SkyVersion = '0.6.26-premerge-pr-1403760-d558d5ad5c81'
+    OriginalHash = '52928CCCDECCFC245661733E5903335642AEC1726A6DA4B3A8A8E683805A2769'
+    PatchedHash = '0680CEBCA4C7EB49783578BAEA42DDD0B620379EC2AAA3A4DEBC8FA21BFB832A'
   }
 }
 $ProfileLabel = $SkyVersion
