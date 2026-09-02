@@ -2,6 +2,8 @@
 
 Use this reference only when the main `SKILL.md` workflow does not explain the current Codex Desktop restriction, plugin gate, Computer Use failure, browser_use failure, or Model Experience failure. Model Experience covers Fast Mode request/UI behavior, custom models hidden by the Desktop model filter, and the dependent compact Power slider. Keep the investigation evidence-based: prefer package status, config, plugin list output, Desktop logs, sandbox logs, and captured network requests over assumptions.
 
+Commands below refer to the skill directory as `$SkillRoot`. Resolve it with the probe in the `Skill Root` section of `SKILL.md` before running any of them.
+
 ## Model Experience Is Partially Broken
 
 Symptoms:
@@ -33,7 +35,7 @@ Action:
 - Run the unified Model Experience dry run so the request gate, UI gate, and model filter are checked separately and only broken components are changed:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch_codex_fast_mode_windows_msix.ps1" -OnlyModelExperience -DryRun -OutputRoot "<large-local-build-root>"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\patch_codex_fast_mode_windows_msix.ps1" -OnlyModelExperience -DryRun -OutputRoot "<large-local-build-root>"
 ```
 
 - If the dry run reports any `patched` result, install the same targeted workflow from an external executor. If all three results are `already-patched`, do not rebuild the package; continue with provider/proxy and model-cache diagnosis.
@@ -90,8 +92,8 @@ Action:
 - For the Desktop dynamicTools branch, run the targeted script instead of the full default repatch:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-dynamic-tools-windows-msix.ps1" -DryRun -OutputRoot "<large-local-build-root>"
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-dynamic-tools-windows-msix.ps1" -Install -Launch -InstallPrerequisites -OutputRoot "<large-local-build-root>"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\patch-dynamic-tools-windows-msix.ps1" -DryRun -OutputRoot "<large-local-build-root>"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\patch-dynamic-tools-windows-msix.ps1" -Install -Launch -InstallPrerequisites -OutputRoot "<large-local-build-root>"
 ```
 
 - After the dynamicTools branch, verify actual Desktop new-chat/thread creation or newest Desktop logs. CLI-only success is insufficient because CLI smoke tests can bypass Desktop `dynamicTools`.
@@ -109,7 +111,7 @@ Symptoms:
 Checks:
 
 - Confirm the patch script logged `browser-use gate patch result` as `patched` or `already-patched`.
-- Inspect the newest Desktop log under `%LOCALAPPDATA%\Packages\OpenAI.Codex_2p2nqsd0c76g0\LocalCache\Local\Codex\Logs\<year>\<month>\<day>`.
+- Inspect the newest Desktop log under `%LOCALAPPDATA%\Packages\OpenAI.Codex_2p2nqsd0c76g0\LocalCache\Local\Codex\Logs\<year>\<month>\<day>`. The Electron logger flushes on process exit, so the file for a session that is still running can be `0` bytes and hold no `browser_use_availability_resolved` line yet. Prefer the newest non-empty file, and when only the running session can answer the question, exit Codex Desktop once and re-read the file instead of concluding that the gate never resolved. Note that `~\.codex\logs_2.sqlite` is the Rust-side log and never contains these Electron events.
 - If the log says `reason=local-patched`, the Desktop availability gate is open; continue by checking the Chrome extension, native host manifest, and plugin cache.
 - If the log still says `statsig-disabled`, re-extract the ASAR and inspect targets for `featureName:\`browser_use_external\``, `featureName:\`browser_use\``, `browser-sidebar-availability-*.js`, `browser_use_availability_resolved`, and `.vite\build\main-*.js`.
 - In Codex 26.707.3748.0, inspect whether the sender object includes `findShortcuts` between `externalBrowserUseAllowed` and `computerUse`. The patcher must preserve that field instead of requiring those fields to be adjacent.
@@ -165,8 +167,8 @@ Checks:
 
 - Run `codex plugin list` before package operations. If `sites@openai-bundled`, `chrome@openai-bundled`, `browser@openai-bundled`, or `computer-use@openai-bundled` are missing, disabled, or blocked by a marketplace snapshot error, treat that as local bundled marketplace evidence first.
 - Run `scripts\install-computer-use-local.ps1 -StrictVerifyOnly` before package operations. A failure on a stale Chrome native messaging manifest, missing `latest` link, missing helper path, missing plugin file, or `@oai/sky` import/runtime path is local repair evidence.
-- Read `[marketplaces.openai-bundled].source` from `config.toml`, then inspect `.agents\plugins\marketplace.json` under that stable root and compare its names with the current package manifest. Descriptor presence means available, not installed.
-- Inspect `plugins\computer-use` under the configured stable marketplace. Do not use the Desktop-owned `.tmp\bundled-marketplaces` copy as the final configured source.
+- Read `[marketplaces.openai-bundled].source` from `config.toml`, then inspect `.agents\plugins\marketplace.json` under that root and compare its names with the current package manifest. Descriptor presence means available, not installed. A materialized set that is smaller than the package manifest is not automatically a defect; see the account-gated bundled descriptor case below before repairing it.
+- Inspect `plugins\computer-use` under the marketplace root that `config.toml` actually points at. Keep two things separate: a stable plugin *cache* must never be built by copying from the mutable `.tmp\bundled-marketplaces` mirror, but on codex-cli 0.149+ the *configured* `[marketplaces.openai-bundled].source` must be the reserved `.tmp\bundled-marketplaces\openai-bundled` root, because the CLI rejects that reserved name from any other source. Do not rewrite a reserved-root source to a stable root as a "fix".
 - Inspect running `extension-host` processes whose paths are under `%USERPROFILE%\.codex\plugins\cache\openai-bundled`.
 - Inspect `%USERPROFILE%\.codex\chrome-native-hosts.json`; remove stale entries whose `extensionHostPath` or `browserClientPath` points to a missing file.
 - If the browser files and versioned cache exist but `codex plugin list` still reports `browser@openai-bundled` as `not installed`, do not treat another direct TOML write as a durable install. Desktop reconciliation can prune that enabled entry again because the CLI install record was never created.
@@ -220,6 +222,37 @@ Action:
 - If `sites` is available but not installed, `install-computer-use-local.ps1 -VerifyOnly` must leave it uninstalled. If it was already installed, the repair may refresh its stable cache while preserving that state.
 - Verify recent logs show the five-plugin set and no new `not_in_bundled_marketplace_plugin_names` for `sites`.
 - Do not run Phone Remote Control scripts for this class. Do not run a full Fast/browser/Computer Use repatch unless separate logs show a closed Desktop gate such as `reason=statsig-disabled`.
+
+## Bundled Descriptor Count Is Lower Than The Package Ships
+
+Symptoms:
+
+- `scripts\install-computer-use-local.ps1 -StrictVerifyOnly -VerifyAllBundledPluginsAvailable` throws `stable bundled marketplace descriptor set does not match the installed package: unified-computer-use:<=,user-writing:<=`.
+- The stable/materialized `openai-bundled` marketplace has fewer descriptors than the installed package resources. On Codex Desktop `26.825.6671.0` the package ships ten (`browser`, `chrome`, `codex-app-tools`, `computer-use`, `deep-research`, `latex`, `sites`, `unified-computer-use`, `user-writing`, `visualize`) while Desktop materializes eight, dropping `unified-computer-use` and `user-writing`.
+- Every plugin the repair actually needs (`browser`, `chrome`, `computer-use`) is present, installed, and enabled, and `-StrictVerifyOnly` alone passes.
+
+Checks:
+
+- Compare the two manifests directly instead of trusting the switch's error text:
+
+```powershell
+$pkg = Get-AppxPackage -Name OpenAI.Codex | Sort-Object Version -Descending | Select-Object -First 1
+$a = (Get-Content -Raw -LiteralPath (Join-Path $pkg.InstallLocation 'app\resources\plugins\openai-bundled\.agents\plugins\marketplace.json') | ConvertFrom-Json).plugins.name | Sort-Object
+$b = (Get-Content -Raw -LiteralPath (Join-Path $env:USERPROFILE '.codex\.tmp\bundled-marketplaces\openai-bundled\.agents\plugins\marketplace.json') | ConvertFrom-Json).plugins.name | Sort-Object
+"package=$($a.Count) materialized=$($b.Count)"
+(Compare-Object $a $b | Where-Object SideIndicator -eq '<=').InputObject
+```
+
+- Inspect the extracted main bundle for each missing descriptor's `isAvailable` predicate. A descriptor filtered by an account-side feature flag reads like `isAvailable:({features:e})=>e.browserUseTinysky` for `unified-computer-use` and `isAvailable:({features:e})=>e.userWriting` for `user-writing`, and the shipped defaults include `browserUseTinysky:!1`.
+- Check whether the missing descriptor could work at all on this platform. `unified-computer-use` is declared `hidden:!0`, and its resolver returns an empty set on Windows because it gates on `platform===\`darwin\``. `user-writing` declares `authentication: ON_INSTALL` and its Statsig gate additionally requires a ChatGPT-account user setting such as `user_writing_variant=direct-connectors`.
+- Confirm this is account-side, not local corruption: the required plugins load, `codex plugin list` shows them `installed, enabled`, and no `not_in_bundled_marketplace_plugin_names` line removes an already-installed plugin.
+
+Action:
+
+- Treat an account-gated descriptor gap as expected, not as a repair target. A third-party provider or API-key account cannot load the ChatGPT user settings these flags depend on, so Desktop will keep materializing the smaller set after every restart and repatch.
+- Do not use `-VerifyAllBundledPluginsAvailable` as the acceptance gate on such an account. Verify the specific plugins the requested repair needs, and record the gap plus its cause in the report.
+- Do not try to force the descriptors in with `CODEX_ELECTRON_DESKTOP_FEATURE_OVERRIDES`; that override is read only by the Dev flavor and is ignored by a Store/Developer-signed package. Forcing these two descriptors would require another ASAR edit for a hidden macOS-only surface and an account-authenticated surface, so the benefit is zero while the risk is not.
+- Do not run a bundled marketplace repatch, Computer Use repair, or Phone Remote Control workflow for this symptom alone.
 
 ## Computer Use Task Fails Before App Interaction
 
@@ -295,6 +328,34 @@ Action:
 - Re-check the foreground window immediately before capture. The current native helper can return visible pixels from an occluding foreground window when focus drifts, so activate the intended target immediately before the state request and inspect the image content rather than trusting metadata alone.
 - Unknown helper transport hashes remain untouched. Do not copy this source transformation onto another `@oai/sky` build, edit WindowsApps in place, run a full MSIX repack, repair Chrome, or enter the Phone Remote Control workflow unless separate evidence requires it.
 
+## Computer Use Acceptance From An External Executor Without node_repl
+
+Symptoms:
+
+- The repair ran from external PowerShell, VS Code, or another agent environment, so no Desktop `node_repl` JavaScript kernel is available to perform real acceptance.
+- `-StrictVerifyOnly` passes with `runtime import ok`, but that only proves `list_windows`; no screenshot has been inspected.
+- A first attempt from a plain `node.exe` process fails with `Computer Use requires app approval but elicitations are unavailable`. Adding the approval stub before importing sky then fails differently, with `sky requires node_repl; configure NODE_REPL_TRUSTED_SERVICES`, so the two errors are an ordering problem rather than two separate defects.
+
+Checks:
+
+- Drive the official runtime export directly with the current CUA runtime's own Node, not a system Node:
+
+```
+%LOCALAPPDATA%\OpenAI\Codex\runtimes\cua_node\<runtime-id>\bin\node.exe
+%LOCALAPPDATA%\OpenAI\Codex\runtimes\cua_node\<runtime-id>\bin\node_modules\@oai\sky\dist\project\cua\sky_js\src\index.js
+```
+
+- Respect the module's load-order contract. `sky.js` snapshots `globalThis.nodeRepl` at module top level and has three branches: `undefined` means create a local client against the helper binary, defined without a `rpc` function means throw `sky requires node_repl`, and a real `rpc` means use the trusted RPC path. So `import` the entry and touch an export such as `sky.list_windows` while `globalThis.nodeRepl` is still `undefined`, and only assign the stub afterwards.
+- Satisfy the separate approval contract. `helper_transport.js` reads `globalThis.nodeRepl` at call time and requires a non-empty `config` plus a `createElicitation` function, otherwise the helper's `approvalRequest` (for example `Allow Codex to use ChatGPT?`) surfaces as `Computer Use requires app approval but elicitations are unavailable`. Assign `globalThis.nodeRepl = { config: {}, createElicitation: async (req) => ({ action: ... }) }` after the import, accept only the intended `req.meta.tool_params.app`, decline everything else, and log every request that was answered.
+- Use the real object shapes: `activate_window({ window: { app, id } })` and `get_window_state({ window, include_screenshot: true, include_text: true })`. A bare window id fails with `window.app must be a non-empty string and window.id must be an integer >= 0`. There is no screenshot method; images arrive as `state.screenshots[].url` data URLs whose media type is commonly `image/jpeg`, so parse the media type instead of assuming PNG.
+- Keep the acceptance shape from the `node_repl` path: separate short-lived processes for separate calls, a stable non-minimized target, and image-content inspection. Confirm plausible dimensions and origins, a growing accessibility tree, and the expected focused element, then actually open the decoded image and confirm it shows the intended window.
+
+Action:
+
+- Report this as an external-process substitute for the `node_repl` acceptance path, and state that the Desktop in-app approval UI itself was not exercised: the elicitation responder is a local stub created for verification.
+- Do not attempt Chrome/browser smoke validation this way. `browser-client.mjs` requires `globalThis.nodeRepl.rpc` to be a function (`Browser use requires a trusted Node REPL browser service`), and only the Desktop Node REPL provides that trusted RPC channel. A hand-written `rpc` is not a substitute: it has no browser service behind it, and because `sky.js` selects its transport from the same property, defining `rpc` also moves the Computer Use path off the local helper client onto that fake channel and breaks the acceptance that just passed. Report the browser layer as gate-open plus configuration/manifest/cache/registry verified, and say plainly that the end-to-end tab read was not run.
+- Do not treat these external-process errors as evidence of a closed Desktop gate, a bad plugin cache, or a helper binary defect, and do not start an MSIX repack because of them.
+
 ## Existing MCP Commands Point At A Retired CUA Node Runtime
 
 Symptoms:
@@ -369,32 +430,35 @@ Action:
 
 Symptoms:
 
-- The skill self-update helper cannot reach GitHub, cannot download the archive, or cannot resolve remote HEAD.
+- `git -C "$SkillRoot" fetch` cannot reach GitHub, or `$SkillRoot` has no `.git` directory at all.
 
 Action:
 
 - Do not block the repair.
 - Continue with the currently installed local skill.
 - Mention that self-update was skipped, then rely on local scripts and local evidence.
+- When `.git` is missing, note that this copy was not installed with `git clone`, so it can never self-update; suggest reinstalling with `git clone` for future runs.
 
-## Self-Update Reports A New Commit But Acceptance Criteria Are Stale
+## Self-Update Reports A New Commit But The Working Tree Stays Behind
 
 Symptoms:
 
-- Self-update logs `updated skill from GitHub: <sha>` and `.skill-version` holds that commit, but the installed `README.md` / `README.en.md` still describe the previous acceptance criteria.
+- `git fetch` reports new commits, but `git pull --ff-only` fails and the installed `README.md` / `README.en.md` still describe the previous acceptance criteria.
 - A verification step that the upstream commit added is missing from the installed checklist, so a real defect is never checked and the run is reported as complete.
 
 Checks:
 
-- Compare the installed top-level files with the commit in `.skill-version`, not just `SKILL.md` and `scripts`.
-- Confirm the self-update copy list covers every tracked top-level file. Only `agents`, `scripts`, `references`, and `assets` are mirrored as directories; top-level files are copied one by one from an explicit list.
-- Read `.skill-version` as bytes. A UTF-8 BOM makes non-PowerShell tooling compare the marker as unequal even when the skill is current.
+- `git -C "$SkillRoot" status --short` — the only things that block a fast-forward are uncommitted edits to a file the update also changes, and local commits. Uncommitted edits elsewhere in the tree do not block the pull.
+- `git -C "$SkillRoot" pull --ff-only` — the failure message names the blocking file, or reports diverging branches when the block is a local commit.
+- `git -C "$SkillRoot" log --oneline 'HEAD..@{u}'` — confirm which commits are still missing. Keep the single quotes; PowerShell parses a bare `@{u}` as a hashtable.
+- `git -C "$SkillRoot" rev-parse HEAD` — the commit actually installed, rather than what any marker claims.
 
 Action:
 
-- Sync the missing top-level files from the commit recorded in `.skill-version` before trusting any acceptance checklist.
-- Keep the copy list and the tracked top-level file set aligned, and cover it with `scripts/test-skill-self-update-file-coverage.ps1`.
-- Write `.skill-version` as UTF-8 without BOM, and tolerate a BOM left by an older install when comparing against remote HEAD.
+- For a blocking uncommitted edit: `git stash`, then `git pull --ff-only`, then `git stash pop`. When the local edit and the upstream change touch the same lines, `stash pop` reports a conflict and leaves conflict markers; resolve them by hand.
+- For a local commit: `git pull --rebase` replays it on top of the update.
+- Never use `git reset --hard` or `git checkout -- .` to force the pull through, because local helper profiles and repair guards live in those edits.
+- Re-read the acceptance checklists from `README.md` / `README.en.md` after the working tree is genuinely up to date.
 
 ## Removed Plugin Leaves Orphaned Config Tables
 

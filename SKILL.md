@@ -13,17 +13,51 @@ This skill is Windows-only. It depends on the Windows Store/MSIX package layout,
 
 Do not run this skill on macOS. A macOS adaptation needs a separate workflow for the Codex `.app` bundle, ASAR extraction and repacking, macOS code signing or quarantine handling, shell scripts, and macOS-specific Computer Use availability.
 
-## Self-Update Preflight
+## Skill Root
 
-Before doing substantive work with this skill, run the bundled self-update helper once, then reload this `SKILL.md` if it reports an update:
+Every command in this document refers to the skill directory as `$SkillRoot`. Resolve it once per session before running anything else. This skill does not care which harness loaded it, so the probe matches any agent home that follows the `~/<agent-home>/skills/<skill-name>` layout:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\update-skill-from-github.ps1"
+$SkillRoot = $env:CODEX_WIN_FAST_PATCH_SKILL_ROOT
+if (-not $SkillRoot) {
+  $SkillRoot = (Get-ChildItem -Force -Path "$env:USERPROFILE\.*\skills\codex-windows-fast-patch\SKILL.md" -ErrorAction SilentlyContinue |
+                Select-Object -First 1).Directory.FullName
+}
+if (-not $SkillRoot) {
+  throw 'skill root not found; set CODEX_WIN_FAST_PATCH_SKILL_ROOT to the directory that holds this SKILL.md'
+}
 ```
 
-The helper checks `chen0416ccc-cpu/codex-windows-fast-patch-skill` on GitHub and synchronizes only the skill allowlist: the tracked top-level files (`SKILL.md`, `README.md`, `README.en.md`, `AGENTS.md`, `SECURITY.md`) plus `agents`, `scripts`, `references`, and `assets`. 如果无法更新到最新版，则不要中断当前任务；继续使用本机已安装的当前版本完成工作，并在结果中说明未能更新。
+If the agent already knows the directory it loaded this `SKILL.md` from, assign that path directly instead of probing. When more than one harness has the skill installed, set `CODEX_WIN_FAST_PATCH_SKILL_ROOT` to pick one explicitly; the probe otherwise takes the first match.
 
-An installed skill with `.skill-local-overlay` must also have `.skill-update-source.json` unless the caller passes an explicit `-Owner`, `-Repo`, or `-Branch`. The JSON file pins the intended fork source with `owner`, `repo`, and `branch`. The updater refuses to replace an unconfigured local overlay with its default upstream source, so a future upstream commit cannot silently erase local helper profiles or repair guards.
+## Self-Update Preflight
+
+The skill directory is a git working tree, so updating is `git pull`. Run the cheap check first and skip the rest when nothing changed:
+
+```powershell
+git -C "$SkillRoot" fetch --quiet origin
+git -C "$SkillRoot" rev-list --count 'HEAD..@{u}'
+```
+
+Keep `'HEAD..@{u}'` single-quoted. PowerShell parses a bare `@{u}` as a hashtable literal and fails before git runs at all. `HEAD..origin/HEAD` is equivalent here and needs no quoting.
+
+A count of `0` means the skill is current: skip the update and start the task. For a non-zero count, read what actually changed, then pull, then reload this `SKILL.md`:
+
+```powershell
+git -C "$SkillRoot" log --oneline 'HEAD..@{u}'
+git -C "$SkillRoot" pull --ff-only
+```
+
+If `@{u}` reports no upstream configured, substitute the tracking ref explicitly, for example `HEAD..origin/main`.
+
+Rules:
+
+- Never block the repair on the update. When `fetch` fails because the network is unavailable, GitHub is unreachable, or a proxy is down, continue with the installed version and state in the conclusion that the update was skipped.
+- Local edits are preserved by git, not silently discarded. Inspect with `git -C "$SkillRoot" status --short` and `git -C "$SkillRoot" diff` before pulling. Uncommitted edits to files the update does not touch survive `git pull --ff-only` untouched. Uncommitted edits to a file the update also changes make git refuse the pull, name the blocking file, and leave the edit on disk; recover with `git stash`, `git pull --ff-only`, `git stash pop`, and expect `stash pop` to leave conflict markers when the local edit and the upstream change touch the same lines. Local commits make `--ff-only` refuse because the branches diverged; `git pull --rebase` replays them on top of the update. Never use `git reset --hard` or `git checkout -- .` to force a pull through, because local helper profiles and repair guards live in those edits.
+- A fork is just a different remote. `git -C "$SkillRoot" remote set-url origin <fork-url>` pins the update source, and no extra configuration file is involved.
+- Roll back with git. `git -C "$SkillRoot" log --oneline -10`, then `git -C "$SkillRoot" checkout <sha>` returns to any earlier version.
+- When a patch step fails, check for updates again before concluding. A missing helper profile, a pattern that no longer matches, or an unrecognized Desktop build is exactly the case where upstream may already carry the fix, so repeat the fetch and log check at that point even if it already ran at the start of the task.
+- If `$SkillRoot` has no `.git` directory, the copy was installed by copying files or through a harness plugin mechanism and can never self-update. Report that, keep working with the installed version, and suggest reinstalling with `git clone` so future updates work.
 
 If the normal workflow does not explain a restriction, plugin gate, Computer Use failure, browser_use failure, or Fast Mode failure, read `references/restriction-debug-cases.md` before editing scripts or repatching.
 If the task is phone remote control, QR pairing, mobile setup, isolated remote OAuth, remote-control WebSocket, or post-pairing API endpoint diagnosis, read `references/remote-control-debug-cases.md` before editing scripts or repatching.
@@ -62,7 +96,7 @@ Before choosing the full MSIX repack path, identify whether the current failure 
 - Use the Phone Remote Control workflow when the user needs mobile pairing/control, the Connections page hides the phone setup card, the QR dialog spins, remote-control setup jumps to ChatGPT auth, the Allow dialog fails, the phone says the Codex environment version expired, or phone-created turns reach Desktop but send model requests to the wrong API endpoint.
 - Use the Missing inputSchema decision workflow when Codex Desktop cannot create a new conversation or local task and the newest Desktop log reports `method=thread/start` with the phrase `missing field inputSchema`. Do not assume this is always MCP. First compare CLI/app-server smoke tests against Desktop logs and inspect whether Desktop is sending non-null app dynamic tools. If the failure follows a suspect MCP server, isolate MCP. If CLI thread start succeeds while Desktop UI fails and extracted ASAR has `webview\assets\app-server-dynamic-tools-*.js` returning a namespace-wrapped `dynamicTools` object, use the Dynamic Tools Schema workflow. Do not run Phone Remote Control or Computer Use repair for this symptom unless separate evidence points there.
 - Use the Provider History Sync workflow when old conversations disappear from the official Desktop sidebar after the user changes `model_provider`, API account, or provider config, but local `sessions`, `archived_sessions`, or `state_5.sqlite` data still exists. Also use it when the conversations reappear but opening/continuing one fails with `当前工作目录缺失`, `current working directory missing`, or `invalid codex request` caused by a missing historical `cwd`. This workflow is data-layer repair; it does not require third-party recovery tools, does not patch ASAR, and must not modify `config.toml`.
-- Use the targeted bundled marketplace repair when the newest Desktop logs show fewer descriptors than the current package marketplace, or show `not_in_bundled_marketplace_plugin_names` removing a plugin the user had already installed. Descriptor presence means a plugin is available; it does not authorize installing or enabling optional plugins such as `sites`, `latex`, `deep-research`, or `visualize`. This should not trigger a broad repatch or Phone Remote Control workflow.
+- Use the targeted bundled marketplace repair when the newest Desktop logs show fewer descriptors than the current package marketplace, or show `not_in_bundled_marketplace_plugin_names` removing a plugin the user had already installed. Descriptor presence means a plugin is available; it does not authorize installing or enabling optional plugins such as `sites`, `latex`, `deep-research`, or `visualize`. This should not trigger a broad repatch or Phone Remote Control workflow. First rule out an account-gated descriptor gap: when the only missing descriptors are ones whose `isAvailable` predicate reads an account feature flag, such as `unified-computer-use` (`browserUseTinysky`) and `user-writing` (`userWriting`), the smaller set is expected on a third-party provider or API-key account and must not be repaired. Read the account-gated bundled descriptor case in `references/restriction-debug-cases.md` first.
 - Use `scripts\cleanup-orphaned-plugin-config.ps1` only for one explicit stale `plugin@marketplace` entry after that plugin/marketplace was removed. Run it without `-Install` first. It refuses writes while the marketplace remains configured or bounded marketplace/cache locations contain a matching directory, descriptor, or unreadable manifest; it never auto-discovers deletion targets.
 - If the user asks for Phone Remote Control and ordinary Desktop features in the same repair, patch Phone Remote Control first, then verify Fast Mode/browser/Chrome/Computer Use. If the remote-control MSIX install disturbs Computer Use or Chrome native-host state, immediately run the Computer Use Only workflow and re-run `-StrictVerifyOnly`.
 - Do not infer that a new `resources\codex.exe` PE file means `app.asar` is gone or that Computer Use needs binary patching. Inspect the current package resources first. If `app.asar` still exists and the symptom is a plugin/runtime import or cache failure, run `scripts\install-computer-use-local.ps1` before considering MSIX or binary changes.
@@ -78,12 +112,14 @@ The target state is the Desktop Codex home: normally `$env:USERPROFILE\.codex`. 
 
 Before starting from VS Code Codex or external PowerShell, confirm no User-level or Machine-level `CODEX_HOME` is set. Do not set global `CODEX_HOME`, do not copy `.codex` into `.codex-cli`, and do not expose or commit `auth.json`, API keys, OAuth tokens, MCP credentials, browser profiles, or local credential stores. Start with a Desktop-state backup, run read-only package/config/log checks, then run the relevant `-DryRun`. Only use `-Install`, full `repatch-codex-windows.ps1`, or targeted `*-windows-msix.ps1 -Install -Launch -InstallPrerequisites` after the dry run finds and validates the intended targets.
 
+An external executor has no Desktop `node_repl` JavaScript kernel, so the normal real-acceptance path for Computer Use and Chrome is unavailable. Do not downgrade acceptance to `-StrictVerifyOnly` output alone, and do not claim an end-to-end result the environment cannot produce. Drive the official CUA runtime from separate short-lived `node.exe` processes for Computer Use acceptance, and report the Chrome/browser layer as gate-and-configuration verified with the tab-read smoke test explicitly not run. The external-executor Computer Use acceptance case in `references/restriction-debug-cases.md` gives the required load order, object shapes, and approval stub.
+
 ## Default Workflow
 
 1. If the task may modify `config.toml`, skills, marketplaces, or MCP server settings, create a state snapshot first:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\manage-codex-backups.ps1" -Action Backup
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\manage-codex-backups.ps1" -Action Backup
 ```
 
 2. Inspect current-user and all-user package status so a newer SYSTEM-Staged Store build is visible:
@@ -100,13 +136,13 @@ The MSIX patcher automatically chooses the highest-version candidate whose `app`
 
 ```powershell
 codex plugin list
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\install-computer-use-local.ps1" -StrictVerifyOnly
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\install-computer-use-local.ps1" -StrictVerifyOnly
 ```
 
 If `-StrictVerifyOnly` fails on a missing marketplace manifest, missing plugin files, stale `latest` link, stale Chrome native messaging manifest path, `allowed_origins`, registry value, or `extension-host-config.json` runtime path, missing helper path, or `@oai/sky` import/runtime issue, run the Computer Use Only repair first:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\install-computer-use-local.ps1" -VerifyOnly
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\install-computer-use-local.ps1" -VerifyOnly
 ```
 
 This local repair may update config, plugin cache, Chrome native host paths and origins, user environment, and helper runtime files, but it does not uninstall or reinstall the Codex MSIX package. It invokes the current Chrome plugin's official `scripts\installManifest.mjs` with a user-local Codex CLI whose hash matches the installed package and with matching current `cua_node` `node.exe` / `node_repl.exe` paths. That official installer writes the outer native-host manifest, registry value, and required `extension-host-config.json`. The repair also synchronizes the current schema-2 app-server entry into both `%LOCALAPPDATA%\OpenAI\Codex\chrome-native-hosts-v2.json` and `$env:USERPROFILE\.codex\chrome-native-hosts-v2.json` using the current plugin's NUL-separated SHA-256 identity contract. Strict verification requires the exact current origin set from `scripts\extension-ids.json`, a stable current-version Chrome cache, existing current runtime paths in the host config, and a valid current entry in both v2 state files.
@@ -116,8 +152,8 @@ The repair must preserve the installed package's `plugins\chrome\scripts\browser
 4. Before choosing a full MSIX repack, check whether this is the bundled marketplace fast path. Compare the package's `.agents\plugins\marketplace.json` names with the Desktop reconcile log. If descriptors are missing, or `not_in_bundled_marketplace_plugin_names` removes a plugin the user had already installed, run only the targeted bundled marketplace patch on a large local drive:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch_codex_fast_mode_windows_msix.ps1" -OnlyBundledMarketplaceCopy -DryRun -OutputRoot "<large-local-build-root>"
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch_codex_fast_mode_windows_msix.ps1" -OnlyBundledMarketplaceCopy -Install -Launch -InstallPrerequisites -CleanupAfter -CleanupWindowsSdkAfterInstall -OutputRoot "<large-local-build-root>"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\patch_codex_fast_mode_windows_msix.ps1" -OnlyBundledMarketplaceCopy -DryRun -OutputRoot "<large-local-build-root>"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\patch_codex_fast_mode_windows_msix.ps1" -OnlyBundledMarketplaceCopy -Install -Launch -InstallPrerequisites -CleanupAfter -CleanupWindowsSdkAfterInstall -OutputRoot "<large-local-build-root>"
 ```
 
 After relaunch, run `scripts\install-computer-use-local.ps1 -VerifyOnly` and `scripts\install-computer-use-local.ps1 -StrictVerifyOnly -VerifyAllBundledPluginsAvailable`. The local repair preserves each unrelated optional plugin's installed/enabled state and refreshes an optional cache only when that plugin was already installed. The availability check requires every current descriptor name and version to match the installed package and to appear with that version in the CLI's installed-or-available JSON without calling `plugin add`.
@@ -127,13 +163,13 @@ After relaunch, run `scripts\install-computer-use-local.ps1 -VerifyOnly` and `sc
 Run a dry run first after every Codex upgrade when MSIX escalation is justified:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\repatch-codex-windows.ps1" -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\repatch-codex-windows.ps1" -DryRun
 ```
 
 6. If the dry run finds all patch targets, run the full repatch:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\repatch-codex-windows.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\repatch-codex-windows.ps1"
 ```
 
 The wrapper calls the bundled patch script at `scripts\patch_codex_fast_mode_windows_msix.ps1` with these defaults:
@@ -170,7 +206,7 @@ Before repairing phone remote control, read `references/remote-control-debug-cas
 If `Settings -> Connections -> Control this computer` is visible but the device list says to sign in to ChatGPT again, verify the normal remote-control bearer before repatching MSIX again:
 
 ```powershell
-python "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\refresh-remote-control-auth.py" --verify-only
+python "$SkillRoot\scripts\refresh-remote-control-auth.py" --verify-only
 ```
 
 If that reports `remote_json_disabled`, `access_token_expired`, `endpoint_http_error`, HTTP 401/403, or a token-refresh diagnosis such as `refresh_token_reused`, regenerate only `.codex\remote.json` with the same script. It uses the official Codex OAuth client, requests `openid profile email offline_access api.connectors.read api.connectors.invoke`, backs up the old `remote.json` under `.codex\backups\remote-control-auth`, defaults to proxy `http://127.0.0.1:10808`, and must not write `.codex\auth.json` or `config.toml`.
@@ -180,14 +216,14 @@ If `remote.json` verifies successfully but clicking `Add` or opening `Control th
 If the Allow dialog fails and the newest native app-server logs show `remote control requires ChatGPT authentication; API key auth is not supported`, ASAR patches and `.codex\remote.json` refresh are not enough. Build a patched native `app\resources\codex.exe` from the Codex Rust source with the reference native patch, using a large non-system work root when requested:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\build-remote-control-native-replacement.ps1" -WorkRoot "<large-local-build-root>\native-remote"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\build-remote-control-native-replacement.ps1" -WorkRoot "<large-local-build-root>\native-remote"
 ```
 
 If the phone reports the Codex environment is expired after a native replacement, inspect the original installed native version before building. Use only an exact mapped Desktop/native/source-tag combination. For example, Desktop `26.715.2305.0` ships `codex-cli 0.145.0-alpha.18` and Desktop `26.707.3748.0` ships `codex-cli 0.144.0-alpha.4`:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\build-remote-control-native-replacement.ps1" -WorkRoot "D:\CodexData\rc145" -CodexSourceRef "rust-v0.145.0-alpha.18" -AppServerVersion "0.145.0-alpha.18"
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\build-remote-control-native-replacement.ps1" -WorkRoot "D:\CodexWork\phone-remote-26.707\native-remote-0.144.0-alpha.4" -CodexSourceRef "rust-v0.144.0-alpha.4" -AppServerVersion "0.144.0-alpha.4"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\build-remote-control-native-replacement.ps1" -WorkRoot "D:\CodexData\rc145" -CodexSourceRef "rust-v0.145.0-alpha.18" -AppServerVersion "0.145.0-alpha.18"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\build-remote-control-native-replacement.ps1" -WorkRoot "D:\CodexWork\phone-remote-26.707\native-remote-0.144.0-alpha.4" -CodexSourceRef "rust-v0.144.0-alpha.4" -AppServerVersion "0.144.0-alpha.4"
 ```
 
 The build helper keeps the clone, Cargo cache, Rustup cache, temp directory, target directory, and any bootstrapped Windows SDK packages under `-WorkRoot`. When `-CodexSourceRef` and `-AppServerVersion` are omitted together, it copies the installed WindowsApps `app\resources\codex.exe` into `WorkRoot\tmp`, runs `--version` only on that copy, and selects a bundled version mapping; it never executes the WindowsApps binary in place. Desktop `26.715.2305.0` maps to `rust-v0.145.0-alpha.18`, `references\remote-control-native-replacement-0.145.0-alpha.18.patch`, and workspace version `0.145.0-alpha.18`. Desktop `26.707.3748.0` maps to `rust-v0.144.0-alpha.4`, `references\remote-control-native-replacement.patch`, and workspace version `0.144.0-alpha.4`. For historical `rust-v0.142.4`, matching parameters select `references\remote-control-native-replacement-0.142.4.patch`; that patch has passed clean patch-apply validation, but has not yet completed the same end-to-end native compilation validation as the newer mappings. Other source versions require matching explicit version parameters plus a validated `-PatchPathOverride`. Do not use GNU toolchain output for Windows MSIX replacement; use the MSVC target.
@@ -199,25 +235,25 @@ Keep `-WorkRoot` short as well as off the system drive. A deeply nested D-drive 
 Run a dry run first. Do not pass `-KeepWorkDir` unless you need to inspect failed patch artifacts; successful dry-runs should clean generated package and ASAR extraction output:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-remote-control-windows-msix.ps1" -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\patch-remote-control-windows-msix.ps1" -DryRun
 ```
 
 If the machine needs a larger temporary build location, pass it explicitly:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-remote-control-windows-msix.ps1" -DryRun -OutputRoot "<large-local-build-root>"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\patch-remote-control-windows-msix.ps1" -DryRun -OutputRoot "<large-local-build-root>"
 ```
 
 If a patched native `app\resources\codex.exe` was built from the Codex Rust source, pass it explicitly:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-remote-control-windows-msix.ps1" -DryRun -ReplacementResourceCodexExe "<path-to-built-codex.exe>"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\patch-remote-control-windows-msix.ps1" -DryRun -ReplacementResourceCodexExe "<path-to-built-codex.exe>"
 ```
 
 Only after dry-run markers pass, install and relaunch:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-remote-control-windows-msix.ps1" -Install -Launch -InstallPrerequisites -ReplacementResourceCodexExe "<path-to-built-codex.exe>"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\patch-remote-control-windows-msix.ps1" -Install -Launch -InstallPrerequisites -ReplacementResourceCodexExe "<path-to-built-codex.exe>"
 ```
 
 When `makeappx.exe` / `signtool.exe` are missing, the install path downloads Windows SDK BuildTools from NuGet under `-OutputRoot\.remote-control-temp`, not `%TEMP%`. Do not hard-code a local proxy for this download. Use the default direct/env-proxy path first; only pass `-BuildToolsProxy "http://127.0.0.1:10808"` or set `CODEX_WINDOWS_SDK_BUILDTOOLS_PROXY` when that proxy is known to be listening. Proxy URIs and credentials are never printed. `curl download failed with exit code 7` usually means the selected proxy endpoint refused the connection.
@@ -252,13 +288,13 @@ When those conditions hold, patch the Desktop asset to return flat `DynamicToolS
 Run a dry run first. Use `-OutputRoot` on a large local drive when the system drive is low:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-dynamic-tools-windows-msix.ps1" -DryRun -OutputRoot "<large-local-build-root>"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\patch-dynamic-tools-windows-msix.ps1" -DryRun -OutputRoot "<large-local-build-root>"
 ```
 
 If the dry run passes, install and relaunch:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-dynamic-tools-windows-msix.ps1" -Install -Launch -InstallPrerequisites -OutputRoot "<large-local-build-root>"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\patch-dynamic-tools-windows-msix.ps1" -Install -Launch -InstallPrerequisites -OutputRoot "<large-local-build-root>"
 ```
 
 After installation, verify with the actual Desktop UI or newest Desktop logs. A CLI-only smoke test is not sufficient because it can bypass Desktop `dynamicTools`. Confirm the latest `thread/start` entries do not report `missing field inputSchema`, then run `scripts\install-computer-use-local.ps1 -StrictVerifyOnly` and `codex plugin list` if Computer Use, Chrome, or browser use are in scope.
@@ -288,7 +324,7 @@ Important source-of-truth details:
 Before changing anything, run a dry run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\sync-codex-provider-history.ps1" -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\sync-codex-provider-history.ps1" -DryRun
 ```
 
 Read the dry-run output before selecting the write path:
@@ -301,14 +337,14 @@ Provider sync write path:
 
 ```powershell
 Get-Process Codex,ChatGPT -ErrorAction SilentlyContinue | Where-Object { $_.Path -like 'C:\Program Files\WindowsApps\OpenAI.Codex_*\app\Codex.exe' -or $_.Path -like 'C:\Program Files\WindowsApps\OpenAI.Codex_*\app\ChatGPT.exe' } | Stop-Process -Force
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\sync-codex-provider-history.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\sync-codex-provider-history.ps1"
 ```
 
 Missing cwd repair path:
 
 ```powershell
 Get-Process Codex,ChatGPT -ErrorAction SilentlyContinue | Where-Object { $_.Path -like 'C:\Program Files\WindowsApps\OpenAI.Codex_*\app\Codex.exe' -or $_.Path -like 'C:\Program Files\WindowsApps\OpenAI.Codex_*\app\ChatGPT.exe' } | Stop-Process -Force
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\sync-codex-provider-history.ps1" -RepairMissingCwdDirs
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\sync-codex-provider-history.ps1" -RepairMissingCwdDirs
 ```
 
 This creates only the missing directories referenced by rollout first lines. It does not rewrite those `cwd` values, and it still verifies that `config.toml` is unchanged. By default it skips cwd paths outside `$env:USERPROFILE` to avoid creating unexpected roots on other drives or network shares.
@@ -391,8 +427,8 @@ Remove-Item Env:ELECTRON_ENABLE_LOGGING -ErrorAction SilentlyContinue
 - If the failure reappears after restart with `plugin_marketplace_folder_write_failed` during `copy_plugins`, `bundled_plugins_marketplace_resolve_failed`, or `not_in_bundled_marketplace_plugin_names` removing a previously installed bundled plugin, patch only the bundled marketplace copy helper instead of running the full Fast/browser/Computer Use gate repatch. The targeted patch keeps the package descriptor set locally available but must not install or enable optional plugins the user did not select.
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch_codex_fast_mode_windows_msix.ps1" -OnlyBundledMarketplaceCopy -DryRun -OutputRoot "<large-local-build-root>"
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch_codex_fast_mode_windows_msix.ps1" -OnlyBundledMarketplaceCopy -Install -Launch -InstallPrerequisites -OutputRoot "<large-local-build-root>"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\patch_codex_fast_mode_windows_msix.ps1" -OnlyBundledMarketplaceCopy -DryRun -OutputRoot "<large-local-build-root>"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\patch_codex_fast_mode_windows_msix.ps1" -OnlyBundledMarketplaceCopy -Install -Launch -InstallPrerequisites -OutputRoot "<large-local-build-root>"
 ```
 
 ## Useful Wrapper Options
@@ -440,7 +476,7 @@ This workflow has an optional custom model instructions installer. It is not par
 To install only the bundled prompt asset and configure Codex:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\install-model-instructions-file.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\install-model-instructions-file.ps1"
 ```
 
 The installer copies `assets\system-prompt.md` to `$env:USERPROFILE\.codex\prompts\system-prompt.md`, writes this top-level TOML entry, validates TOML syntax when Python is available, and logs a timestamped backup of any existing `config.toml`:
@@ -452,13 +488,13 @@ model_instructions_file = 'C:\Users\<user>\.codex\prompts\system-prompt.md'
 To combine it with the main wrapper, add `-InstallModelInstructionsFile` explicitly:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\repatch-codex-windows.ps1" -InstallModelInstructionsFile
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\repatch-codex-windows.ps1" -InstallModelInstructionsFile
 ```
 
 To verify the current machine without changing files:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\install-model-instructions-file.ps1" -VerifyOnly
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\install-model-instructions-file.ps1" -VerifyOnly
 ```
 
 After configuring `model_instructions_file`, restart Codex CLI/Desktop or start a new session so the new model instructions file is loaded.
@@ -470,7 +506,7 @@ Use this path for local Computer Use plugin/runtime repair without repacking the
 If enumeration works but a later Computer Use call returns `node_repl exec context not found`, inspect the source profile before repair:
 
 ```powershell
-$contextPatcher = "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-computer-use-node-repl-context.ps1"
+$contextPatcher = "$SkillRoot\scripts\patch-computer-use-node-repl-context.ps1"
 powershell -NoProfile -ExecutionPolicy Bypass -File $contextPatcher
 ```
 
@@ -479,7 +515,7 @@ The documented `@oai/sky 0.6.2` profile is `6423BA83...702B7C` -> `3600AC24...5B
 If Windows 10 reaches the native helper but screenshot capture fails specifically at `SetIsBorderRequired` with `0x80004002`, inspect the helper profile before rerunning the general local repair:
 
 ```powershell
-$helperPatcher = "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-computer-use-helper-win10.ps1"
+$helperPatcher = "$SkillRoot\scripts\patch-computer-use-helper-win10.ps1"
 powershell -NoProfile -ExecutionPolicy Bypass -File $helperPatcher
 ```
 
@@ -494,19 +530,19 @@ The patcher verifies the complete output hash, stores the original under `.codex
 To refresh only the local Windows Computer Use files and environment gate:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\install-computer-use-local.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\install-computer-use-local.ps1"
 ```
 
 To verify and automatically repair missing local Computer Use files:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\install-computer-use-local.ps1" -VerifyOnly
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\install-computer-use-local.ps1" -VerifyOnly
 ```
 
 To verify without changing files:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\install-computer-use-local.ps1" -StrictVerifyOnly
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\install-computer-use-local.ps1" -StrictVerifyOnly
 ```
 
 If `-StrictVerifyOnly` fails because a cache path is missing or stale, run `-VerifyOnly` once, then rerun `-StrictVerifyOnly`. If `-VerifyOnly` succeeds but Desktop still reports native pipe unavailable, restart Codex Desktop and inspect the newest Desktop log for `computer-use native pipe startup ready`.
@@ -524,14 +560,14 @@ Only after the read-only result confirms the marketplace is absent and no bounde
 To back up local Codex config, MCP server entries, custom skills, marketplaces, and Chrome native-host state:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\manage-codex-backups.ps1" -Action Backup
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\manage-codex-backups.ps1" -Action Backup
 ```
 
 To list or restore snapshots:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\manage-codex-backups.ps1" -Action List
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\manage-codex-backups.ps1" -Action Restore -BackupPath "<backup path>"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\manage-codex-backups.ps1" -Action List
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\manage-codex-backups.ps1" -Action Restore -BackupPath "<backup path>"
 ```
 
 ## Success Criteria
@@ -547,10 +583,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\ski
 - The patch log includes `browser-use gate patch result`, either `patched` or `already-patched`.
 - Desktop logs show `browser_use_availability_resolved` with `available=true` and `reason=local-patched` after the patched app starts.
 - `$env:USERPROFILE\.codex\config.toml` contains `[marketplaces.openai-curated-local]`.
-- `$env:USERPROFILE\.codex\config.toml` contains `[marketplaces.openai-bundled]` pointing at the stable local marketplace selected by `install-computer-use-local.ps1`, never the Desktop-owned `.tmp\bundled-marketplaces` path, and that marketplace contains the installed bundled plugins plus the local Computer Use overlay.
+- `$env:USERPROFILE\.codex\config.toml` contains `[marketplaces.openai-bundled]` pointing at the marketplace root `install-computer-use-local.ps1` selected, and that marketplace contains the installed bundled plugins plus the local Computer Use overlay. On codex-cli 0.149+ `openai-bundled` is a reserved marketplace name, so the accepted source is the Desktop-materialized `.tmp\bundled-marketplaces\openai-bundled` reserved root; the script's fallback to that root is correct behavior, not drift, and it logs `codex-cli refused the local bundled marketplace source; repointing marketplaces.openai-bundled at the reserved root`. A stable non-reserved root is only expected on older CLI versions that still accept it. Do not "fix" a reserved-root source back to a stable root: doing so makes the CLI drop the marketplace entirely, so `codex plugin marketplace list --json` no longer reports `openai-bundled` and Desktop logs ``marketplace `openai-bundled` is reserved and cannot be added from this source``. Keeping the reserved root does not violate a no-C-drive constraint when `.codex\.tmp` is a junction to another volume, because the reserved path resolves to that volume.
 - Any configured local marketplace used for personal plugins has a supported `.agents\plugins\marketplace.json`; root-level `marketplace.json` alone is not enough for the current plugin CLI.
 - `codex plugin list` shows the plugins required by the requested repair, including `browser@openai-bundled`, `chrome@openai-bundled`, and `computer-use@openai-bundled` for Browser/Chrome/Computer Use work, as `installed, enabled`. Optional plugins retain their prior state.
-- When `-VerifyAllBundledPluginsAvailable` is requested, every complete descriptor in the stable `openai-bundled` marketplace has the same name and version as the installed package and appears with that version in the union of CLI `installed` and `available` JSON entries with an existing local source; no optional plugin becomes installed or enabled as a side effect.
+- When `-VerifyAllBundledPluginsAvailable` is requested, every complete descriptor in the stable `openai-bundled` marketplace has the same name and version as the installed package and appears with that version in the union of CLI `installed` and `available` JSON entries with an existing local source; no optional plugin becomes installed or enabled as a side effect. This switch compares the marketplace against the package's own `app\resources\plugins\openai-bundled` manifest, so it fails with `stable bundled marketplace descriptor set does not match the installed package` whenever the account's feature flags make Desktop materialize fewer descriptors than the package ships. That is expected on a third-party provider or API-key account and is not a repair target; see the account-gated bundled descriptor case in `references/restriction-debug-cases.md` before acting on such a mismatch.
 - Recent Desktop logs retain the current package's bundled descriptor names and do not show `not_in_bundled_marketplace_plugin_names` removing a plugin that was already installed.
 - `$env:USERPROFILE\.codex\config.toml` contains `[plugins."computer-use@openai-bundled"]` with `enabled = true`.
 - `codex plugin list` shows `computer-use@openai-bundled` as `installed, enabled`.
@@ -563,6 +599,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\ski
 - `scripts\install-computer-use-local.ps1 -StrictVerifyOnly` logs `client import ok` and `helper transport ok` for legacy layouts, or `runtime import ok` with `method=list_windows` for descriptor-only layouts.
 - For the supported `@oai/sky 0.6.2` cross-call approval profile, `scripts\patch-computer-use-node-repl-context.ps1` reports `patched` with SHA-256 `3600AC240CD6CB7029F1E489DF990CAE22D72177350B8084412DF1F3FA5BB60A`, and its original backup matches `6423BA834F18139D55CDAC2290C91CD9B24B568332B07CDDD2A7EDA043702B7C`.
 - Real Computer Use acceptance starts the persistent helper during one `node_repl` call, then uses at least two later calls to activate and capture a stable non-minimized target. Each call returns the expected window, accessibility state when requested, and a normal-sized screenshot whose visible content matches the target. A screenshot count or PNG file without content inspection is not acceptance.
+- When the repair runs from an external executor and no Desktop `node_repl` session is available, real Computer Use acceptance may instead run the official runtime from separate short-lived `node.exe` processes. Each process must reach `list_windows`, activate the target, and return a decoded screenshot whose content is inspected. Chrome/browser smoke validation cannot be substituted this way, because `browser-client.mjs` requires a trusted `globalThis.nodeRepl.rpc`; report the browser layer as gate-and-configuration verified only. See the external-executor Computer Use acceptance case in `references/restriction-debug-cases.md` for the required call order and object shapes.
 - For the supported Windows 10 screenshot-helper profiles, `scripts\patch-computer-use-helper-win10.ps1` reports `patched` with the selected profile's complete output SHA-256 and an original backup matching the profile's complete input SHA-256. Each documented profile has repeated-static resource checks and dynamic-capture image-change checks. Their pairs are `0.4.20`: `F2B2F56F...` -> `71A13CBC...`, `0.5.2`: `2C4CAC16...` -> `D816B14A...`, `0.6.6`: `BE488E66...` -> `34D6EB4F...`, `0.6.11`: `DE07F17A...` -> `40530E62...`, `0.6.11`: `7A95D14E...` -> `E84A4ECB...`, `0.6.16`: `E40BE614...` -> `F35CA6D8...`, `0.6.16-202608171739-pr-1311460-c66628846294`: `BEB498C2...` -> `AF7D14EE...`, and `0.6.17`: `29D5E113...` -> `DC83663F...`. One `@oai/sky` version can ship more than one helper binary, so select a profile by the complete hash and never by the version string. The `0.6.6` baseline includes a cold Explorer capture, two batches of ten unchanged static captures, twenty-capture post-warm-up resource counts, and three distinct Task Manager performance frames; the `0.6.16` baseline includes ten identical static frames, eight distinct Performance-tab frames, accessibility text, and a twenty-capture resource-stability sample; the `26.814.5517.0` `BEB498C2` baseline reuses the same five guarded regions and adds eight unique static frames, twenty unique dynamic frames, and a threads/handles stability sample; the `0.6.17` baseline reuses those same regions and adds eight unique static frames, twenty unique dynamic frames, and a threads/handles/working-set stability sample. A dynamic-capture check must activate the target and select a continuously animating view, because a backgrounded Task Manager Processes tab does not repaint and would yield identical frames for reasons unrelated to the patch. The target must also be a non-browser window owned by a real executable: Computer Use ends a turn against a browser window with `could not determine the current browser URL on Windows with enough confidence to enforce policy`, and `list_windows` does not enumerate a window hosted by `powershell.exe`.
 - The patched ASAR has the Computer Use availability and install gates forced local-available. On newer builds these targets can be merged into `webview\assets\app-initial-*.js` instead of the older `use-is-plugins-enabled-*` and `use-plugin-install-flow-*` chunks.
 - The patched ASAR has the Fast Mode UI gate unblocked, the locale chunk with `enable_i18n` forced enabled, and browser_use feature chunks/main feature dispatch patched to report in-app and external browser availability locally. Codex Desktop `26.721.3996.0` can merge the Fast UI, model visibility, and Browser sidebar targets into `webview\assets\app-initial-*.js`.

@@ -2943,13 +2943,17 @@ function Get-ChromeBrowserClientTrustMode {
   $nativeHostMarkers = @(
     'browserClientPath',
     'browserServicePath',
-    'codex-host-chunked-message-v1',
-    'Chrome native host did not provide a browser-client path'
+    'codex-host-chunked-message-v1'
   )
   foreach ($marker in $nativeHostMarkers) {
     if (-not (Test-FileContainsAsciiText $AppAsarPath $marker)) {
       throw "installed app.asar contains neither the packaged Chrome browser client hash nor the complete native-host path contract: sha256=$BrowserClientSha256 missing=$marker"
     }
+  }
+  $browserClientHintPresent = (Test-FileContainsAsciiText $AppAsarPath 'Chrome native host did not provide a browser-client path') -or
+                              (Test-FileContainsAsciiText $AppAsarPath 'browser-client path discovery or switch to another browser')
+  if (-not $browserClientHintPresent) {
+    throw "installed app.asar contains neither the packaged Chrome browser client hash nor the complete native-host path contract: sha256=$BrowserClientSha256 missing=browser-client path hint"
   }
 
   return 'native-host-paths'
@@ -3420,7 +3424,10 @@ console.log(JSON.stringify({ ok: true, exports: Object.keys(mod).sort() }));
 }
 
 function Test-ComputerUseRuntimeImport {
-  param([string]$SkyRoot)
+  param(
+    [string]$SkyRoot,
+    [string]$CodexCliPath
+  )
 
   $node = Get-Command node.exe -ErrorAction SilentlyContinue | Select-Object -First 1
   if (-not $node) {
@@ -3437,8 +3444,10 @@ function Test-ComputerUseRuntimeImport {
   # which is exactly what an independent runtime import should exercise; defined
   # with an rpc function routes every call over that RPC channel; defined without
   # one throws "sky requires node_repl; configure NODE_REPL_TRUSTED_SERVICES" as
-  # soon as a method is touched. The old stub was that third shape and made the
-  # runtime check fail on 0.6.24.
+  # soon as a method is touched. The stub removed here was that third shape, so
+  # this verification could never pass on 0.6.24. It only mirrored process.env
+  # values back, so it carried no information the standalone loader cannot read
+  # itself.
   $script = @'
 const mod = await import(process.argv[2]);
 if (typeof mod.sky !== "object" || mod.sky === null) {
@@ -3461,8 +3470,16 @@ console.log(JSON.stringify({
 '@
   $entryUri = ([Uri]$entryPath).AbsoluteUri
   $temp = Join-Path $env:TEMP ('codex-computer-use-runtime-import-' + [guid]::NewGuid().ToString('N') + '.mjs')
+  $oldCodexCliPath = [Environment]::GetEnvironmentVariable('CODEX_CLI_PATH', 'Process')
   try {
     Write-Utf8NoBom $temp $script
+    # sky >= 0.6.26 spawns the bundled codex-computer-use.exe helper for
+    # list_windows, and that helper launches `<CODEX_CLI_PATH> app-server`.
+    # Without this env var the helper fails with `failed to launch codex
+    # app-server: program not found` even though the runtime import is healthy.
+    if (-not [string]::IsNullOrWhiteSpace($CodexCliPath)) {
+      [Environment]::SetEnvironmentVariable('CODEX_CLI_PATH', $CodexCliPath, 'Process')
+    }
     $output = & $node.Source $temp $entryUri
     if ($LASTEXITCODE -ne 0) {
       throw "independent Computer Use runtime import verification failed for $entryPath"
@@ -3471,6 +3488,11 @@ console.log(JSON.stringify({
       Write-Log "runtime import ok: $output"
     }
   } finally {
+    if ($null -eq $oldCodexCliPath) {
+      Remove-Item Env:\CODEX_CLI_PATH -ErrorAction SilentlyContinue
+    } else {
+      [Environment]::SetEnvironmentVariable('CODEX_CLI_PATH', $oldCodexCliPath, 'Process')
+    }
     Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
   }
 }
@@ -3478,7 +3500,8 @@ console.log(JSON.stringify({
 function Test-OfficialComputerUseCache {
   param(
     [string]$CodexHomeResolved,
-    [string]$InstalledMarketplaceRoot
+    [string]$InstalledMarketplaceRoot,
+    [string]$CodexCliPath
   )
 
   $sourceRoot = Join-Path $InstalledMarketplaceRoot 'plugins\computer-use'
@@ -3549,7 +3572,7 @@ function Test-OfficialComputerUseCache {
     Test-ComputerUseClientImport $cachedClientPath
     Test-HelperTransport $helperTransportPath $helperCommandPath
   } else {
-    Test-ComputerUseRuntimeImport $runtimeSkyRoot
+    Test-ComputerUseRuntimeImport $runtimeSkyRoot $CodexCliPath
   }
 
   $stableMarketplaceRoot = Get-StableBundledMarketplaceRoot $codexHomeResolved
@@ -3656,7 +3679,7 @@ function Test-ComputerUse {
     # Current Codex builds can install a lightweight versioned plugin cache and
     # keep @oai/sky in the independent cua_node runtime. In that supported
     # layout `latest` can be absent or stale and has no usable node_modules.
-    Test-OfficialComputerUseCache $codexHomeResolved $installedMarketplaceRoot
+    Test-OfficialComputerUseCache $codexHomeResolved $installedMarketplaceRoot $runtimeInventory.CodexCliPath
     $marketplaceRoot = Get-StableBundledMarketplaceRoot $codexHomeResolved
     Test-NodeReplTrustedPathRepair `
       (Join-Path $codexHomeResolved 'config.toml') `

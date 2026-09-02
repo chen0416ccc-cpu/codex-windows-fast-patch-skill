@@ -2,6 +2,8 @@
 
 > These are hash-specific native helper compatibility profiles, not a generic binary patch. They support only the exact `@oai/sky` helper SHA-256 pairs listed below. Unknown hashes must remain untouched.
 
+Commands below refer to the skill directory as `$SkillRoot`. Resolve it with the probe in the `Skill Root` section of `SKILL.md` before running any of them.
+
 ## When to use this profile
 
 Use this profile only when all of the following are true:
@@ -85,7 +87,7 @@ The `0.6.16` rows apply unchanged to the `0.6.16-202608171739-pr-1311460-c666288
 First run the script without a write mode. It reports `original-patchable`, `patched`, or `unsupported`:
 
 ```powershell
-$patcher = "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-computer-use-helper-win10.ps1"
+$patcher = "$SkillRoot\scripts\patch-computer-use-helper-win10.ps1"
 powershell -NoProfile -ExecutionPolicy Bypass -File $patcher
 ```
 
@@ -110,7 +112,7 @@ The installer writes a verified original backup under:
 Then run the existing local plugin checks:
 
 ```powershell
-$localRepair = "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\install-computer-use-local.ps1"
+$localRepair = "$SkillRoot\scripts\install-computer-use-local.ps1"
 powershell -NoProfile -ExecutionPolicy Bypass -File $localRepair -VerifyOnly
 powershell -NoProfile -ExecutionPolicy Bypass -File $localRepair -StrictVerifyOnly
 ```

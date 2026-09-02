@@ -49,7 +49,6 @@ Do not run it on macOS. A macOS version needs a separate workflow for the Codex 
 - `scripts/cleanup-orphaned-plugin-config.ps1`: Classifies and removes orphaned `config.toml` plugin/hook tables for one explicit `plugin@marketplace` ID. It is read-only by default, checks the marketplace and bounded disk locations, and makes a SHA-256-verified backup before writing.
 - `scripts/install-model-instructions-file.ps1`: Optional installer for the bundled `model_instructions_file` prompt asset.
 - `scripts/manage-codex-backups.ps1`: Backup manager for local Codex config, MCP, skills, and marketplaces.
-- `scripts/update-skill-from-github.ps1`: Best-effort self-update script that syncs the latest GitHub version before use.
 - `assets/system-prompt.md`: Bundled prompt asset used only when optional model instructions setup is requested.
 - `references/restriction-debug-cases.md`: On-demand cases for restriction gates, Chrome/browser_use, Computer Use, and Fast Mode.
 - `references/win10-computer-use-screenshot-backend.md`: Root cause, binary boundary, guarded workflow, and validation evidence for the Windows 10 screenshot backend.
@@ -60,31 +59,29 @@ Do not run it on macOS. A macOS version needs a separate workflow for the Codex 
 
 ## Install
 
-Clone this repository, open PowerShell in the repository root, then copy only the skill files:
+The skill directory is a clone of this repository, so `git clone` it straight into your agent's skills directory. The destination depends on the harness you use; the skill itself does not care which harness it lives under:
 
 ```powershell
-$source = (Get-Location).ProviderPath
-if (-not (Test-Path -LiteralPath (Join-Path $source 'SKILL.md'))) {
-  throw 'Run this command from the codex-windows-fast-patch-skill repository root.'
-}
+# Codex
+git clone https://github.com/chen0416ccc-cpu/codex-windows-fast-patch-skill.git "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch"
 
-$dest = Join-Path $env:USERPROFILE '.codex\skills\codex-windows-fast-patch'
-New-Item -ItemType Directory -Force -Path $dest | Out-Null
-
-Copy-Item -Force -LiteralPath (Join-Path $source 'SKILL.md') -Destination $dest
-Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'agents') -Destination $dest
-Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'scripts') -Destination $dest
-Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'references') -Destination $dest
-Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'assets') -Destination $dest
+# Claude Code
+git clone https://github.com/chen0416ccc-cpu/codex-windows-fast-patch-skill.git "$env:USERPROFILE\.claude\skills\codex-windows-fast-patch"
 ```
 
-After installing into Codex, restart Codex so it reloads skill metadata.
+Any other agent that supports Agent Skills works the same way: point the destination at its own skills root. The full history takes about 800 KB, less than the working tree itself.
+
+Restart the agent afterwards so it reloads skill metadata.
+
+If your harness installs skills through a plugin or marketplace mechanism, that copy is not a git working tree and cannot self-update; everything else keeps working.
 
 ## Usage
 
 After installation, ask an agent that supports Agent Skills to use the `codex-windows-fast-patch` workflow for the Codex Desktop issue on the current machine.
 
-This skill supports self-updating: before each substantive use, the agent first tries to check GitHub and sync the latest version, so you do not need to repeatedly return to GitHub and pull updates manually. The sync covers the tracked top-level files (`SKILL.md`, both READMEs, `AGENTS.md`, `SECURITY.md`) plus the `agents`, `scripts`, `references`, and `assets` directories, so the commit recorded in `.skill-version` always matches the installed acceptance checklists. An installation containing `.skill-local-overlay` must also provide `.skill-update-source.json` with `owner`, `repo`, and `branch`, or the caller must pass an explicit source; otherwise self-update refuses to replace the overlay with the default upstream. This keeps the local skill as close as possible to the latest known workflow for newly discovered issues; if the network is unavailable, GitHub cannot be reached, or the download fails, that update step is skipped and the agent should continue with the currently installed local version.
+Updating this skill is `git pull`. Before substantive work the agent runs a cheap check — `git fetch` plus `git rev-list --count 'HEAD..@{u}'` (PowerShell needs the single quotes, otherwise `@{u}` is parsed as a hashtable) — and skips the rest when the count is `0`; only a non-zero count makes it read `git log` and decide whether to pull. It checks again when a patch step fails (a missing helper profile, a pattern that no longer matches, an unrecognized Desktop build), because that is exactly the case where upstream may already carry the fix.
+
+Local edits are not wiped out. When your edits and the update touch different files, `git pull --ff-only` fast-forwards and keeps your edits in place. When they touch the same file, git refuses the pull, names the blocking file, and leaves your edit on disk — resolve it with `git stash`, then `git pull --ff-only`, then `git stash pop` (expect conflict markers from `stash pop` if your edit and the update changed the same lines). Local commits make the branches diverge, so `--ff-only` refuses and `git pull --rebase` replays them on top of the update. Helper profiles and repair guards you added yourself are therefore safe. Change the update source with `git remote set-url origin <your-fork>`, and roll back with `git checkout <older-commit>`. When the network is unavailable the update step is skipped, the agent continues with the currently installed local version, and it states in the conclusion that the update did not run.
 
 The scripts are reference implementations and operational templates, not a one-command fix that is guaranteed to work on every machine. A real run should first read `SKILL.md`, inspect the current Codex installation method, MSIX package path, ASAR contents, signing tools, plugin directories, and Computer Use file state, then decide whether to execute, adapt, or only borrow steps from the scripts.
 
@@ -151,8 +148,9 @@ Expected verification after a full run:
 - The `selected Codex app` and `source package` log lines identify the intended highest version; a newer Store package Staged only for SYSTEM must not be silently hidden by an older user-installed package.
 - The patch log includes `fast-mode UI patch result`, `locale i18n patch result`, and `browser-use gate patch result`, each as `patched` or `already-patched`.
 - Fast Mode local wire verification captures `service_tier=priority` from the `/v1/responses` HTTP body or WebSocket frame. If `codex exec` sends no request, the verifier falls back to app-server and also requires `thread/start serviceTier=priority`.
-- For Browser and Computer Use repair, `codex plugin list` shows `browser`, `chrome`, and `computer-use` from `openai-bundled` as `installed, enabled`; unrelated optional plugins such as `sites`, `latex`, `deep-research`, and `visualize` retain the user's prior state. Add `-VerifyAllBundledPluginsAvailable` to the main wrapper to append an availability assertion to its normal repair or DryRun flow. It verifies that stable descriptor names and versions match the current installed package and that the CLI JSON reports those same versions. The assertion performs no network download, does not call `plugin add`, and does not enable optional plugins, but the wrapper's other repair steps may still write state. For a fully read-only check, run `install-computer-use-local.ps1 -StrictVerifyOnly -VerifyAllBundledPluginsAvailable` directly.
+- For Browser and Computer Use repair, `codex plugin list` shows `browser`, `chrome`, and `computer-use` from `openai-bundled` as `installed, enabled`; unrelated optional plugins such as `sites`, `latex`, `deep-research`, and `visualize` retain the user's prior state. Add `-VerifyAllBundledPluginsAvailable` to the main wrapper to append an availability assertion to its normal repair or DryRun flow. It verifies that stable descriptor names and versions match the current installed package and that the CLI JSON reports those same versions. The assertion performs no network download, does not call `plugin add`, and does not enable optional plugins, but the wrapper's other repair steps may still write state. For a fully read-only check, run `install-computer-use-local.ps1 -StrictVerifyOnly -VerifyAllBundledPluginsAvailable` directly. The assertion compares against the package's own `app\resources\plugins\openai-bundled` manifest, so it fails with `stable bundled marketplace descriptor set does not match the installed package` whenever account-side feature flags make Desktop materialize fewer descriptors than the package ships. On a third-party provider or API-key account that is expected rather than a repair target: Desktop `26.825.6671.0` ships ten descriptors while such an account materializes eight, and the missing `unified-computer-use` (gated on `browserUseTinysky`, also `hidden` and empty on Windows) and `user-writing` (gated on `userWriting` plus a ChatGPT-account user setting) are unreachable there. Verify the plugins the requested repair actually needs instead, and record the gap and its cause in the report.
 - For a `node_repl exec context not found` repair, `StrictVerifyOnly` reports the verified helper-transport patch hash. Then, after the call that starts the helper, at least two later independent calls must activate and capture the same stable window, and the image content must match that target. `list_windows`, a screenshot count, or a PNG file alone is not acceptance.
+- When the repair runs from external PowerShell, VS Code, or another environment without a Desktop `node_repl` kernel, real Computer Use acceptance can instead use several short-lived processes started from the current `cua_node` runtime's own `node.exe`: import the official sky entry and touch an export while `globalThis.nodeRepl` is still `undefined`, then assign `{ config: {}, createElicitation }` to answer the helper's approval request, then capture with `activate_window({ window: { app, id } })` and `get_window_state({ window, include_screenshot: true, include_text: true })`. Images arrive as `screenshots[].url` data URLs, commonly `image/jpeg`; sky has no separate screenshot method. State in the report that this substitute path did not exercise the in-app approval UI. Chrome/browser smoke tests cannot be substituted this way, because `browser-client.mjs` requires `globalThis.nodeRepl.rpc` and only the Desktop Node REPL provides that trusted channel; a hand-written `rpc` has no browser service behind it, and since `sky.js` picks its transport from the same property, defining `rpc` also moves Computer Use off the local helper client onto that fake channel. In that case report the browser layer as gate-open with configuration, manifest, cache, and registry verified, and say plainly that the tab read was not run.
 - Desktop logs retain the current package's bundled descriptor names and do not use `not_in_bundled_marketplace_plugin_names` to remove a plugin the user had already installed. Descriptor presence does not mean the plugin is installed.
 - Desktop logs show `browser_use_availability_resolved` with `available=true` and `reason=local-patched` when browser use is part of the repair.
 - If the Windows 10 screenshot helper is in scope, the patcher reports the validated patched SHA-256, and real Explorer first/repeated captures, dynamic Task Manager frames, accessibility text, window enumeration, and post-warm-up resource stability all pass.
@@ -166,19 +164,19 @@ Expected verification after a full run:
 Repair scripts automatically back up the previous `config.toml` into `.codex\backups\config\` before writing it. To manually back up or migrate important local Codex state, use the standalone backup manager:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\manage-codex-backups.ps1" -Action Backup
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\manage-codex-backups.ps1" -Action Backup
 ```
 
 List existing backups:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\manage-codex-backups.ps1" -Action List
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\manage-codex-backups.ps1" -Action List
 ```
 
 Restore from a backup:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\manage-codex-backups.ps1" -Action Restore -BackupPath "<backup path>"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\manage-codex-backups.ps1" -Action Restore -BackupPath "<backup path>"
 ```
 
 By default, the backup includes custom skills, marketplaces, `config.toml`, extracted `mcp_servers.json`, and `chrome-native-hosts.json`, while excluding easy-to-grow directories such as `.git`, `node_modules`, build outputs, and virtual environments. Use `-IncludeDependencyDirs` only when an exact offline dependency copy is needed; plugin cache and `.tmp\bundled-marketplaces` can also be large, so include them only when needed with `-IncludePluginCache` or `-IncludeTmpBundledMarketplaces`.

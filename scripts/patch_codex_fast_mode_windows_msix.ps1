@@ -915,16 +915,48 @@ let next = text.replace(mutationRe, mutationReplacement);
 // arbitrary prologue and any number of extra keys. The whole success body is
 // captured verbatim and re-emitted inside the try, which keeps every returned
 // field intact instead of rebuilding the object from named groups.
-// The user-settings queryFn returns one alphabetically sorted object, and both its
-// key set and key order drift between builds. 26.831.1445 put 17 keys between
-// lockdownModeEnabled and ultraEffortEnabled and 5 more after it, so the previous
-// regex - which required the two to be adjacent and ultraEffortEnabled to be the
-// terminal key - could not match even though the gate was intact. Anchor on the
-// stable prologue and take the body by brace balancing instead, so key reordering
-// and added keys no longer break discovery.
-const queryHeadRe = /queryFn:async\(\)=>\{(?=let(?:\{[\s\S]{0,800}?import\.meta\.url\),|\s)([$A-Za-z_][$\w]*)=([$A-Za-z_][$\w]*)\.parse\(await ([$A-Za-z_][$\w]*)\.get\(([$A-Za-z_][$\w]*)\)\.userSettings\(\)\);return\{)/;
-const queryHead = next.match(queryHeadRe);
-if (!queryHead) {
+// 26.831+ adds settings keys both before lockdownModeEnabled and after
+// ultraEffortEnabled, so locate the userSettings queryFn by anchor, capture its
+// whole body with brace matching, and re-emit it verbatim inside the try. The
+// enumerated-key regex stays below as a fallback for older build shapes.
+let queryPatched = false;
+{
+  const anchor = '.userSettings());';
+  let probe = 0;
+  for (;;) {
+    const anchorIdx = next.indexOf(anchor, probe);
+    if (anchorIdx < 0) break;
+    const windowStart = next.lastIndexOf('queryFn:async()=>{', anchorIdx);
+    if (windowStart < 0) break;
+    if (anchorIdx - windowStart >= 4000) {
+      probe = anchorIdx + anchor.length;
+      continue;
+    }
+    const bodyStart = windowStart + 'queryFn:async()=>{'.length;
+    let depth = 1;
+    let i = bodyStart;
+    while (i < next.length && depth > 0) {
+      const ch = next[i];
+      if (ch === '{') depth++;
+      else if (ch === '}') depth--;
+      i++;
+    }
+    if (depth === 0) {
+      const bodyEnd = i - 1;
+      const successBody = next.slice(bodyStart, bodyEnd);
+      if (successBody.includes('model_picker_persists_ultra_effort')) {
+        const queryReplacement = `queryFn:async()=>{try{${successBody}}catch{return{lockdownModeEnabled:!1,ultraEffortEnabled:await ${readConfig}(${settings}.showUltraInModelPickerSlider).catch(()=>!1)===!0,ultraEffortLocalFallback:!0/*${marker}*/}}}`;
+        next = next.slice(0, windowStart) + queryReplacement + next.slice(bodyEnd + 1);
+        queryPatched = true;
+      }
+    }
+    break;
+  }
+}
+if (!queryPatched) {
+const queryRe = /queryFn:async\(\)=>\{(let(?:\{[\s\S]{0,800}?import\.meta\.url\),|\s)([$A-Za-z_][$\w]*)=([$A-Za-z_][$\w]*)\.parse\(await ([$A-Za-z_][$\w]*)\.get\(([$A-Za-z_][$\w]*)\)\.userSettings\(\)\);return\{(?:[$A-Za-z_][$\w]*:[^,]+,)*?lockdownModeEnabled:\2\.settings\?\.lockdown_mode_enabled===!0,ultraEffortEnabled:\2\.settings\?\.model_picker_persists_ultra_effort===!0\})\}/;
+const queryMatch = next.match(queryRe);
+if (!queryMatch) {
   process.stderr.write('ultra-user-settings-query-target-not-found\n');
   process.exit(2);
 }
@@ -955,7 +987,8 @@ if (!querySuccessBody.includes(ultraKeyLiteral)) {
   process.exit(2);
 }
 const queryReplacement = `queryFn:async()=>{try{${querySuccessBody}}catch{return{lockdownModeEnabled:!1,ultraEffortEnabled:await ${readConfig}(${settings}.showUltraInModelPickerSlider).catch(()=>!1)===!0,ultraEffortLocalFallback:!0/*${marker}*/}}}`;
-next = next.slice(0, queryHead.index) + queryReplacement + next.slice(bodyClose + 1);
+next = next.replace(queryRe, queryReplacement);
+}
 
 const migrationKey = 'queryKey:[`chatgpt-ultra-effort-migration`]';
 const migrationKeyIndex = next.indexOf(migrationKey);
@@ -1139,6 +1172,11 @@ if (!nextSlash.includes(slashPatched) && !slashPatchedRe.test(nextSlash)) {
     changedSlash = true;
   } else if (cmdkSlashRe.test(nextSlash) && (cmdkKeywordSearchRe.test(nextSlash) || nextSlash.includes('keywords:r'))) {
     // Codex 26.519+ moved slash filtering to cmdk keywords; command id matching is already handled there.
+  } else if (nextSlash.includes('requiresEmptyComposer') &&
+             /\w\.getSearchQuery\?\.\(/.test(nextSlash) &&
+             /Math\.max\([A-Za-z_$][\w$]*\(e\.title,[A-Za-z_$][\w$]*\),[A-Za-z_$][\w$]*\(e\.id,[A-Za-z_$][\w$]*\),\.\.\.\(e\.searchAliases\?\?\[\]\)\.map/.test(nextSlash)) {
+    // Codex 26.831+ splits the command registry (app-primary) from the unified scorer (app-initial);
+    // the scorer already matches command ids and search aliases, so /goal is searchable by id.
   } else if (nextSlash.includes('id:`goal`') &&
              nextSlash.includes('getSearchQuery') &&
              /Math\.max\([A-Za-z_$][\w$]*\(e\.title,[A-Za-z_$][\w$]*\),[A-Za-z_$][\w$]*\(e\.id,[A-Za-z_$][\w$]*\),\.\.\.\(e\.searchAliases\?\?\[\]\)\.map/.test(nextSlash)) {
@@ -1308,14 +1346,25 @@ function patchFeatureHook(file) {
     'CODEX_BROWSER_EXTERNAL_GATE_V2',
     'CODEX_BROWSER_EXTERNAL_CONFIG_V2'
   ];
+  // 26.831+ splits each browser_use feature hook across several let statements
+  // with React-compiler memo-cache blocks in between, so the hook result, the
+  // WSL read, and the derived availability vars no longer sit in one let chain.
+  // Match the two split declarations by their stable neighbor expressions and
+  // force the WSL availability result separately.
+  const inAppConfigV3OriginalRe = /let ([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\)(,[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\),([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\?\.authMethod\?\?null,([A-Za-z_$][\w$]*);)/;
+  const externalConfigV3OriginalRe = /let ([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\)(,[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\),([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\|\|[A-Za-z_$][\w$]*===`chrome-extension`,)/;
+  const wslResultV3Re = /([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*===!0\|\|[A-Za-z_$][\w$]*\.kind===`wsl`/g;
+  const v3ConfigPatched = before.includes('/*CODEX_BROWSER_IN_APP_CONFIG_V3*/') &&
+                          before.includes('/*CODEX_BROWSER_EXTERNAL_CONFIG_V3*/');
+  const v3ConfigOriginal = inAppConfigV3OriginalRe.test(before) &&
+                           externalConfigV3OriginalRe.test(before);
   // The four currentXxx shapes describe one particular compiled layout. This
   // completeness check exists so a partially drifted legacy build fails loudly
   // instead of getting a half-open gate, but it must not fire when the generic
-  // modern path below can handle the build on its own: 26.831.1445 keeps both
-  // numeric gate literals and runCodexInWsl (so hasCurrentCompiledShape is true)
-  // while the two config `let` runs gained bindings and moved their
-  // enabled/isLoading source to a variable bound in an earlier statement, so the
-  // two config regexes cannot match even though nothing is actually wrong.
+  // modern path below can handle the build on its own. That covers a case the V3
+  // terms cannot see: a build already opened by the markerless path leaves no
+  // _CONFIG_V2 and no _CONFIG_V3 marker, and its original V3 shape is gone, so
+  // every config witness reads false even though nothing is wrong.
   // patchModernFeatureHook is pure, so applying it here is a safe dry probe.
   const modernPathHandlesHooks =
     (modernFeatureHookAlreadyPatched(before, 'browser_use_external') ||
@@ -1324,9 +1373,9 @@ function patchFeatureHook(file) {
       patchModernFeatureHook(before, 'browser_use') !== before);
   if (hasCurrentCompiledShape && !modernPathHandlesHooks && (
       !(currentInAppPairOriginalRe.test(before) || currentInAppPairPatchedRe.test(before)) ||
-      !(currentInAppConfigOriginalRe.test(before) || currentInAppConfigPatchedRe.test(before)) ||
+      !((currentInAppConfigOriginalRe.test(before) || currentInAppConfigPatchedRe.test(before)) || v3ConfigOriginal || v3ConfigPatched) ||
       !(currentExternalGateOriginalRe.test(before) || currentExternalGatePatchedRe.test(before)) ||
-      !(currentExternalConfigOriginalRe.test(before) || currentExternalConfigPatchedRe.test(before)))) {
+      !((currentExternalConfigOriginalRe.test(before) || currentExternalConfigPatchedRe.test(before)) || v3ConfigOriginal || v3ConfigPatched))) {
     process.stderr.write('browser-use-current-feature-hook-incomplete\n');
     process.exit(2);
   }
@@ -1348,6 +1397,18 @@ function patchFeatureHook(file) {
     after = after.replace(
       currentExternalConfigOriginalRe,
       'let $1={enabled:!0,isLoading:!1},$2=!1,$3=$4($5),$6=!1,$7;/*CODEX_BROWSER_EXTERNAL_CONFIG_V2*/'
+    );
+    after = after.replace(
+      inAppConfigV3OriginalRe,
+      'let $1={enabled:!0,isLoading:!1}/*CODEX_BROWSER_IN_APP_CONFIG_V3*/$2'
+    );
+    after = after.replace(
+      externalConfigV3OriginalRe,
+      'let $1={enabled:!0,isLoading:!1}/*CODEX_BROWSER_EXTERNAL_CONFIG_V3*/$2'
+    );
+    after = after.replace(
+      wslResultV3Re,
+      '$1=!1/*CODEX_BROWSER_WSL_RESULT_V3*/'
     );
   }
 
@@ -1456,7 +1517,16 @@ function patchFeatureHook(file) {
       !/\{enabled:!0,isLoading:!1\},[A-Za-z_$][\w$]*=!0,[A-Za-z_$][\w$]*=!1/.test(before) &&
       !/[A-Za-z_$][\w$]*=!0,[A-Za-z_$][\w$]*=!0,[A-Za-z_$][\w$]*;/.test(before) &&
       !currentCompiledMarkers.every(marker => before.includes(marker)) &&
-      !(modernFeatureHookAlreadyPatched(before, 'browser_use_external') && modernFeatureHookAlreadyPatched(before, 'browser_use'))) {
+      !v3ConfigPatched &&
+      // Both already-patched witnesses have to agree before we call the target
+      // missing, because either patch path can open these two gates and only one
+      // of them leaves a marker. 26.831.2377.0 was opened by the markerless path:
+      // three {enabled:!0,isLoading:!1} shapes, zero _CONFIG_V3 and zero
+      // _CONFIG_V2 config markers. Trusting v3ConfigPatched alone would report an
+      // already-patched file as browser-use-feature-hook-patch-target-not-found.
+      // The inner && stays && so a half-open gate still fails loudly.
+      !(modernFeatureHookAlreadyPatched(before, 'browser_use_external') &&
+        modernFeatureHookAlreadyPatched(before, 'browser_use'))) {
     process.stderr.write('browser-use-feature-hook-patch-target-not-found\n');
     process.exit(2);
   }
@@ -2050,6 +2120,17 @@ function Find-PatchTargets {
       if ($text.Contains('getSearchQuery') -and
           $text -match 'Math\.max\([A-Za-z_$][\w$]*\(e\.title,[A-Za-z_$][\w$]*\),[A-Za-z_$][\w$]*\(e\.id,[A-Za-z_$][\w$]*\),\.\.\.\(e\.searchAliases\?\?\[\]\)\.map' -and
           ($text.Contains('id:`goal`') -or $text.Contains('cmdk-item'))) {
+        $goalSlashTarget = $candidate
+        break
+      }
+    }
+  }
+  if ([string]::IsNullOrWhiteSpace($goalSlashTarget)) {
+    foreach ($candidate in (Invoke-RgList $RgPath 'getSearchQuery\?\.' $assetsDir)) {
+      $text = Get-Content -Raw -LiteralPath $candidate
+      if ($text.Contains('requiresEmptyComposer') -and
+          $text.Contains('searchAliases') -and
+          $text -match 'Math\.max\([A-Za-z_$][\w$]*\(e\.title,[A-Za-z_$][\w$]*\),[A-Za-z_$][\w$]*\(e\.id,[A-Za-z_$][\w$]*\),\.\.\.\(e\.searchAliases\?\?\[\]\)\.map') {
         $goalSlashTarget = $candidate
         break
       }

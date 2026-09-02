@@ -2,6 +2,8 @@
 
 Use this reference when the user asks to enable or repair Codex Desktop phone remote control on Windows, especially while keeping a third-party/API-key main model provider. Keep the investigation evidence-based: inspect the installed MSIX, extracted ASAR markers, native `resources\codex.exe` markers, `$env:USERPROFILE\.codex\remote-control-flow.log`, Desktop logs, SQLite state, and the actual post-pairing model request endpoint when phone-created turns reach Desktop.
 
+Commands below refer to the skill directory as `$SkillRoot`. Resolve it with the probe in the `Skill Root` section of `SKILL.md` before running any of them.
+
 ## Core Invariant
 
 - Keep the user's main Codex model provider state intact. Do not switch the global app into ChatGPT login just to enable phone remote control.
@@ -23,26 +25,26 @@ Get-AppxPackage -Name OpenAI.Codex | Select-Object Name,PackageFullName,Version,
 3. If the settings page hides the phone setup entry, QR spins forever, setup redirects to ChatGPT login, or the allow dialog says `Couldn't enable remote control`, use the remote-control MSIX patch script:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-remote-control-windows-msix.ps1" -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\patch-remote-control-windows-msix.ps1" -DryRun
 ```
 
 4. If the system drive is tight, pass an alternate output root on any drive with enough free space. This is optional; do not hard-code a drive letter in the workflow:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-remote-control-windows-msix.ps1" -DryRun -OutputRoot "<large-local-build-root>"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\patch-remote-control-windows-msix.ps1" -DryRun -OutputRoot "<large-local-build-root>"
 ```
 
 5. If a patched native app-server binary is available, pass it explicitly:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\patch-remote-control-windows-msix.ps1" -DryRun -ReplacementResourceCodexExe "<path-to-built-codex.exe>"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\patch-remote-control-windows-msix.ps1" -DryRun -ReplacementResourceCodexExe "<path-to-built-codex.exe>"
 ```
 
 6. If the Allow dialog fails and native logs show `remote control requires ChatGPT authentication; API key auth is not supported`, build a patched native app-server binary first. Use a work root on a large local drive if the user does not want system-drive space consumed:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\build-remote-control-native-replacement.ps1" -WorkRoot "D:\CodexData\rc145" -CodexSourceRef "rust-v0.145.0-alpha.18" -AppServerVersion "0.145.0-alpha.18"
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\build-remote-control-native-replacement.ps1" -WorkRoot "D:\CodexWork\phone-remote-26.707\native-remote-0.144.0-alpha.4" -CodexSourceRef "rust-v0.144.0-alpha.4" -AppServerVersion "0.144.0-alpha.4"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\build-remote-control-native-replacement.ps1" -WorkRoot "D:\CodexData\rc145" -CodexSourceRef "rust-v0.145.0-alpha.18" -AppServerVersion "0.145.0-alpha.18"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\build-remote-control-native-replacement.ps1" -WorkRoot "D:\CodexWork\phone-remote-26.707\native-remote-0.144.0-alpha.4" -CodexSourceRef "rust-v0.144.0-alpha.4" -AppServerVersion "0.144.0-alpha.4"
 ```
 
 Use the printed `ReplacementResourceCodexExe` value with `patch-remote-control-windows-msix.ps1 -ReplacementResourceCodexExe`. With both version parameters omitted, the helper copies the installed WindowsApps native binary into `WorkRoot\tmp`, runs `--version` on the copy, and chooses a known mapping without executing the package binary in place. Desktop `26.715.2305.0` ships native `codex-cli 0.145.0-alpha.18`, which maps to `references\remote-control-native-replacement-0.145.0-alpha.18.patch`. Desktop `26.707.3748.0` ships native `codex-cli 0.144.0-alpha.4`, which maps to `references\remote-control-native-replacement.patch`. For historical `rust-v0.142.4`, matching parameters select `references\remote-control-native-replacement-0.142.4.patch`; this older patch has passed clean patch-apply validation but has not yet completed an end-to-end native compilation validation. Any other version requires exact matching version parameters and an explicitly validated `-PatchPathOverride`. The helper checks patch applicability before compilation and keeps all build/cache/temp output under `-WorkRoot`.
@@ -187,7 +189,7 @@ Action:
 - Verify the normal bearer without modifying files:
 
 ```powershell
-python "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\refresh-remote-control-auth.py" --verify-only
+python "$SkillRoot\scripts\refresh-remote-control-auth.py" --verify-only
 ```
 
 - If verify-only reports disabled/expired/401/403, or manual refresh failed with `refresh_token_reused`, run the same script without `--verify-only` and finish the browser PKCE flow. The script writes only `$env:USERPROFILE\.codex\remote.json`, backs up the old file under `.codex\backups\remote-control-auth`, and must not write `.codex\auth.json` or `config.toml`.

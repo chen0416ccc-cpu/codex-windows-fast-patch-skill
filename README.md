@@ -50,7 +50,6 @@
 - `scripts/cleanup-orphaned-plugin-config.ps1`：只针对显式 `plugin@marketplace` ID 分类并清理孤立 `config.toml` 插件/hook 表；默认只读，写入前检查 marketplace 和限定磁盘位置，写入时创建 SHA-256 校验备份。
 - `scripts/install-model-instructions-file.ps1`：可选安装内置 `model_instructions_file` 提示词资源。
 - `scripts/manage-codex-backups.ps1`：本地 Codex 配置、MCP、skills 和 marketplaces 的备份管理脚本。
-- `scripts/update-skill-from-github.ps1`：使用前尽力同步 GitHub 最新版本的自更新脚本。
 - `assets/system-prompt.md`：仅在用户明确要求可选提示词配置时使用的内置提示词资源。
 - `references/restriction-debug-cases.md`：限制解除、Chrome/browser_use、Computer Use 和 Fast Mode 的按需诊断案例。
 - `references/win10-computer-use-screenshot-backend.md`：Win10 原生截图 helper 的 `0x80004002`、`FrameArrived` 死锁、补丁边界和验收证据。
@@ -61,31 +60,29 @@
 
 ## 安装
 
-先克隆仓库，然后在仓库根目录打开 PowerShell，只复制 skill 需要的文件：
+skill 目录就是这个仓库的一份克隆，直接 `git clone` 到你的智能体的 skills 目录即可。目标路径取决于你用的 harness，skill 本身不关心装在哪个 harness 下面：
 
 ```powershell
-$source = (Get-Location).ProviderPath
-if (-not (Test-Path -LiteralPath (Join-Path $source 'SKILL.md'))) {
-  throw '请在 codex-windows-fast-patch-skill 仓库根目录运行此命令。'
-}
+# Codex
+git clone https://github.com/chen0416ccc-cpu/codex-windows-fast-patch-skill.git "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch"
 
-$dest = Join-Path $env:USERPROFILE '.codex\skills\codex-windows-fast-patch'
-New-Item -ItemType Directory -Force -Path $dest | Out-Null
-
-Copy-Item -Force -LiteralPath (Join-Path $source 'SKILL.md') -Destination $dest
-Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'agents') -Destination $dest
-Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'scripts') -Destination $dest
-Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'references') -Destination $dest
-Copy-Item -Recurse -Force -LiteralPath (Join-Path $source 'assets') -Destination $dest
+# Claude Code
+git clone https://github.com/chen0416ccc-cpu/codex-windows-fast-patch-skill.git "$env:USERPROFILE\.claude\skills\codex-windows-fast-patch"
 ```
 
-安装到 Codex 后，重启 Codex，让它重新加载 skill 元数据。
+其它支持 Agent Skills 的智能体同理，把目标目录换成它自己的 skills 根就行。完整历史只占约 800 KB，比工作树本身还小。
+
+装完重启智能体，让它重新加载 skill 元数据。
+
+如果你的 harness 用插件或 marketplace 机制安装 skill，那份副本不是 git 工作树，自更新不可用，其余功能不受影响。
 
 ## 使用
 
 安装后，让支持 Agent Skills 的智能体使用 `codex-windows-fast-patch` 工作流处理当前机器上的 Codex Desktop 问题。
 
-这个 skill 支持自更新：智能体每次正式使用前会先尝试从 GitHub 检查并同步最新版本，同步范围包括已跟踪的顶层文件（`SKILL.md`、两份 README、`AGENTS.md`、`SECURITY.md`）和 `agents`、`scripts`、`references`、`assets` 四个目录，因此 `.skill-version` 记录的提交和本机验收清单始终一致。存在 `.skill-local-overlay` 的安装副本还必须提供 `.skill-update-source.json`（包含 `owner`、`repo`、`branch`），或在调用时显式传入更新源；否则自更新会拒绝用默认上游覆盖本地 overlay。网络不可用、GitHub 访问失败或下载失败时，更新步骤会被跳过，智能体应继续使用当前本地版本处理问题。
+这个 skill 的更新就是 `git pull`。智能体正式开工前先做一次极轻的检查：`git fetch` 加 `git rev-list --count 'HEAD..@{u}'`（PowerShell 里 `@{u}` 必须加单引号，否则会被解析成 hashtable），计数为 0 就直接跳过，非 0 才看 `git log` 决定是否拉取。补丁步骤失败时（helper profile 缺失、pattern 不再命中、Desktop 版本不认识）会再检查一次，因为这正是上游可能已经修好的情况。
+
+本地改动不会被抹掉。上游改的文件和你改的文件不重叠时，`git pull --ff-only` 会正常快进并保留你的改动；重叠时 git 会拒绝拉取、点名冲突文件，并把你的改动完整留在磁盘上，用 `git stash` 拉取后再 `git stash pop` 处理（如果改的正是同几行，`stash pop` 会留下冲突标记，需要手动解决）；已经本地 commit 则分支分叉，`--ff-only` 拒绝，用 `git pull --rebase` 把本地提交重放到更新之上。你自己加的 helper profile 和修复护栏因此是安全的。想换更新源就 `git remote set-url origin <你的 fork>`，想回退就 `git checkout <旧提交>`。网络不通时更新会被跳过，智能体继续用当前本地版本处理问题，并在结论里说明未能更新。
 
 这些脚本是参考实现和操作模板，不是跨所有机器都能直接运行的一键方案。实际处理时应先读取 `SKILL.md`，检查当前机器的 Codex 安装方式、MSIX 包路径、ASAR 内容、签名工具、插件目录、Computer Use 文件状态和远控相关日志，再决定执行、改写或只借鉴其中步骤。
 
@@ -160,8 +157,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\ski
 - 补丁日志中的 `selected Codex app` 与 `source package` 指向预期的最高版本；如果 Store 新包只对 SYSTEM 为 Staged，也不能静默回退到旧用户包。
 - 补丁日志包含 `fast-mode UI patch result`、`locale i18n patch result` 和 `browser-use gate patch result`，结果为 `patched` 或 `already-patched`。
 - Fast Mode 本地线缆验证能在 `/v1/responses` 的 HTTP 请求体或 WebSocket 帧里捕获 `service_tier=priority`；如果 `codex exec` 未发出请求，验证器会回退到 app-server，并额外确认 `thread/start serviceTier=priority`。
-- 如果本次修复包含浏览器和 Computer Use，`codex plugin list` 应显示 `browser`、`chrome`、`computer-use` 为 `installed, enabled`；`sites`、`latex`、`deep-research`、`visualize` 等无关可选插件必须保留用户原有状态。给主 wrapper 加 `-VerifyAllBundledPluginsAvailable` 会在正常修复/DryRun 流程中附加 availability 断言，校验稳定镜像与当前安装包的 descriptor 名称和版本一致，并校验 CLI JSON 报告相同版本；断言本身不联网下载、不执行 `plugin add`、不启用可选插件，但 wrapper 的其它修复步骤仍可能写入状态。完全只读时直接运行 `install-computer-use-local.ps1 -StrictVerifyOnly -VerifyAllBundledPluginsAvailable`。
+- 如果本次修复包含浏览器和 Computer Use，`codex plugin list` 应显示 `browser`、`chrome`、`computer-use` 为 `installed, enabled`；`sites`、`latex`、`deep-research`、`visualize` 等无关可选插件必须保留用户原有状态。给主 wrapper 加 `-VerifyAllBundledPluginsAvailable` 会在正常修复/DryRun 流程中附加 availability 断言，校验稳定镜像与当前安装包的 descriptor 名称和版本一致，并校验 CLI JSON 报告相同版本；断言本身不联网下载、不执行 `plugin add`、不启用可选插件，但 wrapper 的其它修复步骤仍可能写入状态。完全只读时直接运行 `install-computer-use-local.ps1 -StrictVerifyOnly -VerifyAllBundledPluginsAvailable`。该断言以安装包自带的 `app\resources\plugins\openai-bundled` 清单为基准，所以当账号侧 feature flag 让 Desktop 物化的 descriptor 少于安装包时，它会以 `stable bundled marketplace descriptor set does not match the installed package` 失败。第三方 provider 或 API key 账号出现这种情况属于预期，不是修复目标：例如 Desktop `26.825.6671.0` 安装包带 10 个 descriptor，而账号只能物化 8 个，缺的 `unified-computer-use`（依赖 `browserUseTinysky`，且在 Windows 上恒返回空并标记 `hidden`）与 `user-writing`（依赖 `userWriting` 与 ChatGPT 账号用户设置）都无法在这类账号下取得。此时改用「按本次修复实际需要的插件名」验收，并在报告里写明缺口与原因。
 - 如果修复 `node_repl exec context not found`，`StrictVerifyOnly` 应报告已验证的 helper-transport 补丁哈希；随后必须在启动 helper 的调用之后，用至少两个新的独立调用激活并截图同一个稳定窗口，并检查图片内容确实属于目标窗口。只有 `list_windows`、截图计数或 PNG 文件不算验收。
+- 如果修复是在外部 PowerShell、VS Code 等环境里执行、没有 Desktop 的 `node_repl` 内核，可以改用当前 `cua_node` 运行时自带的 `node.exe` 起多个独立短进程来做 Computer Use 真实验收：先在 `globalThis.nodeRepl` 仍为 `undefined` 时 import 官方 sky 入口并访问一次导出，再注入 `{ config: {}, createElicitation }` 应答 helper 的审批请求，然后用 `activate_window({ window: { app, id } })` 和 `get_window_state({ window, include_screenshot: true, include_text: true })` 取图（图片在 `screenshots[].url` 的 data URL 里，常见媒体类型是 `image/jpeg`，sky 没有单独的 screenshot 方法）。报告里要写明这条替代路径没有走 Desktop 内真实审批 UI。Chrome/浏览器的 smoke test 无法这样替代——`browser-client.mjs` 硬性要求 `globalThis.nodeRepl.rpc`，只有 Desktop 的 Node REPL 提供这条受信通道；自己写一个 `rpc` 也没用，它背后没有真实 browser service，而且 `sky.js` 是按同一个属性选传输路径的，一旦定义 `rpc`，Computer Use 也会从本地 helper 客户端切到这条假通道，把刚验过的能力弄坏——此时只能报到「门已开且配置/清单/缓存/注册表已校验」，并明说标签页读取没跑。
 - Desktop 日志应保留当前安装包的 bundled descriptor 名称，并且不应通过 `not_in_bundled_marketplace_plugin_names` 删除用户原本已安装的插件；descriptor 存在不等于插件已安装。
 - 如果本次修复包含浏览器能力，Desktop 日志里 `browser_use_availability_resolved` 显示 `available=true` 和 `reason=local-patched`。
 - 如果修复 Win10 截图 helper，patcher 应报告已验证 patched SHA-256；Explorer 首帧/连续帧、任务管理器动态帧、文字读取、窗口枚举和预热后资源稳定性都应通过。
@@ -175,19 +173,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\ski
 修复脚本在写入 `config.toml` 前会自动把旧文件备份到 `.codex\backups\config\`。如果要手动备份或迁移本地 Codex 的关键状态，可以使用独立备份脚本：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\manage-codex-backups.ps1" -Action Backup
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\manage-codex-backups.ps1" -Action Backup
 ```
 
 列出现有备份：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\manage-codex-backups.ps1" -Action List
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\manage-codex-backups.ps1" -Action List
 ```
 
 从某个备份恢复：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\codex-windows-fast-patch\scripts\manage-codex-backups.ps1" -Action Restore -BackupPath "<backup path>"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\manage-codex-backups.ps1" -Action Restore -BackupPath "<backup path>"
 ```
 
 默认备份自定义 skills、marketplaces、`config.toml`、解析出的 `mcp_servers.json` 和 `chrome-native-hosts.json`，并排除 `.git`、`node_modules`、构建产物和虚拟环境等容易变大的目录。需要完整离线依赖副本时再加 `-IncludeDependencyDirs`；插件缓存和 `.tmp\bundled-marketplaces` 也可能较大，需要时再加 `-IncludePluginCache` 或 `-IncludeTmpBundledMarketplaces`。
