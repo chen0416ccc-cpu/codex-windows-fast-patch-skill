@@ -475,3 +475,22 @@ Action:
 - First verify the target directory is under the intended temp root and has the expected `codex-*` prefix.
 - If normal `Remove-Item -Recurse -Force` fails, use .NET deletion with a Windows long-path prefix: `[System.IO.Directory]::Delete("\\?\C:\path\to\temp-dir", $true)`.
 - Do not use this cleanup pattern on an unverified or computed path.
+
+## Model Picker Shows Only One Fast Level (Missing Ultrafast Tier)
+
+Symptoms:
+
+- The Desktop model picker offers only the `Fast` speed tier for `gpt-5.6-sol`, while the official build ships two (`Fast` and `Ultrafast`).
+- The Fast Mode MSIX patch is verified healthy, so no ASAR gate explains the missing tier, and the wire capture still reports `service_tier=priority`.
+
+Checks:
+
+- The official `codex-rs/models-manager/models.json` adds `{"id": "ultrafast", "name": "Ultrafast"}` to `gpt-5.6-sol` `service_tiers`; a custom catalog configured through `model_catalog_json` that predates this entry silently removes the second tier because the picker builds tier options from the served `serviceTiers`.
+- Compare the file `config.toml` actually references with the official entry before editing anything. Unreferenced sibling catalogs and other providers' catalogs are not load paths.
+- Verify the served data with the app-server protocol: run `codex app-server`, send `initialize`, then the `initialized` notification, then `{"jsonrpc":"2.0","id":2,"method":"model/list","params":{}}`, and inspect `serviceTiers` for the model. `params` is required; omitting it fails with `missing field params`.
+
+Action:
+
+- Back up the custom catalog, then backfill the missing `service_tiers` entry with the exact official shape. This is a config-layer fix; do not repack the MSIX for it.
+- Restart Codex Desktop so the app-server reloads `model_catalog_json`, then re-run the `model/list` probe and require both tiers in the response before reporting success.
+- Do not touch unrelated catalogs: a `cc-switch-model-catalog.json` holding other providers (for example grok) is out of scope, and a stale `models_cache.json` can still be referenced by the installed CLI binary even when its mtime is old, so verify references before deleting anything.
