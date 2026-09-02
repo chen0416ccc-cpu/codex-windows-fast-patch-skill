@@ -704,7 +704,7 @@ $PatchProfiles = @(
         PatchedHex = '20fb114001000000'
       }
     )
-  }
+  },
   # Desktop 26.831.1445.0 ships @oai/sky 0.6.26. Unlike the three 0.6.24
   # binaries above this is a genuine recompile, not a re-signed clone: the file
   # grew 38912 bytes, all five region bodies moved, and the section table
@@ -777,7 +777,7 @@ $PatchProfiles = @(
         PatchedHex = '0073124001000000'
       }
     )
-  }
+  },
   # Desktop 26.831.2377.0 ships the same sky code re-signed under a prerelease
   # version string: 0.6.26-premerge-pr-1403760-d558d5ad5c81. Because profile
   # selection requires SkyVersion equality, the 0.6.26 entry above cannot serve
