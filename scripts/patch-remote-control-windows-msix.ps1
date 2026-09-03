@@ -25,35 +25,7 @@ function Fail {
   throw $Message
 }
 
-function Start-InstalledAppxPackage {
-  param(
-    [Parameter(Mandatory = $true)]$Package
-  )
-  $manifest = Get-AppxPackageManifest -Package $Package -ErrorAction Stop
-  $applications = @($manifest.Package.Applications.Application)
-  if ($applications.Count -lt 1) {
-    Fail "installed package has no application entry: $($Package.PackageFullName)"
-  }
-  $application = $applications[0]
-  if ($applications.Count -gt 1) {
-    $appEntries = @($applications | Where-Object { [string]$_.Id -eq 'App' })
-    if ($appEntries.Count -ne 1) {
-      $applicationIds = @($applications | ForEach-Object { [string]$_.Id }) -join ', '
-      Fail "installed package has ambiguous application entries ($applicationIds): $($Package.PackageFullName)"
-    }
-    $application = $appEntries[0]
-  }
-  $packageFamilyName = [string]$Package.PackageFamilyName
-  $applicationId = [string]$application.Id
-  if ([string]::IsNullOrWhiteSpace($packageFamilyName) -or [string]::IsNullOrWhiteSpace($applicationId)) {
-    Fail "installed package is missing PackageFamilyName or Application Id: $($Package.PackageFullName)"
-  }
-  $aumid = "$packageFamilyName!$applicationId"
-  $explorer = Get-RequiredCommand 'explorer.exe'
-  Write-Log "launching Codex through AppUserModelId: $aumid"
-  Start-Process -FilePath $explorer -ArgumentList "shell:AppsFolder\$aumid" -WindowStyle Hidden -ErrorAction Stop | Out-Null
-  return $aumid
-}
+. (Join-Path $PSScriptRoot 'lib\appx-launch.ps1')
 
 function Remove-DirectoryRobust {
   param(
@@ -239,82 +211,7 @@ function Require-WindowsSdkTool {
   return $tool
 }
 
-function Convert-BytesToHex {
-  param([byte[]]$Bytes)
-  return (($Bytes | ForEach-Object { $_.ToString('x2') }) -join '')
-}
-
-function Get-AsarHeaderSha256 {
-  param([string]$AsarPath)
-  $fs = [System.IO.File]::Open($AsarPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
-  try {
-    $pickleHeader = New-Object byte[] 16
-    if ($fs.Read($pickleHeader, 0, 16) -ne 16) {
-      Fail 'could not read asar pickle header'
-    }
-    $headerSize = [BitConverter]::ToUInt32($pickleHeader, 12)
-    if ($headerSize -le 0 -or $headerSize -gt ($fs.Length - 16)) {
-      Fail "invalid asar JSON header size: $headerSize"
-    }
-    $headerBytes = New-Object byte[] $headerSize
-    if ($fs.Read($headerBytes, 0, [int]$headerSize) -ne [int]$headerSize) {
-      Fail 'could not read asar header bytes'
-    }
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    try {
-      return (Convert-BytesToHex $sha.ComputeHash($headerBytes))
-    } finally {
-      $sha.Dispose()
-    }
-  } finally {
-    $fs.Dispose()
-  }
-}
-
-function Update-CodexExeAsarIntegrity {
-  param(
-    [string]$ExePath,
-    [string]$AsarHash
-  )
-  $bytes = [System.IO.File]::ReadAllBytes($ExePath)
-  $text = [System.Text.Encoding]::ASCII.GetString($bytes)
-  $pattern = '\[\{"file":"resources\\\\app\.asar","alg":"SHA256","value":"([0-9a-fA-F]{64})"\}\]'
-  $match = [regex]::Match($text, $pattern)
-  if (-not $match.Success) {
-    if ($text.Contains('app.asar')) {
-      Fail 'could not find Electron ASAR integrity JSON inside Codex.exe'
-    }
-    Write-Log 'Codex.exe ASAR integrity JSON not present; skipping executable integrity update'
-    return
-  }
-  $oldHash = $match.Groups[1].Value
-  if ($oldHash -eq $AsarHash) {
-    Write-Log "Codex.exe asar integrity already current: $AsarHash"
-    return
-  }
-  $oldBytes = [System.Text.Encoding]::ASCII.GetBytes($oldHash)
-  $newBytes = [System.Text.Encoding]::ASCII.GetBytes($AsarHash)
-  $pos = -1
-  for ($i = 0; $i -le $bytes.Length - $oldBytes.Length; $i++) {
-    $ok = $true
-    for ($j = 0; $j -lt $oldBytes.Length; $j++) {
-      if ($bytes[$i + $j] -ne $oldBytes[$j]) {
-        $ok = $false
-        break
-      }
-    }
-    if ($ok) {
-      $pos = $i
-      break
-    }
-  }
-  if ($pos -lt 0) {
-    Fail 'could not locate ASAR integrity hash bytes in Codex.exe'
-  }
-  [Array]::Copy($newBytes, 0, $bytes, $pos, $newBytes.Length)
-  [System.IO.File]::WriteAllBytes($ExePath, $bytes)
-  Write-Log "updated Codex.exe asar integrity: $oldHash -> $AsarHash"
-}
+. (Join-Path $PSScriptRoot 'lib\asar-integrity.ps1')
 
 function Remove-OldPackageArtifacts {
   param([string]$WorkPackageRoot)
@@ -400,14 +297,20 @@ if (-not $pkg -or -not $pkg.InstallLocation) {
 
 $sourceRoot = $pkg.InstallLocation
 $sourceAsar = Join-Path $sourceRoot 'app\resources\app.asar'
-$sourceCodexExe = Join-Path $sourceRoot 'app\Codex.exe'
 $sourceResourceCodexExe = Join-Path $sourceRoot 'app\resources\codex.exe'
 if (-not (Test-Path -LiteralPath $sourceAsar -PathType Leaf)) {
   Fail "app.asar not found: $sourceAsar"
 }
-if (-not (Test-Path -LiteralPath $sourceCodexExe -PathType Leaf)) {
-  Fail "Codex.exe not found: $sourceCodexExe"
+# The Electron launcher name is build-dependent: Codex.exe before 26.9xx, ChatGPT.exe after.
+# Accept either so preflight does not reject a valid package over a renamed launcher.
+$sourceAppRoot = Join-Path $sourceRoot 'app'
+$sourceLauncher = @('ChatGPT.exe', 'Codex.exe') |
+  Where-Object { Test-Path -LiteralPath (Join-Path $sourceAppRoot $_) -PathType Leaf } |
+  Select-Object -First 1
+if (-not $sourceLauncher) {
+  Fail "no Electron launcher (ChatGPT.exe or Codex.exe) found in: $sourceAppRoot"
 }
+Write-Log "source Electron launcher: $sourceLauncher"
 if ($ReplacementResourceCodexExe -and -not (Test-Path -LiteralPath $sourceResourceCodexExe -PathType Leaf)) {
   Fail "bundled resource codex.exe not found: $sourceResourceCodexExe"
 }
@@ -438,7 +341,7 @@ try {
   Remove-OldPackageArtifacts $workPackageRoot
 
   $workAsar = Join-Path $workPackageRoot 'app\resources\app.asar'
-  $workCodexExe = Join-Path $workPackageRoot 'app\Codex.exe'
+  $workAppRoot = Join-Path $workPackageRoot 'app'
   $workResourceCodexExe = Join-Path $workPackageRoot 'app\resources\codex.exe'
   $npx = Get-RequiredCommand 'npx'
   if (Test-Path -LiteralPath $asarDir) {
@@ -580,8 +483,8 @@ try {
     Fail "npx asar pack failed with exit code $LASTEXITCODE"
   }
 
-  $asarHash = Get-AsarHeaderSha256 $workAsar
-  Update-CodexExeAsarIntegrity -ExePath $workCodexExe -AsarHash $asarHash
+  Write-Log "app.asar header sha256: $(Get-AsarHeaderSha256 $workAsar)"
+  Update-ElectronAsarIntegrity $workAppRoot
 
   if ($ReplacementResourceCodexExe) {
     $replacement = (Resolve-Path -LiteralPath $ReplacementResourceCodexExe -ErrorAction Stop).ProviderPath

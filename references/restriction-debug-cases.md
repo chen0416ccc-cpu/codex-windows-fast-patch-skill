@@ -498,3 +498,52 @@ Action:
 - First verify the target directory is under the intended temp root and has the expected `codex-*` prefix.
 - If normal `Remove-Item -Recurse -Force` fails, use .NET deletion with a Windows long-path prefix: `[System.IO.Directory]::Delete("\\?\C:\path\to\temp-dir", $true)`.
 - Do not use this cleanup pattern on an unverified or computed path.
+
+## Model Picker Shows Only One Fast Level (Missing Ultrafast Tier)
+
+Symptoms:
+
+- The Desktop model picker offers only the `Fast` speed tier for `gpt-5.6-sol`, while the official build ships two (`Fast` and `Ultrafast`).
+- The Fast Mode MSIX patch is verified healthy, so no ASAR gate explains the missing tier, and the wire capture still reports `service_tier=priority`.
+
+Checks:
+
+- The official `codex-rs/models-manager/models.json` adds `{"id": "ultrafast", "name": "Ultrafast"}` to `gpt-5.6-sol` `service_tiers`; a custom catalog configured through `model_catalog_json` that predates this entry silently removes the second tier because the picker builds tier options from the served `serviceTiers`.
+- Compare the file `config.toml` actually references with the official entry before editing anything. Unreferenced sibling catalogs and other providers' catalogs are not load paths.
+- Verify the served data with the app-server protocol: run `codex app-server`, send `initialize`, then the `initialized` notification, then `{"jsonrpc":"2.0","id":2,"method":"model/list","params":{}}`, and inspect `serviceTiers` for the model. `params` is required; omitting it fails with `missing field params`.
+
+Action:
+
+- Back up the custom catalog, then backfill the missing `service_tiers` entry with the exact official shape. This is a config-layer fix; do not repack the MSIX for it.
+- Restart Codex Desktop so the app-server reloads `model_catalog_json`, then re-run the `model/list` probe and require both tiers in the response before reporting success.
+- Do not touch unrelated catalogs: a `cc-switch-model-catalog.json` holding other providers (for example grok) is out of scope, and a stale `models_cache.json` can still be referenced by the installed CLI binary even when its mtime is old, so verify references before deleting anything.
+
+## Patched Package Installs But Codex Desktop Never Starts
+
+Symptoms:
+
+- The MSIX repack, signing, and `Add-AppxPackage` all report success, and every patch marker the patcher checks is reported as applied.
+- Launching Codex does nothing: no window, and the process exits immediately. `Get-Process ChatGPT` finds nothing a second later.
+- Captured stderr contains `FATAL:asar_util.cc:143 Integrity check failed for asar archive (<expected> vs <actual>)`, where `<expected>` is the hash embedded in the launcher executable and `<actual>` is the hash of the repacked `app.asar`.
+- The patcher log contains a single skipped-integrity line such as `Codex.exe ASAR integrity JSON not present; skipping executable integrity update`.
+
+Cause:
+
+- Electron validates `resources\app.asar` at startup against a SHA-256 table embedded in the launcher executable as ASCII text: `[{"file":"resources\app.asar","alg":"SHA256","value":"<64 hex>"}]`. Repacking the archive without rewriting that value is fatal, and `--disable-features=AsarIntegrityCheck` does not bypass it.
+- The launcher file name is build-dependent. Builds before 26.9xx shipped `Codex.exe` as the Electron main binary; 26.9xx ships `ChatGPT.exe` and keeps `Codex.exe` only as a thin CLI shim with no integrity table. A patcher that hard-codes the launcher name finds no table, skips the update, and ships a package that cannot start.
+
+Checks:
+
+- Scan every executable in the package `app` root, not one name, and not recursively: `resources\codex.exe` is a large CLI binary that never hosts the table. `scripts\lib\asar-integrity.ps1` implements this as `Get-AsarIntegrityHostCandidates` plus `Test-AsarIntegrityTargets`.
+- Compute the archive hash over the ASAR JSON header only: skip the 16-byte pickle prefix, read the header length from `BitConverter::ToUInt32(prefix, 12)`, and hash exactly that many following bytes. Hashing the whole file or including the pickle size fields yields a value that never matches.
+- Do not use the Electron fuse wire (sentinel `dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX`) to decide whether validation is active. Recent Codex builds carry the integrity table without an inspectable fuse sentinel, so a missing sentinel is not evidence that the check is off.
+- On a pristine Store package the embedded value must already equal the computed value. If it does not, the hashing logic is wrong; fix that before repacking anything.
+
+Action:
+
+- Repair with `Update-ElectronAsarIntegrity <app-root>` after every `asar pack`, then re-read the executable and assert each embedded value equals the freshly computed archive hash. All three MSIX patchers dot-source the shared library so this behavior cannot drift between them.
+- Never let an unrecognized table format degrade into a skip. When an executable references `app.asar` but exposes no `{file,alg,value}` record, fail before repacking; shipping is worse than stopping.
+- Clear the read-only attribute before writing the launcher back. `robocopy /MIR` preserves it from `WindowsApps`, so an in-place write otherwise throws.
+- Replace the hash in place at the offset the regex capture group reports, keeping the byte length identical. A length change would shift every following PE offset.
+- Run `scripts\test-asar-integrity.ps1 -TemporaryRoot <dir>` after touching any of this. It covers launcher discovery by content, the header-hash algorithm, tamper detection, repair, idempotence, multi-archive tables, read-only launchers, and the loud-failure path. Add `-CheckInstalledPackage` to also assert the installed package is self-consistent.
+- Accept `Desktop actually starts` as the only acceptance criterion for a repack. Patch-marker counts, `service_tier=priority` wire captures, and `install-computer-use-local.ps1 -StrictVerifyOnly` all pass on a package that dies at startup.
