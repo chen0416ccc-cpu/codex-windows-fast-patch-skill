@@ -48,6 +48,10 @@
 - `scripts/sync-codex-provider-history.ps1`：同步本地会话 provider 元数据，让切换 `model_provider` 后消失的会话重新出现在官方列表中；也可用 `-RepairMissingCwdDirs` 修复恢复后会话无法继续的缺失 `cwd` 目录。默认不改 `config.toml`，也不改 workspace/project roots。
 - `scripts/install-model-instructions-file.ps1`：可选安装内置 `model_instructions_file` 提示词资源。
 - `scripts/manage-codex-backups.ps1`：本地 Codex 配置、MCP、skills 和 marketplaces 的备份管理脚本。
+- `scripts/lib/asar-integrity.ps1`：三个 MSIX 补丁脚本共用的 Electron ASAR 完整性表读写库。启动器按内容识别而不是按文件名（26.9xx 之前是 `Codex.exe`，之后是 `ChatGPT.exe`），`asar pack` 后重写嵌入哈希并回读断言；可执行文件引用了 `app.asar` 但表结构不可解析时硬失败，避免装出无法启动的包。
+- `scripts/lib/appx-launch.ps1`：通过 AppUserModelId 启动已安装包的共享实现。不要直接运行安装目录里的可执行文件：26.9xx 的 `app\Codex.exe` 只是 CLI shim，启动它不会出现桌面窗口。
+- `scripts/test-asar-integrity.ps1`：`lib/asar-integrity.ps1` 的回归测试，全部用合成 fixture，覆盖按内容识别启动器、header 哈希算法、篡改检测、修复、幂等、多档案表、只读启动器和硬失败路径；加 `-CheckInstalledPackage` 时额外只读校验当前安装包自洽。
+- `scripts/test-staged-package-selection.ps1`：Store 更新后包选择逻辑的回归测试。
 - `assets/system-prompt.md`：仅在用户明确要求可选提示词配置时使用的内置提示词资源。
 - `references/restriction-debug-cases.md`：限制解除、Chrome/browser_use、Computer Use 和 Fast Mode 的按需诊断案例。
 - `references/win10-computer-use-screenshot-backend.md`：Win10 原生截图 helper 的 `0x80004002`、`FrameArrived` 死锁、补丁边界和验收证据。

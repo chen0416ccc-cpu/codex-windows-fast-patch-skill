@@ -23,13 +23,20 @@
 ## Verification
 
 - For documentation-only changes, run `git diff --check`.
-- For PowerShell script changes, parse the edited scripts with:
+- For PowerShell script changes, parse the edited scripts with (recursive, so `scripts\lib` is covered):
 
 ```powershell
-Get-ChildItem -LiteralPath scripts -Filter *.ps1 | ForEach-Object {
+Get-ChildItem -LiteralPath scripts -Filter *.ps1 -Recurse | ForEach-Object {
   $null = [scriptblock]::Create((Get-Content -Raw -LiteralPath $_.FullName))
 }
 ```
 
 - For CommonJS script changes, run `node --check` on each edited `.cjs` file.
+- After touching `scripts\lib\asar-integrity.ps1` or any `Update-ElectronAsarIntegrity` call site, run the regression suite; a wrong integrity hash produces a package that installs and then dies at startup:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-asar-integrity.ps1 -TemporaryRoot D:\tmp\asar-test -CheckInstalledPackage
+```
+
+- After touching package selection, run `scripts\test-staged-package-selection.ps1 -TemporaryRoot <dir>`.
 - Report exactly which checks were run and whether they passed.

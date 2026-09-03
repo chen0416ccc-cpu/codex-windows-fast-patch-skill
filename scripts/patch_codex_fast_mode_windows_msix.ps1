@@ -78,9 +78,13 @@ function Test-CodexAppPath {
     return $false
   }
   $app = Normalize-AppPath $Candidate
+  # The Electron launcher name is build-dependent: Codex.exe before 26.9xx, ChatGPT.exe after.
+  # Accept either so a renamed launcher does not make a valid package undiscoverable.
+  $hasLauncher = (Test-Path -LiteralPath (Join-Path $app 'ChatGPT.exe') -PathType Leaf) -or
+    (Test-Path -LiteralPath (Join-Path $app 'Codex.exe') -PathType Leaf)
   return (
     (Test-Path -LiteralPath $app -PathType Container) -and
-    (Test-Path -LiteralPath (Join-Path $app 'Codex.exe') -PathType Leaf) -and
+    $hasLauncher -and
     (Test-Path -LiteralPath (Join-Path $app 'resources\app.asar') -PathType Leaf) -and
     (Test-Path -LiteralPath (Join-Path $app 'resources\rg.exe') -PathType Leaf)
   )
@@ -2452,83 +2456,7 @@ function Invoke-PatchAppAsar {
   return $true
 }
 
-function Convert-BytesToHex {
-  param([byte[]]$Bytes)
-  return (($Bytes | ForEach-Object { $_.ToString('x2') }) -join '')
-}
-
-function Get-AsarHeaderSha256 {
-  param([string]$AsarPath)
-  $fs = [System.IO.File]::Open($AsarPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
-  try {
-    $pickleHeader = New-Object byte[] 16
-    if ($fs.Read($pickleHeader, 0, 16) -ne 16) {
-      Fail 'could not read asar pickle header'
-    }
-    # Electron hashes the ASAR JSON header, not the outer pickle-size fields.
-    $headerSize = [BitConverter]::ToUInt32($pickleHeader, 12)
-    if ($headerSize -le 0 -or $headerSize -gt ($fs.Length - 16)) {
-      Fail "invalid asar JSON header size: $headerSize"
-    }
-    $headerBytes = New-Object byte[] $headerSize
-    if ($fs.Read($headerBytes, 0, [int]$headerSize) -ne [int]$headerSize) {
-      Fail 'could not read asar header bytes'
-    }
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    try {
-      return (Convert-BytesToHex $sha.ComputeHash($headerBytes))
-    } finally {
-      $sha.Dispose()
-    }
-  } finally {
-    $fs.Dispose()
-  }
-}
-
-function Update-CodexExeAsarIntegrity {
-  param(
-    [string]$ExePath,
-    [string]$AsarHash
-  )
-  $bytes = [System.IO.File]::ReadAllBytes($ExePath)
-  $text = [System.Text.Encoding]::ASCII.GetString($bytes)
-  $pattern = '\[\{"file":"resources\\\\app\.asar","alg":"SHA256","value":"([0-9a-fA-F]{64})"\}\]'
-  $match = [regex]::Match($text, $pattern)
-  if (-not $match.Success) {
-    if ($text.Contains('app.asar')) {
-      Fail 'could not find Electron ASAR integrity JSON inside Codex.exe'
-    }
-    Write-Log 'Codex.exe ASAR integrity JSON not present; skipping executable integrity update'
-    return
-  }
-  $oldHash = $match.Groups[1].Value
-  if ($oldHash -eq $AsarHash) {
-    Write-Log "Codex.exe asar integrity already current: $AsarHash"
-    return
-  }
-  $oldBytes = [System.Text.Encoding]::ASCII.GetBytes($oldHash)
-  $newBytes = [System.Text.Encoding]::ASCII.GetBytes($AsarHash)
-  $pos = -1
-  for ($i = 0; $i -le $bytes.Length - $oldBytes.Length; $i++) {
-    $ok = $true
-    for ($j = 0; $j -lt $oldBytes.Length; $j++) {
-      if ($bytes[$i + $j] -ne $oldBytes[$j]) {
-        $ok = $false
-        break
-      }
-    }
-    if ($ok) {
-      $pos = $i
-      break
-    }
-  }
-  if ($pos -lt 0) {
-    Fail 'could not locate ASAR integrity hash bytes in Codex.exe'
-  }
-  [Array]::Copy($newBytes, 0, $bytes, $pos, $newBytes.Length)
-  [System.IO.File]::WriteAllBytes($ExePath, $bytes)
-  Write-Log "updated Codex.exe asar integrity: $oldHash -> $AsarHash"
-}
+. (Join-Path $PSScriptRoot 'lib\asar-integrity.ps1')
 
 function Get-ManifestPublisher {
   param([string]$WorkPackageRoot)
@@ -3191,11 +3119,14 @@ try {
 
   $patched = Invoke-PatchAppAsar $workApp $sourceApp $tempWork
   $asar = Join-Path $workApp 'resources\app.asar'
-  $exe = Join-Path $workApp 'Codex.exe'
+  if ($DryRun) {
+    # Surface integrity-host detection during a dry run so an unrecognized table format is
+    # reported before anyone repacks a package that cannot start.
+    Test-AsarIntegrityTargets $workApp | Out-Null
+  }
   if (-not $DryRun) {
-    $asarHash = Get-AsarHeaderSha256 $asar
-    Write-Log "app.asar header sha256: $asarHash"
-    Update-CodexExeAsarIntegrity $exe $asarHash
+    Write-Log "app.asar header sha256: $(Get-AsarHeaderSha256 $asar)"
+    Update-ElectronAsarIntegrity $workApp
 
     $makeappx = Require-WindowsSdkTool 'makeappx.exe'
     $signtool = Require-WindowsSdkTool 'signtool.exe'
