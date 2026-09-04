@@ -3,7 +3,7 @@ param(
   [string]$HelperPath,
   # Profile labels, not raw @oai/sky versions: one sky version can ship more than one
   # helper binary across Desktop builds, so each label pins its own hash pair.
-  [ValidateSet('0.4.20-F2B2F56F', '0.5.2-2C4CAC16', '0.6.6', '0.6.11', '0.6.11-7A95D14E', '0.6.16', '0.6.16-BEB498C2', '0.6.17-29D5E113', '0.6.17-DB8F4486', '0.6.17-4250FF66', '0.6.17-4319D3A2', '0.6.17-D967386B', '0.6.23-8423CA8C', '0.6.24-DE3696C0', '0.6.24-4DB7B670', '0.6.24-9BAB6E1B', '0.6.24-3B60A7E0', '0.6.26-7D9EB53D', '0.6.26-52928CCC')]
+  [ValidateSet('0.4.20-F2B2F56F', '0.5.2-2C4CAC16', '0.6.6', '0.6.11', '0.6.11-7A95D14E', '0.6.16', '0.6.16-BEB498C2', '0.6.17-29D5E113', '0.6.17-DB8F4486', '0.6.17-4250FF66', '0.6.17-4319D3A2', '0.6.17-D967386B', '0.6.23-8423CA8C', '0.6.24-DE3696C0', '0.6.24-4DB7B670', '0.6.24-9BAB6E1B', '0.6.24-3B60A7E0', '0.6.26-7D9EB53D', '0.6.26-52928CCC', '0.6.26-71BAEAFD', '0.6.26-243F203E')]
   [string]$SkyVersion = '0.6.16'
 )
 
@@ -109,6 +109,20 @@ $Profiles = @{
     SkyVersion = '0.6.26-premerge-pr-1403760-d558d5ad5c81'
     OriginalHash = '52928CCCDECCFC245661733E5903335642AEC1726A6DA4B3A8A8E683805A2769'
     PatchedHash = '0680CEBCA4C7EB49783578BAEA42DDD0B620379EC2AAA3A4DEBC8FA21BFB832A'
+  }
+  # Same code as 7D9EB53D and 52928CCC re-signed again, shipped by Desktop 26.901.1978.0.
+  '0.6.26-71BAEAFD' = [ordered]@{
+    SkyVersion = '0.6.26'
+    OriginalHash = '71BAEAFD97639C170BA2954DFBF6677B6C30171E570C8105290265705C86E102'
+    PatchedHash = '06EBD6D68DF7CF3D3DAB02BD8D886D49D9D181949986DDF2F567A947F75C3A13'
+  }
+  # Fourth re-sign of the same code, shipped by Desktop 26.901.2854.0. Only the PE
+  # CheckSum field and the certificate table differ from 71BAEAFD; all 10 section
+  # bodies are byte-identical, so the five patch offsets carry over unchanged.
+  '0.6.26-243F203E' = [ordered]@{
+    SkyVersion = '0.6.26'
+    OriginalHash = '243F203ED85CDA954A12872A0214FF8D43FD09F265AAE172D96AF1A1C1BBFF6B'
+    PatchedHash = 'C62CBDCC42EF6238CD96FD123246D7D820DA2EA341FD63B9F1890B124A530B40'
   }
 }
 $ProfileLabel = $SkyVersion
