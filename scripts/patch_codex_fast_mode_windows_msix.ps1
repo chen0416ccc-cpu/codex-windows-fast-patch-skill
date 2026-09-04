@@ -1218,7 +1218,13 @@ function patchComputerUseAvailability(file) {
     '$1$2={enabled:!0,isLoading:!1},'
   );
 
-  if (after === before && !/featureName:`computer_use`[^;]+;let [A-Za-z_$][\w$]*=\{enabled:!0,isLoading:!1\},/.test(before)) {
+  // The browser-use patch runs first and its inAppConfigV3 replacement already rewrites this
+  // same declaration, appending a /*CODEX_BROWSER_IN_APP_CONFIG_V3*/ marker between the object
+  // literal and the following comma. So on a re-patch of an already-patched package the second
+  // replace above has nothing left to do and the witness must tolerate that marker, otherwise
+  // a correctly patched build is reported as target-not-found.
+  const availabilityPatchedRe = /featureName:`computer_use`[^;]+;let [A-Za-z_$][\w$]*=\{enabled:!0,isLoading:!1\}(?:\/\*[^*]*\*\/)?,/;
+  if (after === before && !availabilityPatchedRe.test(before)) {
     process.stderr.write('computer-use-availability-patch-target-not-found\n');
     process.exit(2);
   }
