@@ -8,7 +8,7 @@
 
 如果你的 Windows Codex Desktop 更新后出现下面这些问题，可以让 agent 使用这个 skill：
 
-- 修复 Fast Mode、gpt-5.6-sol、gpt-5.6-terra、gpt-5.6-luna 模型不显示，蓝紫色 Power 拖动条消失，以及自定义提供商下 Ultra 开关变灰不可点的问题。
+- 修复 Fast Mode、gpt-6-astra、gpt-5.6-sol、gpt-5.6-terra、gpt-5.6-luna 模型不显示，蓝紫色 Power 拖动条消失，以及自定义提供商下 Ultra 开关变灰不可点的问题。补丁只放行当前版本目录里已存在、但被标成隐藏的模型条目，本身不会创建条目；目录里没有的模型，重打多少次都不会出现。
 - 修复 Codex 重启后界面语言又变回英文的问题。
 - 修复插件入口、插件安装按钮、插件市场列表不可用的问题。
 - 修复内置浏览器、浏览器面板、Chrome / browser_use 不可用的问题。
