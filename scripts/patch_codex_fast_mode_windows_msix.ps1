@@ -12,7 +12,7 @@ param(
   [switch]$AddLocalPluginMarketplace,
   [string]$LocalPluginMarketplaceSource = (Join-Path $env:USERPROFILE '.codex\.tmp\plugins'),
   [string]$LocalPluginMarketplaceName = 'openai-curated-local',
-  [string[]]$CustomModels = @('gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'),
+  [string[]]$CustomModels = @('gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'),
   [switch]$VerifyFastModeRequest,
   [switch]$OnlyBundledMarketplaceCopy,
   [Alias('OnlyCustomModels')]
@@ -2392,8 +2392,8 @@ function Invoke-PatchAppAsar {
   Write-Log "fast-mode patch result: $fast"
   $fastUi = Invoke-NodePatcher $nodePath $patchers.FastUi @($targets.FastModeUi)
   Write-Log "fast-mode UI patch result: $fastUi"
-  $customModels = Invoke-NodePatcher $nodePath $patchers.CustomModels (@($targets.CustomModels) + @($CustomModels))
-  Write-Log "custom models patch result: $customModels ($($CustomModels -join ', '))"
+  $customModelsResult = Invoke-NodePatcher $nodePath $patchers.CustomModels (@($targets.CustomModels) + @($CustomModels))
+  Write-Log "custom models patch result: $customModelsResult ($($CustomModels -join ', '))"
   $powerSlider = Invoke-NodePatcher $nodePath $patchers.PowerSlider @($targets.PowerSlider)
   Write-Log "Power slider patch result: $powerSlider"
   $ultraSlider = Invoke-NodePatcher $nodePath $patchers.UltraSlider @($(if ([string]::IsNullOrWhiteSpace($targets.UltraSlider)) { '__none__' } else { [string]$targets.UltraSlider }))
@@ -2442,7 +2442,7 @@ function Invoke-PatchAppAsar {
 
   if ($fast -eq 'already-patched' -and
       $fastUi -eq 'already-patched' -and
-      $customModels -eq 'already-patched' -and
+      $customModelsResult -eq 'already-patched' -and
       $powerSlider -eq 'already-patched' -and
       $ultraSlider -in @('already-patched', 'not-applicable') -and
       $localeI18n -eq 'already-patched' -and
