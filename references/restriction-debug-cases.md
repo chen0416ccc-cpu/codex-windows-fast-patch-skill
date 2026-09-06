@@ -417,6 +417,76 @@ Action:
 
 `install-computer-use-local.ps1` does not automatically rewrite arbitrary `[mcp_servers.*].command` values. Its Chrome and Computer Use inventory supplies the current package-content matching rule, while this targeted MCP procedure adds the final-path containment check. Third-party MCP migration remains a separate configuration repair.
 
+## Custom Provider Gateway Drops Namespace And Tool Search Tools
+
+Symptoms:
+
+- With a custom `model_provider`, the agent reports zero MCP tool names in a new Desktop or `codex exec` conversation and only lists built-in tools such as `exec_command`, `write_stdin`, `list_mcp_resources`, `list_mcp_resource_templates`, `read_mcp_resource`, `request_user_input`, `request_plugin_install`, `view_image`, `get_goal`, `create_goal`, and `update_goal`.
+- `read_mcp_resource` against a configured server fails with `unknown MCP server '<name>'` even though `codex mcp list` shows that server enabled.
+- `RUST_LOG=debug` stderr shows `codex_models_manager::manager: failed to refresh available models: ... failed to decode models response: missing field \`models\` at line ...; body: {"data":[...` followed by `codex_models_manager::model_info: Unknown model <slug> is used. This will use fallback model metadata.`
+- A captured request body proves the tools did leave Codex: the `tools` array contains the MCP servers as `{"type":"namespace","name":...,"tools":[...]}` entries (and with catalog metadata, one `{"type":"tool_search",...}` entry), yet the model still answers `TOOL_SEARCH_ABSENT` when told to call it.
+- Running the same machine, same config, same prompt with `-c model_provider=openai -c model=<catalog-slug>` makes every MCP tool appear (`js`, `js_reset`, `imagegen`, `tool_search_tool`), so nothing is wrong locally.
+- The agent's own tool report is unreliable in both directions: in one session it named a configured server that was not in the captured request, and in another it denied tools that were present, so never use the model's answer as the wire truth.
+
+Checks:
+
+- Attribute the failure layer before any repair: Desktop webview gates, CLI/Rust tool assembly, model catalog metadata, and the provider gateway are four independent layers, and a Desktop-only patch cannot fix any layer below it. The full MSIX repatch and the Computer Use local repair are both out of scope for this state.
+- Dump the real request body instead of trusting the model. Point `model_providers.<id>.base_url` at a local logging reverse proxy that forwards to the gateway, run one `codex exec` turn, and inspect the recorded `tools` array. This is the only evidence source that cannot hallucinate.
+- Read `%USERPROFILE%\.codex\models_cache.json` and decode the upstream `/models` response shape. Codex expects its served catalog shape with a top-level `models` key; a gateway that answers the OpenAI list-models shape (`{"data":[...]}`) fails catalog decoding with `missing field \`models\``, the slug falls back to `model_info_from_slug` metadata with `supports_search_tool: false`, and the failure repeats on every session because the served body never becomes cacheable.
+- Know the two wire shapes and how metadata selects between them. `search_tool_enabled` equals `model_info.supports_search_tool && provider.capabilities().namespace_tools`; with catalog metadata (`supports_search_tool: true`) every MCP namespace collapses into a single `{"type":"tool_search"}` entry plus the search executor, while fallback metadata keeps the `namespace` entries in the array. Both are OpenAI-private extensions of the Responses tool schema; a gateway that forwards only standard `function` entries drops either shape silently with HTTP 200 and no error, so the failure surfaces only as the model not seeing the tools.
+- Distinguish the two sub-modes by the captured body, not by the symptom: fallback metadata sends one or more `namespace` entries, catalog metadata sends one `tool_search` entry. If the captured body contains `tool_search` and the model still cannot call it, the gateway drops that shape too and no metadata repair can help.
+- Keep this separate from the Missing inputSchema Desktop thread-start failure, from account-gated bundled descriptor gaps, and from the surface lock below. Here the Desktop UI works, plugins are installed, and the pipe exists; only the wire payload is being filtered.
+
+Action:
+
+- Prefer a provider or gateway that forwards the full Responses tool set. Verify with one captured request plus one model reply that names and calls a real MCP tool; do not accept a gateway on a single UI-level success.
+- `model_catalog_json` repairs only the metadata layer and only helps a gateway that forwards `tool_search`. The file must parse as the served catalog shape: top-level `{"models":[...]}`, flat `truncation_policy` objects (`{"mode":"bytes","limit":10000}`, not nested), and every entry needs `base_instructions` or `model_messages.instructions_template`, otherwise config load fails with `missing field \`mode\`` or ``model `<slug>` is missing both `base_instructions` and `model_messages.instructions_template``. A working entry also restores correct context window, reasoning levels, and removes the fallback-metadata warning.
+- Do not run the MSIX repatch, disable MCP servers, or repair the plugin cache for this state, and do not report the skill as broken: the captured body is the proof that Codex emitted the tools correctly and something between Codex and the model removed them.
+
+## Desktop Plugin Sync Pins CUA_REPL_ENABLED_SURFACES To Browser
+
+Symptoms:
+
+- `cua.getState()` succeeds and enumerates the Codex in-app browser, but every native-app call fails at the language level: `cua.getApp is not a function`, `cua.listApps is not a function`.
+- `Object.keys(cua)` lists only browser members (`initialize, getState, browsers, getBrowser, createBrowserTab, getTab, listBrowsers, listTabs`) with no `computer`, `getApp`, or `listApps`, so the conversation concludes that native app control is unavailable on Windows.
+- `scripts\install-computer-use-local.ps1 -StrictVerifyOnly` passes, the `codex-computer-use-*` named pipe exists, and the Desktop settings gates are open.
+
+Checks:
+
+- Read the effective plugin cache file at `plugins\cache\openai-bundled\unified-computer-use\<version>\.mcp.json` under the Codex home. `scripts\launch.mjs` defaults `CUA_REPL_ENABLED_SURFACES` to `browser,computer`, but the materialized cache carries the Desktop-written value `browser`, and the cua_repl server builds its whole API surface from that variable before the first call.
+- Confirm the pipe first (`\\.\pipe\codex-computer-use-*`). A live pipe plus object-level missing methods points at the surface lock; a missing pipe still belongs to the gate/transport workflows.
+- Distinguish this from the Windows 10 `0x80004002` screenshot backend, the cross-call `node_repl exec context not found` case, and the surface-independent observation that a real Chrome tab captures fine while an in-app-browser tab can hang `getAXState`/`getScreenshot` until the js timeout. That in-app-browser channel is a separate Desktop-frontend behaviour: fall back to driving Chrome for browser-side captures and do not fold it into this repair.
+- Do not read `computer-use@openai-bundled` (skill and docs plugin) as the surface owner; the unified-computer-use plugin contributes the cua_repl server whose env decides the surface set.
+
+Action:
+
+- Back up the cache `.mcp.json`, then change `"CUA_REPL_ENABLED_SURFACES": "browser"` to `"browser,computer"` in the `cua_repl` `env` table.
+- Start a fresh conversation afterwards so a new cua_repl server process reads the new environment; an existing conversation keeps its old server process and will still miss the methods.
+- Require all three verification signals: `Object.keys(cua)` now contains `computer`, `getApp`, and `listApps`; `getState()` lists real running applications; and one native window binding plus capture succeeds against a controlled window.
+- Expect Desktop upgrades and plugin re-syncs to re-materialize this file. Re-check the value after every Desktop update before escalating to heavier workflows, and re-apply after any plugin cache refresh that restores the file from the marketplace copy.
+
+## Third-Party Config Rewriter Removes Computer Use Features And Plugin Sections
+
+Symptoms:
+
+- Right after an external config-rewriting tool (for example a provider switcher such as CC Switch) rewrote `config.toml` to point at a new model provider, Computer Use stops working in new Desktop conversations.
+- `codex mcp list` no longer lists `cua_repl` at all, although `computer-use@openai-bundled` still shows as enabled and the plugin caches, marketplaces, and patched files are untouched.
+- `-StrictVerifyOnly` keeps passing because the plugin files it verifies are all present; only the config-driven contributions are gone.
+
+Checks:
+
+- Diff `config.toml` against the most recent backup under `.codex\backups\config\`. The rewriter rebuilt the file from its own template and dropped whole tables rather than individual keys. The observed minimum loss is `[plugins."unified-computer-use@openai-bundled"]` and `[plugins."deep-research@openai-bundled"]` (both with `enabled = true`), plus `computer_use`, `js_repl`, and `non_prefixed_mcp_tool_names` inside `[features]`.
+- Attribute the missing server to the plugin contribution layer: the `unified-computer-use` plugin is what contributes the `cua_repl` MCP server; the `computer-use@openai-bundled` plugin only ships the skill and docs. Seeing the visible plugin as enabled proves nothing about the contributor.
+- Do not re-run the MSIX repatch or the plugin cache repair for this state. Those workflows preserve or re-materialize the same rewritten config, so the dropped sections stay dropped and the failure survives every repair.
+- Keep this separate from the surface lock case: here the server itself is gone from `codex mcp list`, while the surface lock leaves the server present with a reduced API surface.
+
+Action:
+
+- Restore only the dropped tables from the backup by editing the live file: append the missing `[plugins."..."]` tables with `enabled = true` and re-add the three `[features]` keys. Do not copy the whole backup over the live file, because the rewriter also wrote the new provider settings you want to keep.
+- Require `codex mcp list` to show `cua_repl` again before any Desktop-side test, then run one fresh conversation.
+- Re-apply the surface value check from the CUA surface lock case afterwards, because the same rewrite window may also have re-materialized the plugin cache with `browser`.
+- After any provider switch performed by such a tool, treat a three-point diff of `config.toml` against the pre-switch backup as routine: the `[features]` keys, the plugin contribution tables, and the materialized surface value.
+
 ## Computer Use Screenshot Fails With 0x80004002 On Windows 10
 
 Symptoms:
