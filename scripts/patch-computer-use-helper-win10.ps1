@@ -1270,6 +1270,91 @@ $PatchProfiles = @(
         PatchedHex = '7873124001000000'
       }
     )
+  },
+  # Desktop 26.917.9434.0 re-signs the D09A2F3F code again: all ten section headers and
+  # raw section bodies are byte-identical; only the PE CheckSum (2 bytes) and 4,232
+  # certificate-overlay bytes differ, so the five guarded regions carry over unchanged.
+  [ordered]@{
+    Name = '@oai/sky 0.7.1 helper 9493AF2C / Windows 10 screenshot backend'
+    # Exact hashes and guarded regions are checked; Windows 10 capture acceptance is pending.
+    ValidatedDesktopVersion = $null
+    SkyVersion = '0.7.1'
+    OriginalSha256 = '9493AF2CEBD3C11E2E38CE692F6CCD8E00F4320BDBBCF14F242D036A9736635F'
+    PatchedSha256 = 'AA7DA8D22911398790EED442A22F7D747339FF89E2DD4DB49931A611E6EEDB79'
+    Regions = @(
+      [ordered]@{
+        Name = 'optional-border-interface'
+        Offset = 0x3d82d
+        OriginalHex = '4889c64189d6eb4c'
+        PatchedHex = 'e96f000000909090'
+      },
+      [ordered]@{
+        Name = 'frame-arrived-busy-return'
+        Offset = 0x41451
+        OriginalHex = '0f855b310000'
+        PatchedHex = '0f853d310000'
+      },
+      [ordered]@{
+        Name = 'frame-arrived-once-flag'
+        Offset = 0x41462
+        OriginalHex = '740d'
+        PatchedHex = 'eb0d'
+      },
+      [ordered]@{
+        Name = 'mta-worker-wrapper'
+        Offset = 0x126778
+        OriginalHex = (('00' * 132) -join '')
+        PatchedHex = '536a006a004883ec20515b488b5108f00fba6a10087227488b01ff500831c931d24c8d05350000004989d9ff156ffc04004885c074104891ff1522fc040031c04883c4305bc3488b4308c64011005359488b01ff5010b805400080ebe3534883ec30515b6a0159ff154bfb04005359e830acf1ffff1546fb04005359488b01ff5010ebba'
+      },
+      [ordered]@{
+        Name = 'frame-arrived-vtable'
+        Offset = 0x12c4c8
+        OriginalHex = '1c20044001000000'
+        PatchedHex = '7873124001000000'
+      }
+    )
+  },
+  # Desktop 26.917.8451.0 ships another re-sign of the same code: section headers and bodies
+  # match D09A2F3F byte for byte; only the PE CheckSum and 5,371 certificate-overlay bytes differ.
+  [ordered]@{
+    Name = '@oai/sky 0.7.1 helper 2AA2A7A9 / Windows 10 screenshot backend'
+    # Exact hashes and guarded regions are checked; Windows 10 capture acceptance is pending.
+    ValidatedDesktopVersion = $null
+    SkyVersion = '0.7.1'
+    OriginalSha256 = '2AA2A7A93F5CF48399987CA0959DE5588293E6C7F04B68860812FA3D5412598C'
+    PatchedSha256 = 'D958F97F3B0D694A8472E17DE64113831A72E8F6B7D031D405A45F39949B3999'
+    Regions = @(
+      [ordered]@{
+        Name = 'optional-border-interface'
+        Offset = 0x3d82d
+        OriginalHex = '4889c64189d6eb4c'
+        PatchedHex = 'e96f000000909090'
+      },
+      [ordered]@{
+        Name = 'frame-arrived-busy-return'
+        Offset = 0x41451
+        OriginalHex = '0f855b310000'
+        PatchedHex = '0f853d310000'
+      },
+      [ordered]@{
+        Name = 'frame-arrived-once-flag'
+        Offset = 0x41462
+        OriginalHex = '740d'
+        PatchedHex = 'eb0d'
+      },
+      [ordered]@{
+        Name = 'mta-worker-wrapper'
+        Offset = 0x126778
+        OriginalHex = (('00' * 132) -join '')
+        PatchedHex = '536a006a004883ec20515b488b5108f00fba6a10087227488b01ff500831c931d24c8d05350000004989d9ff156ffc04004885c074104891ff1522fc040031c04883c4305bc3488b4308c64011005359488b01ff5010b805400080ebe3534883ec30515b6a0159ff154bfb04005359e830acf1ffff1546fb04005359488b01ff5010ebba'
+      },
+      [ordered]@{
+        Name = 'frame-arrived-vtable'
+        Offset = 0x12c4c8
+        OriginalHex = '1c20044001000000'
+        PatchedHex = '7873124001000000'
+      }
+    )
   }
 )
 
