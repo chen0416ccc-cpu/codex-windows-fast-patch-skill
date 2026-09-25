@@ -38,6 +38,7 @@
 - `scripts/repatch-codex-windows.ps1`：主工作流参考脚本。
 - `-PatchWindows10ScreenshotHelper`：主工作流和全量 MSIX 补丁脚本的显式选项，仅在 Windows 10 复现 `SetIsBorderRequired / 0x80004002` 后使用，按完整哈希修补暂存 helper。默认全量修复保留 helper 原样，定向模式不接受此选项。
 - `scripts/patch_codex_fast_mode_windows_msix.ps1`：Fast Mode、插件、浏览器、Computer Use 等 MSIX / ASAR 补丁参考实现。
+- `scripts/lib/msix-payload.ps1`：主安装器停止 Desktop 前逐块核对 MSIX 内容，再就地升级；部署失败保留原包注册。
 - `scripts/patch_codex_fast_mode_windows_msix.ps1 -OnlyComputerUseSurface`：针对已支持的 Desktop 主 ASAR 中 Windows CUA surface 的 Darwin-only 门控，要求候选文件唯一、补丁块完整且唯一，保留 Darwin 行为和 Windows 功能开关，跳过无关 Chrome 修改，并执行 `node --check`；未知、残缺或重复布局直接失败。不能与其他 targeted 模式、marketplace 注册或 Fast Mode 验证混用。
 - `scripts/test-computer-use-surface-patterns.ps1`：Windows CUA surface ASAR patcher 的隔离回归测试，覆盖新旧版本就绪条件、压缩函数改名、旧补丁迁移、幂等、残缺或重复补丁拒绝、候选文件歧义、模式隔离和 ASAR 执行器回退；不代替真实 Desktop 审批及截图验收。
 - `scripts/patch-dynamic-tools-windows-msix.ps1`：用于修复 Desktop `dynamicTools` schema 漂移导致新建对话 / thread start 报 `missing field inputSchema` 的 targeted MSIX / ASAR 脚本。

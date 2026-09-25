@@ -2660,6 +2660,7 @@ function Invoke-PatchAppAsar {
 }
 
 . (Join-Path $PSScriptRoot 'lib\asar-integrity.ps1')
+. (Join-Path $PSScriptRoot 'lib\msix-payload.ps1')
 
 function Get-ManifestPublisher {
   param([string]$WorkPackageRoot)
@@ -2787,19 +2788,18 @@ function Install-PatchedPackage {
     [string]$MsixPath,
     [string]$PackageFamilyName
   )
+  # Authenticode validates the signed block map; it does not prove the ZIP payload
+  # matches that map. Reject a damaged package before interrupting a working app.
+  $payload = Test-MsixPayload -Path $MsixPath
+  Write-Log "MSIX payload verified: files=$($payload.Files) blocks=$($payload.Blocks)"
   $existing = Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction SilentlyContinue | Select-Object -First 1
   if ($existing) {
     Stop-CodexDesktopProcesses $existing.InstallLocation
-    Write-Log "removing existing package: $($existing.PackageFullName)"
-    try {
-      Remove-AppxPackage -Package $existing.PackageFullName -PreserveApplicationData -ErrorAction Stop
-    } catch {
-      Write-Log 'PreserveApplicationData is not supported here; retrying normal Remove-AppxPackage'
-      Remove-AppxPackage -Package $existing.PackageFullName -ErrorAction Stop
-    }
   }
-  Write-Log "installing patched MSIX: $MsixPath"
-  Add-AppxPackage -Path $MsixPath -ErrorAction Stop
+  # Add-AppxPackage upgrades transactionally. Never remove the working package as
+  # an automatic fallback: a deployment failure must leave it registered.
+  Write-Log "installing patched MSIX in place: $MsixPath"
+  Add-AppxPackage -Path $MsixPath -ForceUpdateFromAnyVersion -ErrorAction Stop
   $installed = Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction Stop | Select-Object -First 1
   Write-Log "installed package: $($installed.PackageFullName)"
   if ($Launch -and -not $NoLaunch) {

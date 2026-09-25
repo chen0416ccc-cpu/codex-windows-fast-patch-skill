@@ -375,7 +375,7 @@ Success criteria:
 
 ## Important Guardrails
 
-- The full MSIX install path removes the existing `OpenAI.Codex` package and installs a patched package. If run from inside Codex Desktop, the app can disappear or exit while the script continues. Use that path only when package-gated Desktop code must be patched; for local Chrome/Computer Use marketplace/cache/native-host/runtime failures, use the Computer Use Only workflow instead.
+- The main full-repair installer validates every uncompressed MSIX payload block before stopping Desktop, then uses `Add-AppxPackage -ForceUpdateFromAnyVersion` in place. A failed deployment leaves the existing package registered; do not add an automatic uninstall fallback. A valid Authenticode signature alone does not prove payload/block-map consistency. Use this path only for package-gated Desktop code; local Chrome/Computer Use failures use the Computer Use Only workflow.
 - The full wrapper verifies that the final package still matches the package version it patched and has `SignatureKind = Developer`. If Store replaces the package during repair, it retries once against the current package instead of reporting a false success; a second replacement fails with an actionable error.
 - Do not modify `C:\Program Files\WindowsApps` in place. Use the MSIX repack script.
 - Do not solve a Windows 10 `SetIsBorderRequired` / `0x80004002` screenshot failure by restoring an older Codex Desktop package or copying a helper from another runtime. Each bundled helper patch profile is limited to its documented exact input/output hash pair, backs up the original, and refuses unknown binaries.
