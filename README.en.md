@@ -12,6 +12,7 @@ Use this skill when Windows Codex Desktop updates cause issues like these:
 - Repair the UI language resetting to English after restart.
 - Repair plugin entries, plugin install buttons, and plugin marketplace lists.
 - Repair the in-app browser, browser pane, Chrome, or browser_use when they are unavailable.
+- Repair `Codex auth token is unavailable` from Chrome session/tab commands or the browser portion of `cua.getState()` with a custom provider explicitly using `requires_openai_auth=false`. The exact-hash service overlay keeps agent request headers enabled without requiring an additional ChatGPT login.
 - Repair Computer Use / computer control / Any App when it is unavailable.
 - Repair Computer Use when window enumeration succeeds but a later independent call fails because the persistent helper's app-approval callback loses the `node_repl` execution context; apply the patch only to the exact documented `@oai/sky` source hash.
 - Repair the exact supported Windows 10 CUA helper when screenshots fail because `SetIsBorderRequired` returns `0x80004002`, followed by a `FrameArrived` synchronous-wait deadlock after the optional interface is skipped.
@@ -20,6 +21,7 @@ Use this skill when Windows Codex Desktop updates cause issues like these:
 - Restore local conversations in the official sidebar after switching `model_provider` / API config when the local history data still exists; if a restored conversation is visible but cannot continue because its working directory is missing, recreate the missing empty directory from the rollout `cwd`.
 - Repair broken local plugin marketplace config or `codex plugin list` errors.
 - Optionally back up and restore local Codex config, skills, marketplaces, and related state.
+- Deploy MSIX repairs as higher-version in-place updates after checking signature, identity, architecture, administrator requirements, and executor ancestry, without uninstalling the working Codex first.
 - Automatically update this skill to the latest version before each repair attempt.
 
 ## Platform Support
@@ -37,7 +39,7 @@ Do not run it on macOS. A macOS version needs a separate workflow for the Codex 
 - `scripts/repatch-codex-windows.ps1`: Workflow reference script.
 - `-PatchWindows10ScreenshotHelper` on the wrapper or full MSIX patcher: opt in to the hash-guarded staged helper repair after reproducing `SetIsBorderRequired / 0x80004002` on Windows 10. Without this flag, full repairs leave the native helper unchanged; targeted modes reject it.
 - `scripts/patch_codex_fast_mode_windows_msix.ps1`: MSIX / ASAR patch reference implementation.
-- `scripts/lib/msix-payload.ps1`: validates all uncompressed MSIX blocks before the main installer stops Desktop. Installation updates the package in place and preserves registration on deployment failure.
+- `scripts/lib/msix-payload.ps1`: validates all uncompressed MSIX blocks before the main installer calls the shared guarded installer (`scripts/lib/msix-safe-install.ps1`), so a damaged package is rejected before the working app is shut down or replaced. A failed deployment preserves the existing registration.
 - `scripts/patch_codex_fast_mode_windows_msix.ps1 -OnlyComputerUseSurface`: targeted repair for the supported Desktop main-ASAR Darwin-only Computer Use surface gate on Windows. It requires one content-matched bundle and complete unique patch blocks, preserves Darwin behavior and Windows feature flags, skips unrelated Chrome changes, and runs `node --check`; unknown, partial, or duplicate layouts fail closed. Do not combine it with other targeted modes, marketplace registration, or Fast Mode verification.
 - `scripts/test-computer-use-surface-patterns.ps1`: isolated regression coverage for legacy and modern Windows CUA readiness, renamed capability helpers, migration of earlier patches, idempotency, partial/duplicate rejection, target ambiguity, mode isolation, and ASAR runner fallback. These checks do not replace real Desktop approval and screenshot acceptance.
 - `scripts/patch-dynamic-tools-windows-msix.ps1`: Targeted MSIX / ASAR repair for Desktop `dynamicTools` schema drift that causes `missing field inputSchema` on new chat/thread start.
@@ -46,6 +48,7 @@ Do not run it on macOS. A macOS version needs a separate workflow for the Codex 
 - `scripts/patch-remote-control-asar.cjs`: Phone remote-control Electron bundle patcher used by the MSIX script.
 - `scripts/build-remote-control-native-replacement.ps1`: Builds the patched native `app\resources\codex.exe` replacement under a caller-selected work root when the native app-server rejects API-key main auth. By default it detects the installed native version from a copied executable; bundled mappings cover `0.145.0-alpha.18`, exact-tag built, installed, and phone end-to-end validated with Desktop `26.715.2305.0`; `0.144.0-alpha.4`, equivalently validated with Desktop `26.707.3748.0`; and historical patch-apply-only validated `0.142.4`. Any other version requires an exact `-CodexSourceRef` / `-AppServerVersion` pair plus a validated `-PatchPathOverride`.
 - `scripts/install-computer-use-local.ps1`: Windows Computer Use and Chrome local-runtime repair reference implementation. It supports both the legacy `latest` plus plugin-local `node_modules` layout and the current versioned cache plus independent `%LOCALAPPDATA%` `cua_node` runtime, and synchronizes the outer Chrome native-host manifest, `extension-host-config.json`, and both schema-2 app-server state files.
+- `scripts/patch-chrome-custom-provider-headers.cjs`: Exact-hash Chrome custom-provider request-header compatibility overlay, reapplied and strictly verified by the local repair script without changing `browser-client.mjs`, login, or provider configuration.
 - `scripts/patch-computer-use-node-repl-context.ps1`: Exact-hash read-only classification, installation, full-hash verification, and rollback for the supported `@oai/sky 0.6.2` helper-transport cross-call app-approval context fix.
 - `scripts/patch-computer-use-helper-win10.ps1`: Read-only classification, exact-hash installation, and rollback for the supported `@oai/sky 0.4.20`, `0.5.2`, `0.6.6`, `0.6.11`, `0.6.16`, and `0.6.17` helper hashes; `26.707.12708.0`, `26.721.4979.0`, `26.803.10989.0`, `26.810.6296.0`, `26.810.7004.0`, `26.814.5167.0`, `26.814.5517.0`, `26.818.2872.0`, and `26.818.3698.0` are their end-to-end validation baselines, not version gates. `0.6.16` and `0.6.17` share one guarded-code layout but each ships a distinct whole-file hash, so profiles are selected by the complete hash and never by a version prefix. The latest `0.6.17` baseline includes eight unique static frames, twenty unique dynamic frames, and post-warm-up resource-stability checks.
 - `scripts/repair-cua-surface-lock.ps1`: Repairs two independent deviations in the Windows `unified-computer-use` plugin cache. First, the surface list in `scripts\launch.mjs` that the Desktop reconcile rewrites to `browser` on every start, so editing the materialized `.mcp.json` never holds. Second, the injected `resources\computer-description.md`, which only teaches the macOS `cua.getApp` entry point that always rejects with `Native app bindings are unavailable for windows.`; the working native entry point on Windows is the window-based `cua.computer.*` API. Each profile is reported independently, target line endings are preserved, every edited file is backed up, and `-VerifyOnly` (gate), `-Json` (report), and `-Rollback` are supported.
@@ -57,6 +60,7 @@ Do not run it on macOS. A macOS version needs a separate workflow for the Codex 
 - `scripts/manage-codex-backups.ps1`: Backup manager for local Codex config, MCP, skills, and marketplaces.
 - `scripts/lib/asar-integrity.ps1`: Shared Electron ASAR integrity-table library used by all three MSIX patchers. It finds the launcher by content instead of by name (`Codex.exe` before 26.9xx, `ChatGPT.exe` after), rewrites the embedded hash after `asar pack`, and re-reads the executable to assert the result. An executable that references `app.asar` but exposes no parsable table is a hard failure, so a package that cannot start is never shipped.
 - `scripts/lib/appx-launch.ps1`: Shared AppUserModelId launch helper for an installed package. Never start an executable inside the install directory: on 26.9xx `app\Codex.exe` is only a CLI shim and launching it produces no desktop window.
+- `scripts/lib/msix-safe-install.ps1`: Shared guarded in-place deployment for all three MSIX entrypoints, plus a prepared-recovery transaction for external executors. `scripts/test-msix-safe-install.ps1` uses isolated fixtures and does not perform a real installation.
 - `scripts/test-asar-integrity.ps1`: Regression suite for `lib/asar-integrity.ps1`, entirely on synthetic fixtures. It covers launcher discovery by content, the header-hash algorithm, tamper detection, repair, idempotence, multi-archive tables, read-only launchers, and the loud-failure path. `-CheckInstalledPackage` adds a read-only self-consistency check of the installed package.
 - `scripts/test-staged-package-selection.ps1`: Regression suite for package selection after a Store update.
 - `assets/system-prompt.md`: Bundled prompt asset used only when optional model instructions setup is requested.
@@ -97,7 +101,7 @@ The scripts are reference implementations and operational templates, not a one-c
 
 ## Which Runner To Use
 
-Some repairs reinstall Codex Desktop. During reinstall, the current Codex Desktop process is closed. Do not ask the same Codex Desktop session to reinstall itself unless you are fine with the session being interrupted.
+Some repairs update Codex Desktop in place and close the current application during deployment. Use an external executor that survives Desktop shutdown, not the current task. A hidden `Start-Process` child can still belong to the same process tree.
 
 The current Codex Desktop session can usually repair these without another agent:
 
@@ -105,6 +109,7 @@ The current Codex Desktop session can usually repair these without another agent
 - Computer Use `list_windows` succeeds but the next `get_window_state` or `activate_window` reports `node_repl exec context not found`; classify the exact source hash first and stop on unknown hashes.
 - Computer Use can enumerate windows but Windows 10 screenshots fail with `SetIsBorderRequired ... 0x80004002`; run the helper patcher only for its exact supported hash and stop on unknown hashes.
 - Chrome / browser_use helper paths, plugin cache, or native-host files are broken.
+- Chrome reports `Codex auth token is unavailable` with a custom provider and an exact supported request-header service profile. This repair targets local service caches, not Desktop reinstallation.
 - Plugin marketplace config is broken, or `codex plugin list` fails because of marketplace manifests.
 - A local marketplace is missing `.agents\plugins\marketplace.json`.
 - Old local conversations disappear after switching `model_provider` / API config, but `sessions`, `archived_sessions`, or `state_5.sqlite` still contain the data. Use provider history sync first; this does not require an MSIX reinstall.
@@ -124,9 +129,21 @@ Use another agent, external PowerShell, the Codex extension inside VS Code/Antig
 
 Simple rule: if the repair stops, uninstalls, reinstalls, or relaunches Codex Desktop, run it from another agent or external PowerShell. If it only changes local config, plugin cache, marketplace files, backups, or verification, the current Codex Desktop session can usually handle it.
 
+## Chrome Custom-Provider Compatibility
+
+The fallback applies only when the original request-header policy raises the exact missing-token error, the current provider explicitly does not require OpenAI authentication, and the target is Chrome with a boolean request-header capability. It keeps `agent_request_header_enabled=true`. Normal policy results, other errors, and permission checks remain unchanged. It does not borrow phone OAuth or modify the trusted client or native binaries.
+
+Supported service profiles are `26.917.71314`, `26.908.40834`, and `26.908.70816`, selected by complete SHA-256 rather than version prefix. The first passed real Windows navigation, input, click, and server-observed `x-browser-agent` acceptance without an additional login. The two `26.908` profiles have offline guard/behavior regression coverage only; the older Desktop was not reinstalled for live acceptance.
+
+Start with `install-computer-use-local.ps1 -StrictVerifyOnly`. After confirming this failure and a supported profile, use `-VerifyOnly` for local cache repair, reset only the current JavaScript kernel, and retest real browser operations. Unknown official source versions explicitly skip this overlay without blocking other base repairs or claiming auth repair success. Corrupt, partial, or mixed-version caches under a supported source still fail. See the Chrome request-header case in `references/restriction-debug-cases.md` for exact hashes and isolated test commands.
+
 ## Using The VS Code Codex Extension As An External Executor
 
 On Windows, if a repair will stop, uninstall, reinstall, repackage the MSIX, replace `app.asar`, replace `resources\codex.exe`, or restart Codex Desktop, run it from the VS Code Codex extension, external PowerShell, or another agent environment that will not be interrupted by the Desktop restart.
+
+All three MSIX patchers now increment the package version and update in place with `Add-AppxPackage -ForceApplicationShutdown`; never retry a failed update by using `Remove-AppxPackage`. Packages declaring `windows.service`, `packagedServices`, or `localSystemServices` require normal UAC consent and an elevated executor before deployment. A valid signature does not establish deployment permission. Permission, equal-version, or identity preflight failures leave the working application running and registered.
+
+Separately prepare a validly signed recovery MSIX containing the original program files at a higher revision than the update, and retain it until real launch/runtime acceptance passes. The ordinary entrypoints do not generate that package automatically. `Invoke-RecoverableMsixInstall` accepts a prepared recovery and real launch-validation callback from an external executor and can perform one in-place recovery after startup failure. Passing fixture tests is not evidence of a real recovery.
 
 The target is always the Codex Desktop state directory: by default `$env:USERPROFILE\.codex`. Do not treat an isolated CLI wrapper as the Desktop execution environment. If a wrapper sets `CODEX_HOME` to `$env:USERPROFILE\.codex-cli` or another isolated directory, that is CLI state, not Desktop plugin, marketplace, MCP, remote-control, or login state.
 

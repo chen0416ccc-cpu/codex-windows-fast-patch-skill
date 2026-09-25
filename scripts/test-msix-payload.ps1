@@ -60,23 +60,25 @@ try {
   . ([scriptblock]::Create($fn.Extent.Text))
   $Launch = $false; $NoLaunch = $true
   function Write-Log([string]$Message) {}
-  function Get-AppxPackage { [pscustomobject]@{ InstallLocation = $root; PackageFullName = 'test-existing-package' } }
-  function Stop-CodexDesktopProcesses { $script:stops++ }
+  function Stop-CodexDesktopProcesses { throw 'unexpected process stop' }
   function Remove-AppxPackage { throw 'unexpected package removal' }
-  function Add-AppxPackage { param($Path, [switch]$ForceUpdateFromAnyVersion, $ErrorAction)
-    $script:adds++
-    if (-not $ForceUpdateFromAnyVersion) { throw 'in-place update flag missing' }
+  function Add-AppxPackage { throw 'deployment must use shared guarded installer' }
+  function Invoke-TransactionalMsixInstall {
+    param($MsixPath, $PackageName)
+    $script:deployments++
+    if ($PackageName -ne 'test') { throw 'package identity was not forwarded' }
     if ($script:deploymentFails) { throw 'test deployment failed' }
+    [pscustomobject]@{ PackageFullName = 'test-updated-package' }
   }
-  $script:stops = 0; $script:adds = 0
+  $script:deployments = 0
   Assert-Fails { Install-PatchedPackage $bad 'test' } '*block hash mismatch*'
-  if ($script:stops -ne 0 -or $script:adds -ne 0) { throw 'corrupt package interrupted existing app' }
+  if ($script:deployments -ne 0) { throw 'corrupt package reached deployment' }
   $script:deploymentFails = $true
   Assert-Fails { Install-PatchedPackage $valid 'test' } 'test deployment failed'
-  if ($script:stops -ne 1 -or $script:adds -ne 1) { throw 'deployment failure path differs' }
+  if ($script:deployments -ne 1) { throw 'deployment failure path differs' }
   $script:deploymentFails = $false
   Install-PatchedPackage $valid 'test'
-  if ($script:stops -ne 2 -or $script:adds -ne 2) { throw 'valid in-place deployment was not attempted' }
+  if ($script:deployments -ne 2) { throw 'valid package did not reach guarded deployment' }
   Write-Output 'MSIX_PAYLOAD_TESTS_PASSED cases=8'
 } finally {
   if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }

@@ -24,6 +24,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib\windows-cua-runtime.ps1')
+. (Join-Path $PSScriptRoot 'lib\msix-safe-install.ps1')
 $LogPrefix = '[codex-msix-patch-win]'
 $OutputRootWasExplicit = $PSBoundParameters.ContainsKey('OutputRoot')
 $WindowsSdkBuildToolsPackageId = 'microsoft.windows.sdk.buildtools'
@@ -2792,15 +2793,7 @@ function Install-PatchedPackage {
   # matches that map. Reject a damaged package before interrupting a working app.
   $payload = Test-MsixPayload -Path $MsixPath
   Write-Log "MSIX payload verified: files=$($payload.Files) blocks=$($payload.Blocks)"
-  $existing = Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction SilentlyContinue | Select-Object -First 1
-  if ($existing) {
-    Stop-CodexDesktopProcesses $existing.InstallLocation
-  }
-  # Add-AppxPackage upgrades transactionally. Never remove the working package as
-  # an automatic fallback: a deployment failure must leave it registered.
-  Write-Log "installing patched MSIX in place: $MsixPath"
-  Add-AppxPackage -Path $MsixPath -ForceUpdateFromAnyVersion -ErrorAction Stop
-  $installed = Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction Stop | Select-Object -First 1
+  $installed = Invoke-TransactionalMsixInstall -MsixPath $MsixPath -PackageName $PackageFamilyName
   Write-Log "installed package: $($installed.PackageFullName)"
   if ($Launch -and -not $NoLaunch) {
     $application = @(Get-AppxPackageManifest -Package $installed).Package.Applications.Application | Select-Object -First 1
@@ -3363,6 +3356,8 @@ try {
     $publisher = Get-ManifestPublisher $workPackageRoot
     $cert = Get-OrCreateSigningCertificate $publisher
     Trust-SigningCertificate $cert
+    $updateVersion = Set-MsixUpdateVersion -ManifestPath (Join-Path $workPackageRoot 'AppxManifest.xml')
+    Write-Log "transactional update package version: $updateVersion"
     Invoke-MakeAppxPack $makeappx $workPackageRoot $msixPath
     Invoke-SignPackage $signtool $msixPath $cert
     Write-Log "patched MSIX: $msixPath"

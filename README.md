@@ -12,6 +12,7 @@
 - 修复 Codex 重启后界面语言又变回英文的问题。
 - 修复插件入口、插件安装按钮、插件市场列表不可用的问题。
 - 修复内置浏览器、浏览器面板、Chrome / browser_use 不可用的问题。
+- 修复明确配置 `requires_openai_auth=false` 的自定义供应商下，Chrome 会话/标签页命令或 `cua.getState()` 的浏览器部分报 `Codex auth token is unavailable` 的问题；保持代理请求头开启，不要求额外登录 ChatGPT，仅支持精确服务哈希。
 - 修复 Computer Use / 电脑操控 / Any App 不可用的问题。
 - 修复 Computer Use 能列出窗口、但后续独立调用因持久 helper 的应用审批回调丢失 `node_repl` 执行上下文而报错的问题；只对文档列出的精确 `@oai/sky` 源文件哈希应用补丁。
 - 修复特定 Win10 CUA helper 在截图时因 `SetIsBorderRequired` 返回 `0x80004002`，以及绕过后 `FrameArrived` 同步等待死锁的问题；仅支持文档列出的精确 helper 哈希。
@@ -20,6 +21,7 @@
 - 修复切换 `model_provider` / API 配置后，旧会话仍在本地但官方侧边栏不显示的问题；如果恢复后的会话能显示但继续时报“当前工作目录缺失”，可按 rollout 原始 `cwd` 创建缺失空目录。
 - 修复本地插件市场配置损坏、`codex plugin list` 报错的问题。
 - 可选备份和恢复本机 Codex 配置、技能、插件市场等关键状态。
+- MSIX 修复采用递增版本的原位更新，先检查签名、身份、架构、管理员要求和外部执行器，不再先卸载工作中的 Codex。
 - 支持每次开始修复前自动将skills更新到最新版本
 - 破限只需：帮我配置破限相关文件和config.toml中的相关配置
 
@@ -38,7 +40,7 @@
 - `scripts/repatch-codex-windows.ps1`：主工作流参考脚本。
 - `-PatchWindows10ScreenshotHelper`：主工作流和全量 MSIX 补丁脚本的显式选项，仅在 Windows 10 复现 `SetIsBorderRequired / 0x80004002` 后使用，按完整哈希修补暂存 helper。默认全量修复保留 helper 原样，定向模式不接受此选项。
 - `scripts/patch_codex_fast_mode_windows_msix.ps1`：Fast Mode、插件、浏览器、Computer Use 等 MSIX / ASAR 补丁参考实现。
-- `scripts/lib/msix-payload.ps1`：主安装器停止 Desktop 前逐块核对 MSIX 内容，再就地升级；部署失败保留原包注册。
+- `scripts/lib/msix-payload.ps1`：主安装器在调用共享受保护安装器（`scripts/lib/msix-safe-install.ps1`）之前逐块核对 MSIX 内容，坏包在关闭或替换现有应用前被拒绝；部署失败保留原包注册。
 - `scripts/patch_codex_fast_mode_windows_msix.ps1 -OnlyComputerUseSurface`：针对已支持的 Desktop 主 ASAR 中 Windows CUA surface 的 Darwin-only 门控，要求候选文件唯一、补丁块完整且唯一，保留 Darwin 行为和 Windows 功能开关，跳过无关 Chrome 修改，并执行 `node --check`；未知、残缺或重复布局直接失败。不能与其他 targeted 模式、marketplace 注册或 Fast Mode 验证混用。
 - `scripts/test-computer-use-surface-patterns.ps1`：Windows CUA surface ASAR patcher 的隔离回归测试，覆盖新旧版本就绪条件、压缩函数改名、旧补丁迁移、幂等、残缺或重复补丁拒绝、候选文件歧义、模式隔离和 ASAR 执行器回退；不代替真实 Desktop 审批及截图验收。
 - `scripts/patch-dynamic-tools-windows-msix.ps1`：用于修复 Desktop `dynamicTools` schema 漂移导致新建对话 / thread start 报 `missing field inputSchema` 的 targeted MSIX / ASAR 脚本。
@@ -47,6 +49,7 @@
 - `scripts/patch-remote-control-asar.cjs`：手机远控 Electron bundle patcher。
 - `scripts/build-remote-control-native-replacement.ps1`：当 native app-server 因 API-key 主认证拒绝手机远控时，在指定工作目录下构建 patched `app\resources\codex.exe` replacement。默认从安装包副本自动识别原生版本；内置映射包括在 Desktop `26.715.2305.0` 上完成精确 tag 构建、安装和手机端到端实测的 `0.145.0-alpha.18`，在 Desktop `26.707.3748.0` 上完成同类验证的 `0.144.0-alpha.4`，以及仅通过 patch-apply 验证的历史 `0.142.4`。其他版本必须提供严格匹配的 `-CodexSourceRef`、`-AppServerVersion` 和已验证的 `-PatchPathOverride`。
 - `scripts/install-computer-use-local.ps1`：Windows Computer Use 与 Chrome 本地运行时安装和校验参考实现；兼容旧式 `latest + plugin-local node_modules` 和新版“版本缓存 + `%LOCALAPPDATA%` 独立 cua_node runtime”布局，并同步 Chrome 外层 native-host manifest、`extension-host-config.json` 与两份 schema-2 app-server 状态文件。
+- `scripts/patch-chrome-custom-provider-headers.cjs`：Chrome 自定义供应商请求头策略的精确哈希兼容补丁；由本地修复脚本重施并严格校验，不修改 `browser-client.mjs`、登录或供应商配置。
 - `scripts/patch-computer-use-node-repl-context.ps1`：为精确支持哈希的 `@oai/sky 0.6.2` helper transport 修复跨 `node_repl` 调用的应用审批上下文，提供只读识别、安装、完整哈希校验和回滚。
 - `scripts/patch-computer-use-helper-win10.ps1`：为精确支持哈希的 `@oai/sky 0.4.20`、`0.5.2`、`0.6.6`、`0.6.11`、`0.6.16` 和 `0.6.17` helper 提供只读识别、安装和回滚；`26.707.12708.0`、`26.721.4979.0`、`26.803.10989.0`、`26.810.6296.0`、`26.810.7004.0`、`26.814.5167.0`、`26.814.5517.0`、`26.818.2872.0` 与 `26.818.3698.0` 是各自的端到端验证基线，不是版本门槛。`0.6.16` 与 `0.6.17` 的受保护代码布局完全一致，但整文件哈希不同；profile 只能按完整哈希选取，不能只按版本前缀判断。最新 `0.6.17` 基线包含八帧全唯一静态截图、二十帧全唯一动态截图和预热后资源稳定性验证。
 - `scripts/repair-cua-surface-lock.ps1`：修复 Windows 上 `unified-computer-use` 插件缓存的两处偏差——`scripts\launch.mjs` 里被 Desktop 对账写死为 `browser` 的 surface 列表（只改 `.mcp.json` 无效，每次 Desktop 启动都会被回写），以及 `resources\computer-description.md` 里只教 macOS `cua.getApp` 的注入描述（Windows 上该方法恒抛 `Native app bindings are unavailable for windows.`，正确的原生入口是窗口式 `cua.computer.*`）。按 profile 独立报告状态、保留目标文件行尾、逐文件备份，支持 `-VerifyOnly` 门禁、`-Json` 报告与 `-Rollback`。
@@ -58,6 +61,7 @@
 - `scripts/manage-codex-backups.ps1`：本地 Codex 配置、MCP、skills 和 marketplaces 的备份管理脚本。
 - `scripts/lib/asar-integrity.ps1`：三个 MSIX 补丁脚本共用的 Electron ASAR 完整性表读写库。启动器按内容识别而不是按文件名（26.9xx 之前是 `Codex.exe`，之后是 `ChatGPT.exe`），`asar pack` 后重写嵌入哈希并回读断言；可执行文件引用了 `app.asar` 但表结构不可解析时硬失败，避免装出无法启动的包。
 - `scripts/lib/appx-launch.ps1`：通过 AppUserModelId 启动已安装包的共享实现。不要直接运行安装目录里的可执行文件：26.9xx 的 `app\Codex.exe` 只是 CLI shim，启动它不会出现桌面窗口。
+- `scripts/lib/msix-safe-install.ps1`：三个 MSIX 入口共用的原位更新预检与部署库，另提供给外部执行器使用的已备妥恢复包事务；`scripts/test-msix-safe-install.ps1` 只在隔离 fixture 中验证，不执行真实安装。
 - `scripts/test-asar-integrity.ps1`：`lib/asar-integrity.ps1` 的回归测试，全部用合成 fixture，覆盖按内容识别启动器、header 哈希算法、篡改检测、修复、幂等、多档案表、只读启动器和硬失败路径；加 `-CheckInstalledPackage` 时额外只读校验当前安装包自洽。
 - `scripts/test-staged-package-selection.ps1`：Store 更新后包选择逻辑的回归测试。
 - `assets/system-prompt.md`：仅在用户明确要求可选提示词配置时使用的内置提示词资源。
@@ -98,7 +102,7 @@ git clone https://github.com/chen0416ccc-cpu/codex-windows-fast-patch-skill.git 
 
 ## 使用建议
 
-有些修复会重装 Codex Desktop。重装时当前 Codex Desktop 会被关闭，所以不要让正在使用的这个 Codex Desktop 会话自己重装自己，否则很容易出现“修到一半会话被卸载/中断”的情况。
+有些修复需要原位更新 Codex Desktop，部署时当前应用会被关闭。必须使用不会随 Desktop 退出的外部执行器，不能让当前任务自己更新自己；从当前任务启动的隐藏 `Start-Process` 也可能仍属于同一进程树。
 
 可以直接让当前 Codex Desktop 会话修复的问题：
 
@@ -106,6 +110,7 @@ git clone https://github.com/chen0416ccc-cpu/codex-windows-fast-patch-skill.git 
 - Computer Use 的 `list_windows` 成功，但下一次 `get_window_state` / `activate_window` 报 `node_repl exec context not found`；先做精确源文件哈希识别，未知哈希停止。
 - Computer Use 能列出窗口但 Win10 截图报 `SetIsBorderRequired ... 0x80004002`；此类只能对精确支持哈希运行 helper patcher，未知哈希停止。
 - Chrome / browser_use 的 helper 路径、缓存、native-host 文件损坏。
+- 自定义供应商下 Chrome 报 `Codex auth token is unavailable`，且服务文件匹配已支持的请求头兼容档位；此项只修本地服务缓存，不重装 Desktop。
 - 插件市场配置损坏、`codex plugin list` 报 marketplace manifest 错误。
 - 本地 marketplace 缺 `.agents\plugins\marketplace.json`。
 - 切换 `model_provider` / API 配置后，本地旧会话消失但 `sessions`、`archived_sessions` 或 `state_5.sqlite` 仍有数据。此类先用 provider history sync，不需要重装 MSIX。
@@ -125,9 +130,21 @@ git clone https://github.com/chen0416ccc-cpu/codex-windows-fast-patch-skill.git 
 
 简单判断规则：如果修复会停止、卸载、重装或重新启动 Codex Desktop，就用另一个 agent 或外部 PowerShell 来跑；如果只是修本地配置、插件缓存、marketplace、备份或验证，一般可以让当前 Codex Desktop 会话直接处理。
 
+## Chrome 自定义供应商兼容
+
+该补丁仅在原请求头策略报精确的令牌缺失错误、当前供应商明确不要求 OpenAI 认证、目标为 Chrome 且扩展支持布尔型请求头能力时启用回退，并保持 `agent_request_header_enabled=true`。正常策略结果、其他错误和权限检查保持原样，不借用手机 OAuth，也不改可信客户端或原生程序。
+
+目前按整文件 SHA-256 支持服务版本 `26.917.71314`、`26.908.40834`、`26.908.70816`，不是所有同前缀版本。前者已在 Windows 上完成无额外登录的真实导航、输入、点击及服务端 `x-browser-agent` 请求头验收；两个 `26.908` 档位只有离线行为与防护回归，未重装旧 Desktop 做实机验收。
+
+先运行 `install-computer-use-local.ps1 -StrictVerifyOnly`，确认该故障和支持档位后，用 `-VerifyOnly` 执行本地缓存修复，再只重置当前 JavaScript 内核并复验真实浏览器操作。未知官方源版本会明确提示未覆盖并跳过此项，不阻断其他基础修复；已支持源版本下的损坏、残缺或混合版本缓存仍报错。哈希表和隔离测试方法见 `references/restriction-debug-cases.md` 的 Chrome 请求头案例。
+
 ## 用 VS Code Codex 扩展作为外部执行器
 
 在 Windows 上，如果修复会停止、卸载、重装、重新打包 MSIX、替换 `app.asar`、替换 `resources\codex.exe` 或重启 Codex Desktop，推荐从 VS Code 里的 Codex 扩展、外部 PowerShell，或其它不会被 Desktop 重启影响的 agent 环境执行。
+
+三个 MSIX 补丁入口现在都会递增包版本，通过 `Add-AppxPackage -ForceApplicationShutdown` 原位更新，禁止用 `Remove-AppxPackage` 作为失败后的重试方案。包含 `windows.service`、`packagedServices` 或 `localSystemServices` 的包必须先通过正常 UAC 同意取得管理员权限；签名有效不代表有安装权限。权限、同版本或身份预检失败时，不关闭也不移除现有应用。
+
+部署前另行准备包含原程序文件、签名有效且版本高于更新包的恢复 MSIX，并保留到真实启动和运行验收通过。普通入口不会自动生成恢复包；`Invoke-RecoverableMsixInstall` 供已备妥恢复包、提供真实启动校验的外部执行器调用，可在启动失败后进行一次原位恢复，不能把单元测试通过当作真实恢复成功。
 
 执行目标始终是 Codex Desktop 的状态目录：默认是 `$env:USERPROFILE\.codex`。不要把隔离 CLI wrapper 当成 Desktop 执行环境；如果某个 wrapper 会把 `CODEX_HOME` 设为 `$env:USERPROFILE\.codex-cli` 或其它隔离目录，那只是 CLI 状态，不是 Desktop 的插件、市场、MCP、远控或登录状态。
 

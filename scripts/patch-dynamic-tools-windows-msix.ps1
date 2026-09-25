@@ -8,6 +8,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'lib\msix-safe-install.ps1')
 $LogPrefix = '[codex-dynamic-tools-msix]'
 $WindowsSdkBuildToolsPackageId = 'microsoft.windows.sdk.buildtools'
 $WindowsSdkBuildToolsVersion = '10.0.26100.7705'
@@ -255,6 +256,8 @@ try {
   $publisher = [string]$manifest.Package.Identity.Publisher
   $cert = Get-OrCreateSigningCertificate $publisher
   Trust-SigningCertificate $cert
+  $updateVersion = Set-MsixUpdateVersion -ManifestPath (Join-Path $workPackageRoot 'AppxManifest.xml')
+  Write-Log "transactional update package version: $updateVersion"
   if (Test-Path -LiteralPath $msixPath) {
     Remove-Item -LiteralPath $msixPath -Force
   }
@@ -270,17 +273,7 @@ try {
   }
 
   if ($Install) {
-    Stop-CodexDesktopProcesses $sourcePackageRoot
-    Write-Log "removing existing package: $($pkg.PackageFullName)"
-    try {
-      Remove-AppxPackage -Package $pkg.PackageFullName -PreserveApplicationData -ErrorAction Stop
-    } catch {
-      Write-Log 'PreserveApplicationData unsupported; retrying normal Remove-AppxPackage'
-      Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction Stop
-    }
-    Write-Log "installing patched MSIX: $msixPath"
-    Add-AppxPackage -Path $msixPath -ErrorAction Stop
-    $installed = Get-AppxPackage -Name OpenAI.Codex -ErrorAction Stop | Select-Object -First 1
+    $installed = Invoke-TransactionalMsixInstall -MsixPath $msixPath -PackageName 'OpenAI.Codex'
     Write-Log "installed package: $($installed.PackageFullName)"
     $installedSuccessfully = $true
     if ($Launch) {

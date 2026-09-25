@@ -3850,6 +3850,102 @@ function Test-OfficialComputerUseCache {
   Write-Log "official lightweight cache verification ok: computer-use@$version / runtime=$runtimeSkyRoot / chrome-browser-client=$($trustedChromeBrowserClient.Sha256) / trust=$($trustedChromeBrowserClient.TrustMode)"
 }
 
+function Get-ChromeHeaderCompatibilityServicePaths {
+  param(
+    [Parameter(Mandatory = $true)][string]$CodexHomeRoot,
+    [Parameter(Mandatory = $true)][string]$MarketplaceRoot,
+    [Parameter(Mandatory = $true)][string]$InstalledMarketplaceRoot,
+    [Parameter(Mandatory = $true)][string]$NodePath,
+    [Parameter(Mandatory = $true)][string]$PatcherPath
+  )
+  $paths = @()
+  foreach ($plugin in @('browser', 'chrome')) {
+    $descriptor = Join-Path $InstalledMarketplaceRoot "plugins\$plugin\.codex-plugin\plugin.json"
+    if (-not (Test-Path -LiteralPath $descriptor -PathType Leaf)) { continue }
+    $version = [string](Get-Content -LiteralPath $descriptor -Raw | ConvertFrom-Json).version
+    if ($version -notmatch '^[0-9A-Za-z][0-9A-Za-z._-]*$') { throw "invalid $plugin version for header compatibility" }
+    $source = Join-Path $InstalledMarketplaceRoot "plugins\$plugin\scripts\browser-service.mjs"
+    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+      Write-Log "Chrome header compatibility not covered: $plugin@$version has no packaged browser service; skipping only this overlay"
+      continue
+    }
+    $oldPreference = $ErrorActionPreference
+    try {
+      $ErrorActionPreference = 'Continue'
+      $output = @(& $NodePath $PatcherPath '--input' $source '--probe-source' 2>&1)
+      $exitCode = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $oldPreference }
+    $detail = ($output | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
+    if ($exitCode -ne 0) { throw "packaged browser service compatibility probe failed: ${source}: $detail" }
+    $supported = $detail | ConvertFrom-Json -ErrorAction Stop
+    if ($supported.state -eq 'unsupported') {
+      Write-Log "Chrome header compatibility not covered: $plugin@$version sha256=$($supported.sha256); skipping only this overlay, not claiming Chrome auth repair"
+      continue
+    }
+    if ($supported.state -ne 'original') { throw "packaged browser service is not an unmodified supported source: $source" }
+    $roots = @(
+      (Join-Path $MarketplaceRoot "plugins\$plugin"),
+      (Join-Path $CodexHomeRoot "plugins\cache\openai-bundled\$plugin\$version"),
+      (Join-Path (Split-Path -Parent $MarketplaceRoot) "openai-bundled-cache\$plugin\$version"),
+      (Join-Path $CodexHomeRoot ".tmp\bundled-marketplaces\openai-bundled\plugins\$plugin")
+    )
+    foreach ($root in $roots) {
+      $service = Join-Path $root 'scripts\browser-service.mjs'
+      if (Test-Path -LiteralPath $service -PathType Leaf) {
+        $hash = (Get-FileHash -LiteralPath $service -Algorithm SHA256).Hash
+        if ($hash -ne $supported.originalSha256 -and $hash -ne $supported.patchedSha256) {
+          throw "browser service differs from supported package profile $($supported.profile): $service"
+        }
+        $paths += (Resolve-Path -LiteralPath $service).ProviderPath
+      }
+    }
+  }
+  return @($paths | Select-Object -Unique)
+}
+
+function Invoke-ChromeHeaderCompatibility {
+  param(
+    [Parameter(Mandatory = $true)][string[]]$ServicePaths,
+    [Parameter(Mandatory = $true)][string]$NodePath,
+    [Parameter(Mandatory = $true)][string]$PatcherPath,
+    [string]$BackupRoot,
+    [switch]$VerifyOnly
+  )
+  $plans = @()
+  # Preflight every existing copy before changing any of them.
+  foreach ($service in $ServicePaths) {
+    $oldPreference = $ErrorActionPreference
+    try {
+      $ErrorActionPreference = 'Continue'
+      $output = @(& $NodePath $PatcherPath '--input' $service 2>&1)
+      $exitCode = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $oldPreference }
+    $detail = ($output | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
+    if ($exitCode -ne 0) { throw "browser service header compatibility preflight failed: ${service}: $detail" }
+    $state = $detail | ConvertFrom-Json -ErrorAction Stop
+    $plans += [pscustomobject]@{ Path = $service; State = $state.state; Hash = $state.patchedSha256 }
+  }
+  foreach ($plan in $plans) {
+    if ($VerifyOnly) {
+      if ($plan.State -ne 'patched') { throw "missing custom-provider Chrome header compatibility patch: $($plan.Path)" }
+      Write-Log "Chrome custom-provider header compatibility verified: $($plan.Path) sha256=$($plan.Hash)"
+      continue
+    }
+    if ([string]::IsNullOrWhiteSpace($BackupRoot)) { throw 'header compatibility requires a backup root' }
+    $oldPreference = $ErrorActionPreference
+    try {
+      $ErrorActionPreference = 'Continue'
+      $output = @(& $NodePath $PatcherPath '--input' $plan.Path '--output' $plan.Path '--backup-root' $BackupRoot 2>&1)
+      $exitCode = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $oldPreference }
+    $detail = ($output | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
+    if ($exitCode -ne 0) { throw "browser service header compatibility apply failed: $detail" }
+    $result = $detail | ConvertFrom-Json -ErrorAction Stop
+    Write-Log "Chrome custom-provider header compatibility: $($result.state) path=$($plan.Path) sha256=$($result.sha256)"
+    $result
+  }
+}
+
 function Install-ComputerUse {
   $codexHomeResolved = Resolve-OrCreateDirectory $CodexHome
   $marketplaceRoot = Get-StableBundledMarketplaceRoot $codexHomeResolved
@@ -3910,6 +4006,15 @@ function Install-ComputerUse {
   Assert-BundledMarketplacePluginInstalledWithCodexCli 'chrome'
   Update-CodexConfig $marketplaceRoot
 
+  $headerPatcher = Join-Path $PSScriptRoot 'patch-chrome-custom-provider-headers.cjs'
+  $headerServices = @(Get-ChromeHeaderCompatibilityServicePaths $codexHomeResolved $marketplaceRoot $installedMarketplaceRoot `
+    -NodePath $runtimeInventory.NodePath -PatcherPath $headerPatcher)
+  if ($headerServices.Count -gt 0) {
+    Invoke-ChromeHeaderCompatibility -ServicePaths $headerServices -NodePath $runtimeInventory.NodePath `
+      -PatcherPath $headerPatcher `
+      -BackupRoot (Join-Path (Split-Path -Parent $marketplaceRoot) 'chrome-header-compat-backups') | Out-Null
+  }
+
   Write-Log "installed marketplace plugin: $pluginSourceRoot"
   Write-Log "installed cached plugin: $computerUseCacheRoot"
   Write-Log "updated latest junction: $latestPath"
@@ -3922,6 +4027,14 @@ function Test-ComputerUse {
   $installedChromeVersion = Get-PluginVersion $installedChromeRoot
   $installedChromeCacheRoot = Join-Path $codexHomeResolved "plugins\cache\openai-bundled\chrome\$installedChromeVersion"
   $runtimeInventory = Get-CurrentCodexAppServerRuntimeInventory
+  $headerMarketplaceRoot = Get-StableBundledMarketplaceRoot $codexHomeResolved
+  $headerPatcher = Join-Path $PSScriptRoot 'patch-chrome-custom-provider-headers.cjs'
+  $headerServices = @(Get-ChromeHeaderCompatibilityServicePaths $codexHomeResolved $headerMarketplaceRoot $installedMarketplaceRoot `
+    -NodePath $runtimeInventory.NodePath -PatcherPath $headerPatcher)
+  if ($headerServices.Count -gt 0) {
+    Invoke-ChromeHeaderCompatibility -ServicePaths $headerServices -NodePath $runtimeInventory.NodePath `
+      -PatcherPath $headerPatcher -VerifyOnly | Out-Null
+  }
   $entryInstructions = Repair-WindowsCuaEntryInstructions `
     -NodeModulesRoot (Join-Path (Split-Path -Parent $runtimeInventory.NodePath) 'node_modules') -VerifyOnly
   Write-Log "Windows CUA entry instructions verification: $entryInstructions"
