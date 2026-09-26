@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160" fill="none" role="img" aria-labelledby="title">
+  <title id="title">Codex Windows Fast Patch</title>
+  <defs>
+    <linearGradient id="tile" x1="25" y1="17" x2="136" y2="144" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4285FF"/>
+      <stop offset=".5" stop-color="#2563EB"/>
+      <stop offset="1" stop-color="#1744AA"/>
+    </linearGradient>
+    <linearGradient id="patch" x1="91" y1="86" x2="137" y2="137" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFE7A3"/>
+      <stop offset="1" stop-color="#FFBC57"/>
+    </linearGradient>
+    <filter id="shadow" x="0" y="0" width="160" height="160" filterUnits="userSpaceOnUse">
+      <feGaussianBlur stdDeviation="6"/>
+    </filter>
+  </defs>
+  <rect x="24" y="27" width="112" height="118" rx="30" fill="#163E91" fill-opacity=".22" filter="url(#shadow)"/>
+  <rect x="17" y="13" width="126" height="126" rx="32" fill="url(#tile)"/>
+  <path d="M49 13h62c17.673 0 32 14.327 32 32v7L49 13Z" fill="white" fill-opacity=".09"/>
+  <rect x="17.75" y="13.75" width="124.5" height="124.5" rx="31.25" stroke="white" stroke-opacity=".18" stroke-width="1.5"/>
+  <rect x="35" y="37" width="89" height="64" rx="10" fill="#DDEBFF" fill-opacity=".13" stroke="#EAF2FF" stroke-width="2.5"/>
+  <path d="M36 55h87" stroke="#EAF2FF" stroke-opacity=".6" stroke-width="2"/>
+  <path d="M99 46h7m6-3 5 5m0-5-5 5" stroke="#EAF2FF" stroke-width="1.8" stroke-linecap="round"/>
+  <path d="m48 66 11 9-11 9m20 0h15" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M44 113h23m-23 8h13" stroke="#B9D3FF" stroke-opacity=".65" stroke-width="3" stroke-linecap="round"/>
+  <g transform="rotate(-12 113 110)">
+    <rect x="89" y="86" width="48" height="48" rx="14" fill="#10337E" fill-opacity=".2" transform="translate(0 3)"/>
+    <rect x="89" y="86" width="48" height="48" rx="14" fill="url(#patch)"/>
+    <rect x="90" y="87" width="46" height="46" rx="13" stroke="white" stroke-opacity=".5" stroke-width="2"/>
+    <path d="M113 100v20m-10-10h20" stroke="#173C82" stroke-width="5" stroke-linecap="round"/>
+  </g>
+</svg>

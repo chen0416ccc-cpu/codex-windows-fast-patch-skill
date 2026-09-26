@@ -1,6 +1,6 @@
 ---
 name: codex-windows-fast-patch
-description: Reapply and repair Windows Codex Desktop after Store upgrades, including custom provider models hidden by Statsig available_models filtering, the dependent blue-purple Power slider and its Ultra toggle, Fast Mode request/UI gates, locale i18n, plugin UI gates, Chrome/browser_use gates, Goal command gates, Windows Computer Use availability gates and plugin/runtime repair, phone remote-control pairing under third-party/API-key main app usage, Desktop dynamicTools/inputSchema thread-start schema drift, local conversation visibility recovery after model_provider switches, restored-conversation missing-cwd continuation repair, ASAR integrity repair, signing/installing patched MSIX packages, SDK cleanup, Fast Mode wire verification, local plugin marketplace registration, and optional custom model_instructions_file setup.
+description: Reapply and repair Windows Codex Desktop after Store upgrades, including custom provider models hidden by Statsig available_models filtering, the dependent blue-purple Power slider and its Ultra toggle, Fast Mode request/UI gates, locale i18n, plugin UI gates, Chrome/browser_use gates, Goal command gates, Windows Computer Use availability gates and plugin/runtime repair, phone remote-control pairing under third-party/API-key main app usage, Desktop dynamicTools/inputSchema thread-start schema drift, local conversation visibility recovery after model_provider switches, restored-conversation missing-cwd continuation repair, ASAR integrity repair, signing/installing patched MSIX packages, SDK cleanup, Fast Mode wire verification, local plugin marketplace registration, and optional custom model_instructions_file setup (the bundled system prompt, also called 听话水).
 ---
 
 # Codex Windows Fast Patch
@@ -499,6 +499,8 @@ Dynamic tools schema script options:
 ## Optional Model Instructions File
 
 This workflow has an optional custom model instructions installer. It is not part of the default repatch flow and should only run when the user asks for that extra configuration.
+
+The user-facing name "听话水" (Tinghuashui) means this existing bundled system-prompt configuration. Requests such as "配置听话水" or "帮我进行听话水相关的配置" select this workflow. For this request alone, use the standalone installer below with `assets/system-prompt.md`; do not generate a replacement prompt or run the Desktop repatch. Keep the bundled prompt content unchanged.
 
 To install only the bundled prompt asset and configure Codex:
 
