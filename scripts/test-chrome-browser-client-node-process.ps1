@@ -84,6 +84,13 @@ if ($cachedHash -ne $installedHash) {
 }
 $trustMode = if (Test-FileContainsAsciiText $appAsar $installedHash) {
   'asar-sha256'
+} elseif (
+  (Test-FileContainsAsciiText $appAsar 'NODE_REPL_TRUSTED_SERVICES') -and
+  (Test-FileContainsAsciiText $appAsar 'browserServicePath') -and
+  (Test-FileContainsAsciiText $installedBrowserClient 'Browser use requires a trusted Node REPL browser service') -and
+  (Test-FileContainsAsciiText $installedBrowserClient 'setupBrowserRuntime')
+) {
+  'node-repl-service'
 } else {
   foreach ($marker in @(
     'browserClientPath',
@@ -98,16 +105,27 @@ $trustMode = if (Test-FileContainsAsciiText $appAsar $installedHash) {
   'native-host-paths'
 }
 
-$installedServiceHash = (Get-FileHash -LiteralPath $installedBrowserService -Algorithm SHA256).Hash.ToLowerInvariant()
-$cachedServiceHash = (Get-FileHash -LiteralPath $browserService -Algorithm SHA256).Hash.ToLowerInvariant()
-if ($cachedServiceHash -ne $installedServiceHash) {
-  throw "Chrome browser service differs from the installed package: expected=$installedServiceHash actual=$cachedServiceHash path=$browserService"
-}
-
 $node = Get-Command node.exe -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $node) {
   throw 'node.exe not found; cannot syntax-check the Chrome browser client'
 }
+
+$installedServiceHash = (Get-FileHash -LiteralPath $installedBrowserService -Algorithm SHA256).Hash.ToLowerInvariant()
+$cachedServiceHash = (Get-FileHash -LiteralPath $browserService -Algorithm SHA256).Hash.ToLowerInvariant()
+$serviceMode = 'package'
+if ($cachedServiceHash -ne $installedServiceHash) {
+  # install-computer-use-local.ps1 overlays the exact-hash custom-provider header
+  # compatibility patch onto the cache copy. Accept only the output derived from
+  # this installed source; any other drift still fails.
+  $headerPatcher = Join-Path $PSScriptRoot 'patch-chrome-custom-provider-headers.cjs'
+  $probeJson = & $node.Source $headerPatcher --input $installedBrowserService --probe-source
+  $probe = if ($LASTEXITCODE -eq 0) { $probeJson | ConvertFrom-Json } else { $null }
+  if (-not $probe -or $probe.state -ne 'original' -or $cachedServiceHash -ne $probe.patchedSha256) {
+    throw "Chrome browser service differs from the installed package: expected=$installedServiceHash actual=$cachedServiceHash path=$browserService"
+  }
+  $serviceMode = "custom-provider-headers:$($probe.profile)"
+}
+
 & $node.Source --check $browserClient
 if ($LASTEXITCODE -ne 0) {
   throw "Chrome browser client syntax check failed: $browserClient"
@@ -117,4 +135,4 @@ if ($LASTEXITCODE -ne 0) {
   throw "Chrome browser service syntax check failed: $browserService"
 }
 
-Write-Output "Chrome browser client contract passed: mode=$trustMode hash=$installedHash"
+Write-Output "Chrome browser client contract passed: mode=$trustMode hash=$installedHash service=$serviceMode"
