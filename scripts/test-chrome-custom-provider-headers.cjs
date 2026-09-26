@@ -21,6 +21,10 @@ equal(plan.originalSha256, profile.originalSha256, 'profile is selected by the c
 if (profile.id === '26.917.71314') {
   equal(plan.patchedSha256, '8886deea23c8ececd5156c2ee4300431307bda9b5e8910f8d82b5241cf4f38da', 'accepted live patch bytes remain unchanged');
 }
+if (profile.id === '26.924.20706') {
+  equal(plan.patchedSha256, 'f88d7541c16f5155c2e58c4e0fc05db0cbb4b9cd5db04bdc942fd76d8f73cdc3', 'new Desktop service produces the reviewed overlay bytes');
+}
+
 equal(patcher.inspect(Buffer.from(plan.patched)).state, 'patched', 'complete patch recognized');
 equal(patcher.inspect(Buffer.from(plan.patched)).profile, profile.id, 'patched profile remains exact');
 equal(patcher.inspect(Buffer.from(plan.patched)).patched, plan.patched, 'idempotence');
@@ -41,6 +45,7 @@ function between(text, start, end) {
   return text.slice(a, b);
 }
 const method = between(plan.patched, 'async sendSessionRequest(r,n){', 'matchesCurrentTurn(r){');
+const originalMethod = between(plan.original, 'async sendSessionRequest(r,n){', 'matchesCurrentTurn(r){');
 const config = {model_provider: 'openai-custom', model_providers: {'openai-custom': {requires_openai_auth: false}}};
 const cases = [];
 async function run(name, options = {}) {
@@ -61,10 +66,10 @@ async function run(name, options = {}) {
   const client = {
     clientInfo, requestHeaderEnabled: false,
     getSessionParams: () => ({session_id: 'test-session', turn_id: 'test-turn'}),
-    readRequestHeaderEnabled: info => compat(runtime, info),
+    readRequestHeaderEnabled: options.unpatched ? context[profile.policy] : info => compat(runtime, info),
     sendRequest: async (operation, params) => { events.push({event: 'browser-send', operation, params}); return true; },
   };
-  const parsed = vm.runInContext('({' + method + '})', context, {timeout: 1000});
+  const parsed = vm.runInContext('({' + (options.unpatched ? originalMethod : method) + '})', context, {timeout: 1000});
   let error = null;
   try { await parsed.sendSessionRequest.call(client, options.operation || 'getTabs', {test: true}); }
   catch (caught) { error = typeof caught === 'string' ? caught : caught.message; }
@@ -77,6 +82,8 @@ async function run(name, options = {}) {
 }
 
 (async () => {
+  const original = await run('original_missing_auth_blocks_request', {unpatched: true});
+  equal([original.error, original.sent, original.configReads], ['Codex auth token is unavailable', false, 0]);
   const success = await run('custom_provider_without_official_auth');
   equal([success.error, success.sent, success.header, success.configReads, success.markers], [null, true, true, 1, 1]);
   const stringError = await run('string_transport_error_supported', {rejectString: true});
