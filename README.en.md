@@ -6,7 +6,7 @@ Let an AI assistant repair model lists, browser access, computer control, and ot
 
 This community-maintained **Agent Skill** contains diagnostic workflows and repair scripts. It is not an official client or a universal one-click installer.
 
-> **Windows only.** If a repair needs to close, repackage, or update Codex Desktop, run it from the Codex extension in VS Code or an independent external PowerShell session. Do not let the Desktop session being repaired update itself. Read-only checks and local configuration or plugin-cache repairs can usually run in the current session.
+> **Windows only. Some repairs include reinstalling Codex.** The app will close and the current conversation may be interrupted. After installation, reopen Codex, return to the original repair conversation, and send "continue" to resume. See the [reinstallation details](#which-repairs-reinstall-codex).
 
 ## What it repairs
 
@@ -56,16 +56,6 @@ my third-party API configuration, existing login, and conversation history.
 
 **Does Chrome require another login?** For a provider explicitly configured with `requires_openai_auth=false`, the skill can repair the `Codex auth token is unavailable` error on specifically supported versions, keeping agent request headers enabled without borrowing phone credentials. This is not a general bypass for authentication failures. See the [Chrome compatibility conditions](references/restriction-debug-cases.md#chrome-custom-provider-request-header-authentication-dependency).
 
-### Check without making changes
-
-This command checks the local Chrome / Computer Use environment without applying repairs:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\install-computer-use-local.ps1" -StrictVerifyOnly
-```
-
-`-VerifyOnly` can apply repairs and is **not read-only**. To check the availability of all bundled plugins, see [local runtime verification](SKILL.md#computer-use-only). Available plugins do not all need to be installed.
-
 ## Update
 
 The agent checks for repository updates before repairs. You can also update a Git-cloned installation manually:
@@ -76,13 +66,29 @@ git -C $SkillRoot pull --ff-only
 
 This updates the repair tool, not Codex Desktop. Resolve local changes or branch conflicts without force-overwriting them. Non-Git copies installed through a plugin or archive need updating through their original installation channel.
 
-## Before running a repair
+## Which repairs reinstall Codex
 
-- **Back up before changing anything.** Preserve conversations, authentication, and user settings; do not bulk-enable unrelated plugins. Desktop state normally lives in `$env:USERPROFILE\.codex`. Do not set a global `CODEX_HOME` or move that state into an isolated CLI home. See [backup and restore](SKILL.md#backup-management).
-- **Update in place, without uninstalling first.** Run the relevant `-DryRun`, check package signature, identity, and deployment permissions, then install a higher-version update. Packages containing system services require normal UAC administrator approval.
-- **Prepare recovery before deployment.** Separately prepare a validly signed recovery MSIX containing the original program files at a version higher than the update. Ordinary installation entrypoints do not generate it automatically. See the [safe deployment workflow](SKILL.md#external-executor-for-desktop-restarting-repairs).
-- **Verify real operations.** Depending on the repair, interact with the browser, capture a window, or send a message from the phone. A successful script exit or read-only check does not establish that every feature was tested.
-- **Clean up after acceptance.** Remove extraction directories, installed patch-package artifacts, temporary SDKs, and task-local caches. Keep the installed app, active runtimes, necessary logs, and explicit backups. Prefer a non-system drive for large artifacts.
+Reinstallation depends on the cause of the problem, not simply on using this skill:
+
+| Repair | Typical approach |
+| --- | --- |
+| Fast Mode, Power/Ultra, or models hidden by client-side filtering | Patch the client and reinstall |
+| Language resets or broken client-side Goal / plugin / browser / Any App entry points | Patch the client and reinstall |
+| Phone entry, pairing, or version issues; new-chat `inputSchema` errors | Reinstall when the client or native program needs changes |
+| Chrome / Computer Use caches, runtime paths, marketplace configuration, or supported Chrome authentication-dependency errors | Usually repair the local environment without reinstalling |
+| Model-catalog entries, history visibility, missing working directories, backups, custom instructions, or post-pairing API addresses | Usually change configuration or data without reinstalling |
+
+The same visible symptom, such as an unavailable browser or a missing model, may come from configuration or cache problems. Let the diagnosis determine the repair.
+
+### What happens during reinstallation
+
+**You can initiate the repair in your current Codex conversation.** When installation is needed, the agent arranges an independent installer so deployment can continue after the Codex window closes.
+
+1. Before starting, the agent should explain whether reinstallation is needed, back up state, and save repair progress. Approve the Windows administrator prompt when required.
+2. During reinstallation, the Codex window closes, the repair conversation may be interrupted, and the app is temporarily unavailable. This is an expected installation interruption, not a sign that configuration or conversation history has been erased.
+3. Once installation finishes, open Codex if it has not reopened automatically. Return to the **original repair conversation** and send "continue" so the agent can check the installation, complete acceptance, and clean up. There is no need to start a new repair from scratch.
+
+Here, "reinstallation" is an in-place update that preserves user data, not an uninstall followed by an install. **A reported installation error, or an app that still cannot start after installation finishes, is a failure to investigate, not normal waiting.**
 
 ## More help
 

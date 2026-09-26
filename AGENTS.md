@@ -16,7 +16,8 @@
 ## Safety Boundaries
 
 - Never commit secrets, `auth.json`, API keys, OAuth tokens, private keys, browser profiles, local credential stores, or generated auth files.
-- Repairs that stop, uninstall, reinstall, repackage, or relaunch Codex Desktop must be run from an external executor such as Windows PowerShell or the VS Code Codex extension, not from the Codex Desktop session being repaired.
+- A Codex Desktop conversation may initiate and coordinate its own repair. Deployment that closes or updates Desktop must run in an independent installer verified to survive Desktop shutdown, not in its process tree; merely using a hidden `Start-Process` is insufficient. VS Code or external PowerShell remain alternatives, not requirements for initiating a repair.
+- Before an installation interruption, explain the expected app closure, back up state, and save a handoff with installer status and remaining checks. Tell the user to reopen Codex and continue the original conversation. On resume, inspect the existing installer and result before starting anything; do not repeat a completed installation or describe a failed/missing installation as normal waiting.
 - The Desktop state target is `$env:USERPROFILE\.codex`. An isolated CLI home such as `$env:USERPROFILE\.codex-cli` is not Desktop state.
 - Do not set a global `CODEX_HOME`, and do not copy or migrate Desktop state into an isolated CLI home unless a user explicitly requests a separate migration plan.
 
