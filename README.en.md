@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/readme-mark.svg" width="104" height="104" alt="">
+<img src="assets/readme-mark.png" width="104" height="104" alt="">
 
 <h1>Codex Windows Fast Patch Skill</h1>
 
