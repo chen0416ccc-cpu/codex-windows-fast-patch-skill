@@ -373,3 +373,21 @@ Acceptance on Desktop `26.915.4065.0` used the official sky runtime and the exac
 The regression exercises original detection, candidate hash, install, idempotence, rollback, and unknown-hash rejection using an isolated copy. This native helper acceptance does not assert that a browser tab or the separate Swift control service was exercised.
 
 After reproducing the Windows 10 `SetIsBorderRequired / 0x80004002` failure, pass `-PatchWindows10ScreenshotHelper` to the full MSIX patcher or wrapper to patch the staged helper before packaging. Without that explicit switch, the staged helper is left unchanged, including unknown hashes. An explicit request retains the full input/output hash guards and rejects unknown helpers. Targeted Model Experience, marketplace, and CUA-surface repairs reject this separate binary operation.
+
+### `@oai/sky 0.7.1` helpers `9493AF2C` / Desktop 26.917.9434.0 and `2AA2A7A9` / Desktop 26.917.8451.0
+
+Desktop `26.917.9434.0` and `26.917.8451.0` re-sign the `D09A2F3F` code again. Each new profile is selected by the complete `SkyVersion` and hash pair:
+
+| Desktop | Original SHA-256 | Patched SHA-256 |
+| --- | --- | --- |
+| `26.917.9434.0` | `9493AF2CEBD3C11E2E38CE692F6CCD8E00F4320BDBBCF14F242D036A9736635F` | `AA7DA8D22911398790EED442A22F7D747339FF89E2DD4DB49931A611E6EEDB79` |
+| `26.917.8451.0` | `2AA2A7A93F5CF48399987CA0959DE5588293E6C7F04B68860812FA3D5412598C` | `D958F97F3B0D694A8472E17DE64113831A72E8F6B7D031D405A45F39949B3999` |
+
+- Both helpers are `1,550,128` bytes, like `D09A2F3F` and `B49B8682`. Compared with `D09A2F3F`, all ten section headers and every raw section body are byte-identical; only the two PE CheckSum bytes and 4,232 (`9493AF2C`) or 5,371 (`2AA2A7A9`) certificate-overlay bytes differ. The same comparison reproduces the 4,226 overlay bytes recorded for `B49B8682`.
+- All five guarded regions match the `D09A2F3F` original bytes at the same offsets, and the existing 132-byte MTA wrapper applies unchanged. The rewrite changes 134 bytes, all inside those regions, and preserves file size. Applying the regions to each original reproduces the recorded patched hash, and the result is byte-identical to the patched helper from a separate full-package build.
+- On Windows 10 build `19045`, the isolated profile harness passed for both labels (`-SkyVersion 0.7.1-9493AF2C` and `-SkyVersion 0.7.1-2AA2A7A9`): original detection, candidate hash, installation, idempotent installation, rollback, idempotent rollback, backup hash and rejection of an unknown input hash. It also asserts that the pending end-to-end validation field remains empty.
+- The patched `AA7DA8D2` helper, driven directly over its stdio protocol from one external process, returned a screenshot for 25 of 25 `get_window_state` calls against a Visual Studio Code window, with a 0.4-second pause between calls. Screenshot payload lengths varied (14 distinct values), and no `SetIsBorderRequired`, `0x80004002` or other stderr output occurred. The same driver on the original `9493AF2C` helper failed all 10 calls, each with `SetIsBorderRequired` / `0x80004002`.
+
+`EndToEndValidatedDesktopVersion` remains `null` for both profiles. The soak frames were not decoded and visually inspected, and a code editor is not the continuously animating native target that `SKILL.md` requires. No capture ran against the `2AA2A7A9` helper. In that session `list_windows` returned neither a console window nor the running Task Manager, so no animated native target was captured.
+
+When driving the helper outside Desktop, point `CODEX_HOME` at a disposable directory. Run against a real Codex home, the helper rewrote the `notify` hook in `config.toml` to its own executable path and re-serialized the whole file, so a test copy silently replaced the hook that Desktop had configured. Pointed at an empty directory, it created `config.toml`, the goals, logs, memories, queue and state SQLite databases, `installation_id` and `skills` there.
