@@ -155,6 +155,29 @@ $mainSlotSource = 'const env=process.env;function resolve(e,t,r){let i=r===`win3
 # Same env gate without the new slot.
 $mainLegacySource = 'const env=process.env;function resolve(e,t,r){let i=r===`win32`&&env.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===`1`?{...e,computerUse:!0,computerUseNodeRepl:!0}:e;let n={inAppBrowserUse:e.inAppBrowserUse,inAppBrowserUseAllowed:e.inAppBrowserUseAllowed,browserPane:e.browserPane,externalBrowserUse:e.externalBrowserUse,externalBrowserUseAllowed:e.externalBrowserUseAllowed,computerUse:e.computerUse};return[i,n];}'
 $mainNegativeSource = 'const env=process.env;const unrelated=()=>!0;'
+# Desktop 26.917 main: the env gate no longer carries `computerUseNodeRepl`, so
+# only the slot-bearing feature object is rewritten and the legacy env-gate
+# fragment never appears. A second run must recognize the patched slot shape.
+$main917Source = 'const env=process.env;function resolve(e,t,r){let i=r===`win32`&&env.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===`1`?{...e,computerUse:!0}:e;let n={codexLocalAccess:e.codexLocalAccess,inAppBrowserUse:e.inAppBrowserUse,inAppBrowserUseAllowed:e.inAppBrowserUseAllowed,inAppBrowserUseHistory:e.inAppBrowserUseHistory,browserUseTinysky:e.browserUseTinysky,defaultLinkOpenTargetPreference:e.defaultLinkOpenTargetPreference,localBackend:e.localBackend,localProjectTaskMembership:e.localProjectTaskMembership,localAutomationHabitatMigration:e.localAutomationHabitatMigration,browserPane:e.browserPane,browserExtensions:e.browserExtensions,browserSettingsCloudSync:e.browserSettingsCloudSync,externalBrowserUse:e.externalBrowserUse,externalBrowserUseAllowed:e.externalBrowserUseAllowed,computerUse:e.computerUse,computerUseAutoInstall:e.computerUseAutoInstall};return[i,n];}'
+
+# The ASAR target finder applies its own receiver test before the embedded
+# patcher runs. Evaluate that exact condition instead of copying its patterns.
+$receiverLoop = $ast.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.ForEachStatementAst] -and
+      $node.Condition.Extent.Text -ceq '$desktopFeatureMainCandidates'
+  }, $true)
+if (-not $receiverLoop) {
+  throw 'desktop-feature receiver finder loop was not found in the patch script'
+}
+$receiverIf = $receiverLoop.Body.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.IfStatementAst]
+  }, $true)
+if (-not $receiverIf) {
+  throw 'desktop-feature receiver finder condition was not found in the patch script'
+}
+$receiverTest = [scriptblock]::Create('param([string]$text) (' + $receiverIf.Clauses[0].Item1.Extent.Text + ')')
 
 $hasNativePreference = Test-Path Variable:\PSNativeCommandUseErrorActionPreference
 $previousNativePreference = $null
@@ -235,6 +258,30 @@ try {
   }
   if ([System.IO.File]::ReadAllText($mainNegative.AssetPath) -cne $mainNegativeSource) {
     throw 'unrelated main fixture was modified'
+  }
+
+  $main917 = Invoke-PatcherFixture -Name 'codex-26-917-desktop-feature-main' -Source $main917Source -Target 'main' -ExpectedExitCode 0
+  if ($main917.Output -cne 'patched') {
+    throw "26.917 main fixture did not report patched: $($main917.Output)"
+  }
+  $patchedMain917 = [System.IO.File]::ReadAllText($main917.AssetPath)
+  if (-not $patchedMain917.Contains('inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,inAppBrowserUseHistory:e.inAppBrowserUseHistory,browserUseTinysky:e.browserUseTinysky,defaultLinkOpenTargetPreference:e.defaultLinkOpenTargetPreference,localBackend:e.localBackend,localProjectTaskMembership:e.localProjectTaskMembership,localAutomationHabitatMigration:e.localAutomationHabitatMigration,browserPane:!0,browserExtensions:e.browserExtensions,browserSettingsCloudSync:e.browserSettingsCloudSync,externalBrowserUse:!0,externalBrowserUseAllowed:!0,computerUse:e.computerUse')) {
+    throw '26.917 main fixture is missing its patched slot shape'
+  }
+  if ($patchedMain917.Contains('browserPane:!0,inAppBrowserUse:!0,inAppBrowserUseAllowed:!0,externalBrowserUse:!0,externalBrowserUseAllowed:!0')) {
+    throw '26.917 main fixture unexpectedly carries the legacy env-gate fragment'
+  }
+  Assert-ValidJavaScript -Name '26.917 main' -AssetPath $main917.AssetPath
+  Assert-Idempotent -Name '26.917 main' -AssetPath $main917.AssetPath -Target 'main'
+
+  foreach ($case in @(
+      @{ Name = '26.917 main'; Text = $main917Source; Expected = $true },
+      @{ Name = 'patched 26.917 main'; Text = $patchedMain917; Expected = $true },
+      @{ Name = 'patched 26.818 main'; Text = $patchedMain; Expected = $true },
+      @{ Name = 'unrelated main'; Text = $mainNegativeSource; Expected = $false })) {
+    if ([bool](& $receiverTest $case.Text) -ne $case.Expected) {
+      throw "receiver finder misjudged the $($case.Name) fixture: expected=$($case.Expected)"
+    }
   }
 } finally {
   if ($hasNativePreference) {
