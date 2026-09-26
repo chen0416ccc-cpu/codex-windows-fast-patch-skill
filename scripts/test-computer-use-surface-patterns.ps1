@@ -211,6 +211,24 @@ foreach ($helper in @('n.Wu', 'helpers.$q12')) {
   if ($repeat.Output -cne 'already-patched') { throw 'renamed readiness is not idempotent' }
 }
 
+# Desktop 26.924 renamed every minified local in both gates without changing
+# their shape; anchors must follow the structure, not the identifier spellings.
+$renamedGateSource = $modernSource.
+  Replace('if(!r.installed||i==null||a&&e.platform!==`darwin`)return null;', 'if(!n.installed||i==null||a&&e.platform!==`darwin`)return null;').
+  Replace('p=f&&l.platform===`darwin`&&t.computerUse&&u.enabled&&u.paths.serviceAppPath!=null', 'm=p&&l.platform===`darwin`&&t.computerUse&&u.enabled&&u.paths.serviceAppPath!=null')
+$renamedGate = Invoke-PatcherFixture -Name 'modern-renamed-gate-locals' -Source $renamedGateSource -ExpectedExitCode 0
+if ($renamedGate.Output -cne 'patched') { throw 'renamed gate locals were not patched' }
+$renamedGatePatched = [IO.File]::ReadAllText($renamedGate.AssetPath)
+if (-not $renamedGatePatched.Contains('if(!n.installed||i==null||a&&(e.platform!==`darwin`&&e.platform!==`win32`))return null;') -or
+    -not $renamedGatePatched.Contains('m=p&&t.computerUse&&(l.platform===`darwin`&&u.enabled&&u.paths.serviceAppPath!=null||l.platform===`win32`)')) {
+  throw 'renamed gate patch did not preserve the bundle identifiers'
+}
+& $node.Source --check $renamedGate.AssetPath
+if ($LASTEXITCODE -ne 0) { throw 'renamed gate output syntax check failed' }
+$renamedGateRepeat = Invoke-PatcherFixture -Name 'modern-renamed-gate-repeat' -Source $renamedGatePatched -ExpectedExitCode 0
+if ($renamedGateRepeat.Output -cne 'already-patched') { throw 'renamed gate patch is not idempotent' }
+Write-Output 'CUA_RENAMED_GATE_LOCALS_PASSED'
+
 # Migrate complete earlier patches without mistaking their inserted flag for
 # evidence of a legacy host. Legacy hosts must regain their actual feature gate.
 $legacyGate = 'p=f&&(l.platform===`darwin`&&t.computerUse&&u.enabled&&u.paths.serviceAppPath!=null||l.platform===`win32`&&t.computerUse&&t.computerUseNodeRepl)'
@@ -277,6 +295,9 @@ $originalPluginGate = 'if(!r.installed||i==null||a&&e.platform!==`darwin`)return
 $patchedPluginGate = 'if(!r.installed||i==null||a&&(e.platform!==`darwin`&&e.platform!==`win32`))return null;'
 Assert-RejectedUnchanged 'partial-plugin-only' ($positiveSource.Replace($originalPluginGate, $patchedPluginGate))
 Assert-RejectedUnchanged 'missing-plugin-gate' ($positiveSource.Replace($originalPluginGate, ''))
+# Lookalike surface gates whose repeated state local diverges must not satisfy
+# the anchor; the real gate always reads enabled and paths from one object.
+Assert-RejectedUnchanged 'mismatched-surface-state' ($modernSource.Replace('u.paths.serviceAppPath!=null', 'v.paths.serviceAppPath!=null'))
 
 # Import only reviewed function definitions; never execute the package install entry point.
 foreach ($name in @('Find-ComputerUseSurfaceTarget', 'Assert-ComputerUseSurfaceOptions', 'Patch-ChromePluginWindowsRegistryParsing', 'Invoke-NpxAsar')) {
