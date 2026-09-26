@@ -2667,6 +2667,7 @@ function Invoke-PatchAppAsar {
 }
 
 . (Join-Path $PSScriptRoot 'lib\asar-integrity.ps1')
+. (Join-Path $PSScriptRoot 'lib\msix-payload.ps1')
 
 function Get-ManifestPublisher {
   param([string]$WorkPackageRoot)
@@ -2794,6 +2795,10 @@ function Install-PatchedPackage {
     [string]$MsixPath,
     [string]$PackageFamilyName
   )
+  # Authenticode validates the signed block map; it does not prove the ZIP payload
+  # matches that map. Reject a damaged package before interrupting a working app.
+  $payload = Test-MsixPayload -Path $MsixPath
+  Write-Log "MSIX payload verified: files=$($payload.Files) blocks=$($payload.Blocks)"
   $installed = Invoke-TransactionalMsixInstall -MsixPath $MsixPath -PackageName $PackageFamilyName
   Write-Log "installed package: $($installed.PackageFullName)"
   if ($Launch -and -not $NoLaunch) {
