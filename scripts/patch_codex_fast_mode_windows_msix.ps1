@@ -2026,7 +2026,7 @@ function Find-PatchTargets {
     }
   }
   if ([string]::IsNullOrWhiteSpace($browserSidebarAvailabilityTarget)) {
-    foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter 'app-initial-*.js' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)) {
+    foreach ($candidate in (Get-ChildItem -LiteralPath $assetsDir -Filter 'app-*.js' -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'app-initial-*.js' -or $_.Name -like 'app-shared-*.js' } | Select-Object -ExpandProperty FullName)) {
       $text = Get-Content -Raw -LiteralPath $candidate
       if ($text.Contains('in_app_browser') -and
            $text.Contains('experimental-features') -and
