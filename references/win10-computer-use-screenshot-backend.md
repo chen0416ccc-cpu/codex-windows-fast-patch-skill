@@ -391,3 +391,22 @@ Desktop `26.917.9434.0` and `26.917.8451.0` re-sign the `D09A2F3F` code again. E
 `EndToEndValidatedDesktopVersion` remains `null` for both profiles. The soak frames were not decoded and visually inspected, and a code editor is not the continuously animating native target that `SKILL.md` requires. No capture ran against the `2AA2A7A9` helper. In that session `list_windows` returned neither a console window nor the running Task Manager, so no animated native target was captured.
 
 When driving the helper outside Desktop, point `CODEX_HOME` at a disposable directory. Run against a real Codex home, the helper rewrote the `notify` hook in `config.toml` to its own executable path and re-serialized the whole file, so a test copy silently replaced the hook that Desktop had configured. Pointed at an empty directory, it created `config.toml`, the goals, logs, memories, queue and state SQLite databases, `installation_id` and `skills` there.
+
+### `@oai/sky 0.7.4` callback timeout
+
+This build already checks whether the border property is available. On Windows 10, the original `219BFB75` helper enumerated and activated the target successfully, but repeated screenshot requests timed out in the synchronous `FrameArrived` copy path.
+
+| Source Desktop | Original SHA-256 | Patched SHA-256 | Installed Desktop acceptance |
+| --- | --- | --- | --- |
+| `26.924.1866.0` | `219BFB756D96BCE3EA6C0FFBEFB690C7FE3682E12117D330F46BC21BD1E2C576` | `568419455B9D36C6B4AB852A6B0D9C625C98026C143154A5D88CD035C7B95ACD` | Pending; standalone helper checks only |
+| `26.924.2738.0` | `8010E5ED48DFD9C06B73B564E020ED1CCE5914071A46725C8702360E4C71DD9C` | `E238ADA0032AF2E672FCD3C6D5F06C6A9162D390AC49FCA296ED3723FC1BDCBF` | `26.924.2738.1` |
+
+Both originals are 1,551,152 bytes. All ten section headers and raw section bodies match between the originals. Their 4,229 differing bytes are confined to the checksum (3) and certificate overlay (4,226), with no other differences.
+
+The patch redirects the callback through a 132-byte MTA worker wrapper and changes the busy/once branches. There is insufficient executable padding, so a new 512-byte RX section, `.cuw10`, uses the beginning of the certificate overlay at raw `0x176e00`, RVA `0x17e000`. The invalidated certificate directory is cleared. Exact guarded regions include the PE header changes; complete original backups and complete output hashes are required, and the outer MSIX is signed after repacking.
+
+The `219BFB75` candidate passed eight static captures, eight visually inspected changing Task Manager Performance frames, and a thirty-capture resource sample from standalone helper processes. These checks do not establish installation of Desktop `26.924.1866.0`.
+
+The `8010E5ED` candidate was installed inside the signed `26.924.2738.1` package. Its extracted runtime and packaged helper hashes match. Real Desktop CUA calls navigated Explorer to a controlled folder and returned two identical, visually inspected `1125x719` images in separate calls. Three later `666x593` Task Manager Performance images showed distinct CPU curves and advancing uptime; all were visually inspected. Their encoded sizes were 66,776, 66,046 and 66,510 bytes. The last capture took 54 ms. Earlier captures taken while the target was obscured were excluded, and an AX click with unavailable geometry was replaced by a screenshot-based coordinate click.
+
+Both profile harnesses cover original/candidate hashes, installation, idempotence, rollback, backup preservation and unknown-hash rejection on isolated copies. Only `0.7.4-8010E5ED` has its end-to-end Desktop field populated. These bounded observations do not prove long-duration resource stability or repair unrelated AX geometry behavior.
