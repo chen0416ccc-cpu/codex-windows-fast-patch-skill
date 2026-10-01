@@ -94,6 +94,8 @@ For a provider explicitly configured with `requires_openai_auth=false`, the skil
 
 </details>
 
+For browser AX `Decompression failed` errors, the repair validates compressed WASM assets and restores damaged caches only from an equivalent resource in the same package version. Acceptance includes real AX reads, text entry and clicks in both Chrome and the in-app browser. See [AX troubleshooting](references/restriction-debug-cases.md#browser-ax-reports-decompression-failed).
+
 ## Update
 
 The agent checks for repository updates before repairs. You can also update a Git-cloned installation manually:

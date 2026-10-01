@@ -4000,6 +4000,41 @@ function Invoke-ChromeHeaderCompatibility {
   }
 }
 
+function Invoke-BrowserAccessibilityAssets {
+  param(
+    [string]$CodexHomeRoot,
+    [string]$MarketplaceRoot,
+    [string]$InstalledMarketplaceRoot,
+    [object]$RuntimeInventory,
+    [switch]$VerifyOnly
+  )
+  $options = @{
+    codexHomeRoot = $CodexHomeRoot
+    marketplaceRoot = $MarketplaceRoot
+    installedMarketplaceRoot = $InstalledMarketplaceRoot
+    verifyOnly = [bool]$VerifyOnly
+    backupRoot = (Join-Path $CodexHomeRoot 'backups\browser-accessibility')
+    runtime = @{
+      referenceBin = (Split-Path -Parent $RuntimeInventory.ReferenceNodePath)
+      bins = @(@($RuntimeInventory.AllowedCuaBinRoots) + @(Split-Path -Parent $RuntimeInventory.NodePath) |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+    }
+  }
+  $oldPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = 'Continue'
+    $output = @($options | ConvertTo-Json -Depth 6 -Compress |
+      & $RuntimeInventory.NodePath (Join-Path $PSScriptRoot 'repair-browser-accessibility-assets.cjs') 2>&1)
+    $exitCode = $LASTEXITCODE
+  } finally { $ErrorActionPreference = $oldPreference }
+  $detail = ($output | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
+  if ($exitCode -ne 0) { throw "Browser accessibility asset check failed: $detail" }
+  $results = $detail | ConvertFrom-Json
+  foreach ($result in $results) {
+    Write-Log "Browser AX asset $($result.state): $($result.target) sha256=$($result.sha256) packaged-peer-recovery=$($result.sourceRecovered)"
+  }
+}
+
 function Install-ComputerUse {
   $codexHomeResolved = Resolve-OrCreateDirectory $CodexHome
   $marketplaceRoot = Get-StableBundledMarketplaceRoot $codexHomeResolved
@@ -4069,6 +4104,8 @@ function Install-ComputerUse {
       -BackupRoot (Join-Path (Split-Path -Parent $marketplaceRoot) 'chrome-header-compat-backups') | Out-Null
   }
 
+  Invoke-BrowserAccessibilityAssets $codexHomeResolved $marketplaceRoot $installedMarketplaceRoot $runtimeInventory
+
   Write-Log "installed marketplace plugin: $pluginSourceRoot"
   Write-Log "installed cached plugin: $computerUseCacheRoot"
   Write-Log "updated latest junction: $latestPath"
@@ -4082,6 +4119,7 @@ function Test-ComputerUse {
   $installedChromeCacheRoot = Join-Path $codexHomeResolved "plugins\cache\openai-bundled\chrome\$installedChromeVersion"
   $runtimeInventory = Get-CurrentCodexAppServerRuntimeInventory
   $headerMarketplaceRoot = Get-StableBundledMarketplaceRoot $codexHomeResolved
+  Invoke-BrowserAccessibilityAssets $codexHomeResolved $headerMarketplaceRoot $installedMarketplaceRoot $runtimeInventory -VerifyOnly
   $headerPatcher = Join-Path $PSScriptRoot 'patch-chrome-custom-provider-headers.cjs'
   $headerServices = @(Get-ChromeHeaderCompatibilityServicePaths $codexHomeResolved $headerMarketplaceRoot $installedMarketplaceRoot `
     -NodePath $runtimeInventory.NodePath -PatcherPath $headerPatcher -RuntimeInventory $runtimeInventory)
