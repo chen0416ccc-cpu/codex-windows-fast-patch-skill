@@ -4,6 +4,20 @@ Use this reference only when the main `SKILL.md` workflow does not explain the c
 
 Commands below refer to the skill directory as `$SkillRoot`. Resolve it with the probe in the `Skill Root` section of `SKILL.md` before running any of them.
 
+## Browser AX Reports Decompression Failed
+
+If both Chrome and the in-app browser fail on `tab.ax.get('state')`, reproduce on a blank tab and inspect the service selected by `NODE_REPL_TRUSTED_SERVICES`. The Chrome client can dispatch to the separate **browser** plugin service; validating only Chrome's assets misses that path. Inspect `BROWSER_USE_ACCESSIBILITY_CORE_WASM_PATH` if an override is present.
+
+A locally repacked Desktop `26.928.3736.3` contained a one-byte corruption in the browser plugin's `browser-accessibility.wasm.br`, also copied into three mutable mirrors/caches. The same-version Chrome plugin had byte-identical service code and a healthy asset. Both compressed files were 4,084,148 bytes; offset 2,547,744 was `05` in the corrupt copy and `45` in the healthy copy. The corrupt hash was `038f1af50f6dd1e5edfa13f967f2c670cea24795686a00f4f7d773b1be2be826`; the healthy hash was `97d2773f1f0d3f890e2dc8bbf7da5745cfb9c2686d893579ffc35bb9608185ee`. The origin of the corruption is unknown; this does not establish a defect in the official release. Matching a damaged package hash alone cannot prove asset health.
+
+`install-computer-use-local.ps1 -StrictVerifyOnly` now decompresses and validates the AX WASM assets for browser, Chrome and the selected standalone browser-desktop runtime. `-VerifyOnly` repairs missing/corrupt mutable assets after refreshing caches. A damaged packaged plugin asset can use a healthy sibling from that same installed marketplace only when the descriptor version and complete service bytes match. Healthy but different cache bytes, mixed versions, or the absence of a compatible healthy packaged source fail before asset writes. Standalone runtimes use their own packaged source. Stale runtimes and unrelated plugins are outside the selected scope.
+
+The repair backs up changed assets, leaves package sources and trusted clients unchanged, and refuses WindowsApps targets including resolved junctions. It does not change account/configuration, security checks or the loader. If no equivalent packaged source exists, obtain a verified matching package through the normal repair workflow rather than guessing compressed bytes or borrowing another version.
+
+Reset the Node REPL kernel after repair because failed WASM initialization is cached. Require actual Chrome **and** in-app-browser AX full/default state reads, AX text entry, AX button clicks and visible results, then repeat in a fresh kernel. DOM/Playwright success does not satisfy AX acceptance. Those operations passed after this local asset repair without reinstalling Desktop.
+
+Regression command: `node scripts/test-browser-accessibility-assets.cjs`. Optional arguments `<healthy-wasm.br> <corrupt-wasm.br>` replay the real asset pair without adding vendor binaries to the repository. The suite covers source recovery, version/service mismatch, batch preflight, missing/corrupt assets, healthy mixed assets, selected standalone runtime scope, read-only checks, backups, idempotence and PowerShell 5.1/7 wrapper transport when available.
+
 ## Model Experience Is Partially Broken
 
 Symptoms:

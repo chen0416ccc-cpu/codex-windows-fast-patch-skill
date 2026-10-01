@@ -93,6 +93,8 @@ Claude Code 可将目标改为 `$env:USERPROFILE\.claude\skills\codex-windows-fa
 
 </details>
 
+浏览器 AX 报 `Decompression failed` 时，修复流程会验证 WASM 压缩资源，并在确认同包同版本资源等价后恢复损坏的缓存。完成标准包括 Chrome 和内置浏览器的实际 AX 读取、输入与点击，详见 [AX 故障说明](references/restriction-debug-cases.md#browser-ax-reports-decompression-failed)。
+
 ## 更新
 
 智能体修复前会检查仓库更新。通过 `git clone` 安装的副本也可以手动更新：
