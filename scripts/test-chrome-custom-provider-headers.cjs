@@ -43,6 +43,10 @@ if (profile.id === '26.928.21956') {
   equal(plan.patchedSha256, 'fce2fa3e2e2690b5376584c0c84d367eea809c0c0bca55a104d387c5f64c84d2', 'Desktop 26.928.2636 plugin produces the reviewed overlay bytes');
 }
 
+if (profile.id === '26.928.31416') {
+  equal(plan.patchedSha256, '40669c32b94530d29f1311562a2dab965d0b3d19e065d621090e89ea38e9e3c8', 'Desktop 26.928.3736 plugin produces the reviewed overlay bytes');
+}
+
 equal(patcher.inspect(Buffer.from(plan.patched)).state, 'patched', 'complete patch recognized');
 equal(patcher.inspect(Buffer.from(plan.patched)).profile, profile.id, 'patched profile remains exact');
 equal(patcher.inspect(Buffer.from(plan.patched)).patched, plan.patched, 'idempotence');
