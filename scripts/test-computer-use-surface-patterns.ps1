@@ -391,6 +391,8 @@ Write-Output 'CUA_FAIL_CLOSED_SELECTION_AND_SCOPE_PASSED'
   }
   function Get-Command {
     param([string]$Name, [string]$ErrorAction)
+    # Exercise acquisition fallback without a cached CLI; cache reuse has its own suite.
+    if ($Name -ceq 'node') { return }
     if ($Name -cne 'npx') { throw "unexpected command lookup: $Name" }
     if ($useNpx) { [pscustomobject]@{ Source = 'Invoke-FakeAsarRunner' } }
   }

@@ -924,6 +924,22 @@ When the root has the required proxy but its native CUA child loses it, run `scr
 
 Run `node scripts/test-node-repl-proxy-env.cjs`, `powershell -NoProfile -File scripts/test-node-repl-proxy-targeted-mode.ps1` and `python -B scripts/test-probe-node-repl-proxy-env.py`. They verify behavior, scope/idempotence/no-write failure paths and synthetic plus task-owned process reads. They do not establish a newly installed Desktop's proxy routing. After a real deployment, verify the CUA child environment and a controlled browser tab. Restarting only its JavaScript kernel does not restart the MCP process.
 
+## Custom stdio MCP Launchers Do Not Inherit The Default Proxy
+
+A dedicated Desktop launcher, a healthy backend `.env`, and the CUA proxy patch can all pass while separately configured stdio MCP servers have no standard proxy variables. A connection filter restricted to `ChatGPT.exe` and `codex.exe` misses their Node launchers and servers. Identify the current Desktop process tree, attribute direct sockets to their actual owners, and use the complete-read environment probe on those processes before diagnosing the fault. A registry-mirror connection is a separate observation from a model API or CUA connection; record it instead of silently excluding it from an MCP-wide claim.
+
+The official [configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference) defines `mcp_servers.<id>.env_vars` as an additional environment-variable allowlist for stdio servers. When the parent has the intended proxy variables and an enabled local server lacks them, back up `config.toml` and merge the required names into that server's existing allowlist, preserving `env`, credentials, arguments, disabled servers, structured entries, and deliberate per-server overrides. For example:
+
+```toml
+[mcp_servers.existing_server]
+# Keep the existing command, args and other configuration.
+env_vars = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy"]
+```
+
+This is a user-config repair, not a reason to repack MSIX, install another MCP, change the system proxy, or replace a domestic package registry. Validate the candidate TOML before writing and compare the parsed result with the intended narrow change. Restart the affected server through a supported lifecycle or cold-start Desktop when its existing processes do not refresh; editing config does not retrofit a running process environment.
+
+On one Windows host with Desktop `26.1013.4894.1` / CLI `0.163.0-alpha.10.2`, all eleven sampled core environments passed after the combined CUA repair, but six custom MCP npm launchers had no proxy variables and held direct connections to the configured domestic registry mirror. Adding the standard allowlist to four already-enabled custom stdio servers and cold-starting Desktop restored inheritance. Fourteen core/custom launcher/server environments then passed complete reads, and all eighty sampled Desktop-tree connections used the dedicated proxy with the system proxy off. This is finite environment/routing evidence, not a guarantee that every future request from every library honors those variables. Native screenshot/input was not exercised.
+
 ## Desktop 26.930.7945 and 26.1002.6548 Process and Proxy Checks
 
 Desktop `26.930.7945.0` ships CLI `0.160.1`, bundled plugins `26.930.61225`, and Sky `0.7.5`. Identify the current Electron root, app-server, CUA MCP, Node REPL host, and trusted worker before diagnosing proxy inheritance; unrelated Node processes are not evidence of a CUA proxy fault. PR #90's connection counts and dedicated-launcher observations describe the contributor's host and were not independently reproduced here.
