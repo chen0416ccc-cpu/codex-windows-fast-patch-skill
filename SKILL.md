@@ -150,7 +150,11 @@ If an authorized Windows screenshot shows another app while the target's accessi
 
 After successful package and runtime acceptance, the current recoverable installer removes its own temporary build and ASAR workspace while retaining transcripts and logs. For orphaned previous runs, use scripts\cleanup-model-experience-repair-artifacts.ps1; its default is inventory-only. With -Clean, it first requires StrictVerifyOnly and VerifyAllBundledPluginsAvailable to pass, then removes only direct-child run directories or short temp workspaces with the expected name and ownership marker, an age over 24 hours, no reparse points, and no active process reference. It never deletes sibling transcripts or configuration backups.
 
+For a specific pre-marker `upgrade-repair-YYYYMMDD[-suffix]` directory, pass its exact path with `-LegacyRunPath` to inventory the old generated subdirectories. This compatibility path is opt-in, direct-child-only under `D:\CodexData`, requires a `build-status.json` recording `stage=failed` and `installed=false` and an age over 24 hours, rejects reparse points and active processes, and still requires the same strict verification before `-Clean`. It removes only `build`, `tmp`, and `transactional`; `recovery-layout` is removed only when the current running/registered Codex package version is provably newer than the recovery manifest. Backups, evidence, root-level logs, and other files are preserved. Never use a wildcard or broaden the path to unrelated repair directories.
+
 Run this from PowerShell after acceptance: `& "$SkillRoot\scripts\cleanup-model-experience-repair-artifacts.ps1" -Clean -Confirm:$false`
+
+To inspect one legacy directory first, run `& "$SkillRoot\scripts\cleanup-model-experience-repair-artifacts.ps1" -LegacyRunPath 'D:\CodexData\upgrade-repair-YYYYMMDD'`. Add `-Clean -Confirm:$false` only after the inventory and current Codex version check show the generated artifacts are obsolete.
 
 If the user presses Escape, stops Computer Use, closes the test window, or resumes work in the target, stop the interactive test and report its last completed step. Do not automatically reopen the test app, retry input, or switch to another control mechanism. Background checks and the repair report can still be completed without further desktop input.
 
