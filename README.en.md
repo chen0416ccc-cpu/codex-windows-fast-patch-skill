@@ -98,13 +98,17 @@ For a provider explicitly configured with `requires_openai_auth=false`, the skil
 
 ## Update
 
-The agent checks for repository updates before repairs. You can also update a Git-cloned installation manually:
+Before every update or patch, fetch and review both your fork's `main` and upstream `main`, then compare the installed skill and existing PRs. Reuse remote fixes and add only missing fixes or optimizations supported by actual evidence. A Git-cloned installation can fast-forward after review:
 
 ```powershell
+git -C $SkillRoot fetch origin
+git -C $SkillRoot fetch upstream
 git -C $SkillRoot pull --ff-only
 ```
 
-This updates the repair tool, not Codex Desktop. Resolve local changes or branch conflicts without force-overwriting them. Non-Git copies installed through a plugin or archive need updating through their original installation channel.
+Verify that `origin` is your fork and `upstream` is the original repository; configure a missing remote using the [remote review and publication workflow](references/remote-review-and-publication.md). Non-Git installations must also compare through a persistent source checkout while preserving their local overlay.
+
+This updates the repair tool, not Codex Desktop. Validate necessary increments, commit them, push your `main`, and create or update an upstream PR. Record the commit, base/head and PR URL. Reuse effective commits/PRs without empty commits or duplicate PRs, and explicitly record network or authentication blocks.
 
 ## Which repairs reinstall Codex
 

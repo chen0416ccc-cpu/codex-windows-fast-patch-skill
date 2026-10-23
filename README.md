@@ -97,13 +97,17 @@ Claude Code 可将目标改为 `$env:USERPROFILE\.claude\skills\codex-windows-fa
 
 ## 更新
 
-智能体修复前会检查仓库更新。通过 `git clone` 安装的副本也可以手动更新：
+每次更新打补丁前，先拉取并审查自己的远端 `main` 与上游 `main`，对比本机技能和已有 PR；远端已覆盖的修复直接复用，只补充有实际证据支持的缺失修复或优化。通过 `git clone` 安装的副本可在审查后快进更新：
 
 ```powershell
+git -C $SkillRoot fetch origin
+git -C $SkillRoot fetch upstream
 git -C $SkillRoot pull --ff-only
 ```
 
-这是更新修复工具，不是更新 Codex 客户端。有本地修改或分支冲突时先处理冲突，不要强行覆盖。通过插件或压缩包安装的非 Git 副本，需要从原安装渠道更新。
+先核实 `origin` 是自己的 fork、`upstream` 是原仓库；没有该 remote 时按[远端审查与发布流程](references/remote-review-and-publication.md)配置。非 Git 安装副本也要通过持久源码 checkout 对比，保留本机 overlay，不能跳过远端审查。
+
+这是更新修复工具，不是更新 Codex 客户端。必要增量验证后必须提交、推送自己的 `main` 并创建或更新上游 PR，在修复记录中写明 commit、base/head 和 PR URL。已有有效提交/PR 则复用，避免空提交和重复 PR；网络或认证阻塞须明确记录。
 
 ## 哪些修复会重新安装 Codex
 

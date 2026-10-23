@@ -1,13 +1,36 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
-const {patchText, ORIGINAL, REPLACEMENT, MARKER} = require('./patch-windows-store-update-fallback.cjs');
+const {patchText, MARKER, PROFILES, OFFERS_PROFILE} = require('./patch-windows-store-update-fallback.cjs');
 
 const source = fs.readFileSync(process.argv[2], 'utf8');
-const start = source.indexOf('var S7=');
-const end = source.indexOf(',aCe=', start);
-assert(start >= 0 && end > start, 'Expected the current Windows Store updater and fallback coordinator');
-const definitions = source.slice(start, end) + ';globalThis.classes={Store:rCe,Combined:iCe};';
+if (OFFERS_PROFILE.changes.some(change => source.includes(change.original) || source.includes(change.replacement))) {
+  require('./test-windows-store-offers-fallback.cjs');
+  return;
+}
+const profile = PROFILES.find(item => source.includes(item.original) || source.includes(item.replacement));
+assert(profile, 'Expected a supported Windows Store updater profile');
+const {original: ORIGINAL, replacement: REPLACEMENT} = profile;
+const start = source.indexOf(`var ${profile.logger}=`);
+const storeClass = new RegExp('var ' + profile.logger + '=' + (profile.loggerObject ?? 'l') + '\\.i\\(`windows-store-updater`\\),([\\w$]+)=class\\{').exec(source);
+const combinedClass = /,([\w$]+)=class\{options;activeUpdater=null;installPromise=null;isMsixFallbackUpdaterInitialized=!1;(?:shouldCheckMsixFallback=!1;)?/.exec(source);
+assert(start >= 0 && storeClass && combinedClass && combinedClass.index > start,
+  'Expected the current Windows Store updater and fallback coordinator');
+let definitions;
+// The native parser finds the complete class boundary without pinning minified names.
+for (let end = source.indexOf('},', combinedClass.index); end >= 0 && end - start < 65536;
+  end = source.indexOf('},', end + 2)) {
+  const candidate = source.slice(start, end + 1) +
+    `;globalThis.classes={Store:${storeClass[1]},Combined:${combinedClass[1]}};`;
+  try {
+    new vm.Script(candidate);
+    definitions = candidate;
+    break;
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+  }
+}
+assert(definitions, 'Expected complete Windows updater class definitions');
 if (source.includes(MARKER)) {
   assert.equal(patchText(source).state, 'already-patched');
   assert.throws(() => patchText(source.replace(REPLACEMENT, `/*${MARKER}*/${ORIGINAL}`)), /Partial/);
@@ -29,13 +52,13 @@ async function check({name, newer = true, manifest = true, allowFallback = true,
   let fallbackCalls = 0;
   let storeCalls = 0;
   const context = vm.createContext({
-    l: {i: () => () => ({info() {}, warning() {}, error() {}})},
-    p: {app: {isPackaged: true, getName: () => 'Codex'}, net: {}, dialog: {showMessageBox: async x => events.push(x.message)}},
-    b7: async () => manifest ? {buildVersion: newer ? '2.0.0.0' : '1.0.0.0'} : null,
-    f7: x => /^\d+(?:\.\d+)+$/.test(x),
-    d7: compare,
-    x7: ({manifest: m, buildVersion}) => !m || compare(m.buildVersion, buildVersion) <= 0 ? 'up-to-date' : 'should-check-store',
-    y7() {}, Date, Promise,
+    [profile.loggerObject ?? 'l']: {i: () => () => ({info() {}, warning() {}, error() {}})},
+    [profile.electronObject ?? 'p']: {app: {isPackaged: true, getName: () => 'Codex'}, net: {}, dialog: {showMessageBox: async x => events.push(x.message)}},
+    [profile.manifest]: async () => manifest ? {buildVersion: newer ? '2.0.0.0' : '1.0.0.0'} : null,
+    [profile.valid]: x => /^\d+(?:\.\d+)+$/.test(x),
+    [profile.compare]: compare,
+    [profile.decision]: ({manifest: m, buildVersion}) => !m || compare(m.buildVersion, buildVersion) <= 0 ? 'up-to-date' : 'should-check-store',
+    [profile.beforeInstall]() {}, Date, Promise,
   });
   vm.runInContext(definitions, context);
   const store = new context.classes.Store({

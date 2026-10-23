@@ -3040,7 +3040,8 @@ function Invoke-MakeAppxPack {
     Remove-Item -LiteralPath $MsixPath -Force
   }
   Write-Log "packing MSIX: $MsixPath"
-  & $MakeAppx pack /d $WorkPackageRoot /p $MsixPath /o
+  # Limit parallel packing memory; retain external resource guards for full builds.
+  & $MakeAppx pack /d $WorkPackageRoot /p $MsixPath /o /ml 1610612736
   if ($LASTEXITCODE -ne 0) {
     Fail "makeappx pack failed with exit code $LASTEXITCODE"
   }

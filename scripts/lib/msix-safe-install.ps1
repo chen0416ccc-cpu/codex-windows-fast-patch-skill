@@ -162,6 +162,10 @@ function Invoke-RecoverableMsixInstall {
     & $ValidateInstalledPackage $installed | Out-Null
     return [pscustomobject]@{Success=$true;Recovered=$false;Package=$installed;Error=$null}
   } catch {
+    if ($_.Exception.Data['CodexResourceBoundary']) {
+      Write-Log 'resource boundary stopped validation; preserving the registered package without another deployment'
+      throw
+    }
     $failure = $_.Exception.Message
     $current = Get-AppxPackage -Name $PackageName -ErrorAction Stop | Sort-Object Version -Descending | Select-Object -First 1
     if ($current -and $current.PackageFullName -eq $update.Existing.PackageFullName) {

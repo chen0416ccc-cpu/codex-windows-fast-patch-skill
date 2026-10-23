@@ -8,6 +8,7 @@
 
 ## Before Editing
 
+- Before each update or patch, follow `SKILL.md` Self-Update Preflight and `references/remote-review-and-publication.md`: fetch/review fork and upstream main, reuse covered fixes, then validate, commit, push fork main and publish an upstream PR for necessary increments. Record the commit and PR URL.
 - Inspect the current branch, working tree, and remote before making changes.
 - Preserve user changes. Do not discard, overwrite, or reset uncommitted work unless the user explicitly asks for it.
 - Prefer a dedicated `codex/` branch for non-trivial work.

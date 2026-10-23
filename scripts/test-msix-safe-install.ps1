@@ -136,6 +136,21 @@ Expect-Failure {
 } 'synthetic deployment failure; original package validation failed: synthetic original validation failure'
 Assert ($script:addCalls -eq $before+1) 'original validation failure never triggers a recovery deployment'
 $script:failDeployment=$false
+$script:current.Version=[version]'26.917.9434.0'
+$script:current.PackageFullName='original-package'
+$before=$script:addCalls
+Expect-Failure {
+  Invoke-RecoverableMsixInstall $target $recovery -ValidateInstalledPackage {
+    param($package)
+    $stop=[OperationCanceledException]::new('synthetic resource boundary')
+    $stop.Data['CodexResourceBoundary']=$true
+    throw $stop
+  }
+} 'synthetic resource boundary'
+Assert ($script:addCalls -eq $before+1) 'resource boundary never triggers recovery deployment'
+Assert ($script:current.Version -eq [version]'26.917.9434.1') 'resource boundary preserves updated registration for later verification'
+$script:current.Version=[version]'26.917.9434.0'
+$script:current.PackageFullName='original-package'
 $before=$script:addCalls
 Expect-Failure {Invoke-RecoverableMsixInstall $target $target -ValidateInstalledPackage {param($package)}} 'Recovery must be validated'
 Assert ($script:addCalls -eq $before) 'invalid recovery is rejected before changing the app'
