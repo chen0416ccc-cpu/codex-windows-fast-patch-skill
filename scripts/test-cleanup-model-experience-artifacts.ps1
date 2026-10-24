@@ -7,6 +7,11 @@ function Assert([bool]$Condition, [string]$Message) {
   if (-not $Condition) { throw "ASSERT: $Message" }
   $script:checks++
 }
+function Assert-Throws([scriptblock]$Action, [string]$Message) {
+  $threw = $false
+  try { & $Action | Out-Null } catch { $threw = $true }
+  Assert $threw $Message
+}
 
 $cleanupPath = Join-Path $PSScriptRoot 'cleanup-model-experience-repair-artifacts.ps1'
 $tokens = $null
@@ -24,16 +29,25 @@ foreach ($required in @(
   'cwp-tmp',
   '.codex-model-experience-temp',
   '[string[]]$LegacyRunPath',
+  '[string[]]$PurgeLegacyRunPath',
+  '[string[]]$ObsoleteBuildRootPath',
+  '[string]$VerifiedStatePath',
+  '[switch]$ExplicitTargetsOnly',
   'Assert-LegacyRepairRunRoot',
+  'Assert-ObsoleteBuildRoot',
+  'Get-VerifiedRepairRunCandidate',
+  '-not $ExplicitTargetsOnly',
   'Get-CurrentCodexPackageVersion',
   'Get-LegacyRecoveryVersion',
   'Get-LegacyGeneratedArtifactDirectories',
   '^upgrade-repair-\d{8}',
   'recovery-layout',
-  'backups, evidence, transcripts, and config backups were retained',
+  'non-selected backups and evidence were retained',
   'Get-RepairTreeSnapshot',
   'Assert-NoReparsePointsRecursive',
   'Get-CimInstance -ClassName Win32_Process',
+  'backups and evidence are included',
+  'exact accepted Codex repair build and recovery package',
   '-StrictVerifyOnly',
   '-VerifyAllBundledPluginsAvailable',
   '[IO.File]::Delete($entry)',
@@ -50,6 +64,8 @@ foreach ($name in @(
   'Assert-LegacyRepairRunRoot',
   'Get-LegacyRecoveryVersion',
   'Get-LegacyGeneratedArtifactDirectories',
+  'Assert-ObsoleteBuildRoot',
+  'Get-VerifiedRepairRunCandidate',
   'Remove-DirectoryTreeRobust'
 )) {
   $functionAst = $ast.Find({
@@ -104,6 +120,74 @@ try {
   Assert ($LASTEXITCODE -eq 0) ('default inventory succeeds without a modern runs directory: ' + ($inventory -join ' '))
   Assert (($inventory -join ' ') -like '*Dry run only*') 'default invocation explicitly reports inventory-only mode'
   Assert (Test-Path -LiteralPath (Join-Path $legacyRoot 'build\sample.txt')) 'default inventory leaves generated files untouched'
+
+  $purgeInventory = @(& $powershellExe -NoProfile -ExecutionPolicy Bypass -File $cleanupPath `
+    -DataRoot $dataRoot -PurgeLegacyRunPath $legacyRoot 2>&1)
+  Assert ($LASTEXITCODE -eq 0) ('explicit failed-run purge inventory succeeds: ' + ($purgeInventory -join ' '))
+  Assert (($purgeInventory -join ' ') -like '*backups and evidence are included*') 'whole-run purge clearly reports its wider scope'
+  Assert (Test-Path -LiteralPath (Join-Path $legacyRoot 'backups\sample.txt')) 'purge inventory remains read-only'
+
+  $obsoleteRoot = Join-Path $legacyParent 'nonphone-repair-20260101-1021'
+  $obsoletePackageRoot = Join-Path $obsoleteRoot 'OpenAI.Codex_1.0.0.0_x64__test'
+  $obsoletePackage = Join-Path $obsoletePackageRoot 'package'
+  $obsoleteArtifacts = Join-Path $obsoletePackageRoot 'artifacts'
+  New-Item -ItemType Directory -Path $obsoletePackage, $obsoleteArtifacts -Force | Out-Null
+  [IO.File]::WriteAllText((Join-Path $obsoletePackage 'AppxManifest.xml'),
+    '<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"><Identity Name="OpenAI.Codex" Version="1.0.0.1" /></Package>')
+  [IO.File]::WriteAllText((Join-Path $obsoleteArtifacts 'OpenAI.Codex_1.0.0.0_patched.msix'), 'fixture')
+  $obsolete = Assert-ObsoleteBuildRoot -Path $obsoleteRoot -ExpectedParent $legacyParent `
+    -CurrentCodexVersion ([version]'2.0.0.0') -CurrentDesktopStartTime (Get-Date)
+  Assert ($obsolete.SourceVersion -eq [version]'1.0.0.0' -and $obsolete.TargetVersion -eq [version]'1.0.0.1' -and
+    $obsolete.Snapshot.Files -eq 2) 'obsolete build binds its source directory, incremented manifest and patch artifact'
+  Assert-Throws {
+    Assert-ObsoleteBuildRoot -Path $obsoleteRoot -ExpectedParent $legacyParent `
+      -CurrentCodexVersion ([version]'1.0.0.0') -CurrentDesktopStartTime (Get-Date)
+  } 'a build matching the current Codex version is not obsolete'
+  Assert-Throws {
+    Assert-ObsoleteBuildRoot -Path (Join-Path $legacyParent 'unrelated') -ExpectedParent $legacyParent `
+      -CurrentCodexVersion ([version]'2.0.0.0') -CurrentDesktopStartTime (Get-Date)
+  } 'an unrecognized build root name is rejected'
+  [IO.File]::WriteAllText((Join-Path $obsoleteRoot 'notes.txt'), 'not an owned build artifact')
+  Assert-Throws {
+    Assert-ObsoleteBuildRoot -Path $obsoleteRoot -ExpectedParent $legacyParent `
+      -CurrentCodexVersion ([version]'2.0.0.0') -CurrentDesktopStartTime (Get-Date)
+  } 'unexpected files prevent obsolete build cleanup'
+  [IO.File]::Delete((Join-Path $obsoleteRoot 'notes.txt'))
+
+  . (Join-Path $PSScriptRoot 'lib\repair-deployment-state.ps1')
+  $script:repairLogsName = 'model-experience-repair-logs'
+  $verifiedData = Join-Path $fixtureRoot 'verified-data'
+  $verifiedLogs = Join-Path $verifiedData $repairLogsName
+  $verifiedRuns = Join-Path $verifiedData 'model-experience-repair-runs'
+  $verifiedOutput = Join-Path $verifiedRuns ('20260101-010101-' + ('a' * 32))
+  New-Item -ItemType Directory -Path $verifiedLogs, $verifiedOutput -Force | Out-Null
+  $verifiedTarget = [pscustomobject]@{ PackageFullName = 'OpenAI.Codex_1.9.9.10_x64__test'; Version = [version]'1.9.9.10'; Status = 'Ok' }
+  $verifiedSource = [pscustomobject]@{ PackageFullName = 'OpenAI.Codex_1.9.9.9_x64__test'; Version = [version]'1.9.9.9' }
+  $verifiedProcess = Get-Process -Id $PID
+  $verifiedSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+  $verifiedState = New-RepairDeploymentState -SourcePackage $verifiedSource -InstallerProcess $verifiedProcess `
+    -UserSid $verifiedSid -SessionId $verifiedProcess.SessionId -OutputRoot $verifiedOutput `
+    -TranscriptPath (Join-Path $verifiedLogs 'verify.transcript.txt')
+  $verifiedState.stage = 'cleanup-pending'
+  $verifiedState.acceptancePassed = $true
+  $verifiedState.verifiedPackageFullName = $verifiedTarget.PackageFullName
+  $verifiedState.verifiedUtc = [DateTime]::UtcNow.ToString('o')
+  $verifiedState.cleanupStatus = 'pending'
+  $verifiedState.installerPid = [int]::MaxValue
+  $verifiedStatePath = Join-Path $verifiedLogs 'verify.transcript.txt.state.json'
+  Write-RepairDeploymentState -Path $verifiedStatePath -State $verifiedState
+  $marker = Join-Path $verifiedOutput '.codex-model-experience-repair'
+  [IO.File]::WriteAllText($marker, ('b' * 32))
+  $script:cleanupMockPackage = $verifiedTarget
+  function Get-AppxPackage { param($Name) return $script:cleanupMockPackage }
+  $verifiedCandidate = Get-VerifiedRepairRunCandidate -StatePath $verifiedStatePath -DataRoot $verifiedData -RunsRoot $verifiedRuns
+  Assert (-not $verifiedCandidate.Missing -and $verifiedCandidate.Path -ceq $verifiedOutput -and
+    $verifiedCandidate.SentinelId -ceq ('b' * 32)) 'immediate cleanup is bound to a verified checkpoint and matching run sentinel'
+  $script:cleanupMockPackage = [pscustomobject]@{ PackageFullName = 'OpenAI.Codex_2.0.0.1_x64__test'; Version = [version]'2.0.0.1'; Status = 'Ok' }
+  Assert-Throws {
+    Get-VerifiedRepairRunCandidate -StatePath $verifiedStatePath -DataRoot $verifiedData -RunsRoot $verifiedRuns
+  } 'a superseding package prevents immediate old-run cleanup'
+  Remove-Item function:\Get-AppxPackage -ErrorAction SilentlyContinue
 
   $newerThanRecovery = @(Get-LegacyGeneratedArtifactDirectories -Path $legacyRoot -CurrentCodexVersion ([version]'2.0.0.0'))
   Assert ($newerThanRecovery.Count -eq 4) 'older recovery layout is eligible only when current Codex is newer'

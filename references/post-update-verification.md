@@ -24,6 +24,14 @@ The query compares the current user's registration and the process's PID **and s
 | `recovered-original-content` / `failed-original-retained` | The repair failed. Inspect the transcript; neither recovery nor retention of the original package is patch acceptance. |
 | `interrupted-not-installed`, `package-changed`, `package-missing`, `different-user` | Diagnose the reported state before selecting any new repair. |
 
+For `installed-needs-verification`, first inspect the existing transcript and state, then run the evidence-bound finalizer instead of deploying again:
+
+```powershell
+& "$SkillRoot\scripts\complete-model-experience-repair.ps1" -StatePath '<transcript>.state.json'
+```
+
+It never installs Codex. It requires the exact current target, the original installer to have exited, a visible Desktop window from that package, a passing Fast wire line in the retained transcript, `model/list` with `priority` on the default model, and strict installed-runtime/plugin verification. Only then does it atomically record acceptance and request exact-run cleanup. Use `-KeepArtifacts` to record acceptance while retaining the build. If cleanup fails, keep the accepted checkpoint and diagnose cleanup separately; do not hand-edit state JSON. Finalizer cleanup is explicit-target-only and does not sweep unrelated aged runs.
+
 If the state file is absent (including older runs or failure before initial validation), inspect the saved installer PID/start time, transcript, current package and artifacts manually. Missing state is not evidence that installation is safe to repeat. The runner must persist its pre-deployment checkpoint before the app can close. A later cleanup failure must retain the passed acceptance result and report cleanup separately. Do not manually edit a state file to declare success.
 
 `-ResumePreparedBuild` is still restricted to the documented pre-deployment failures and exact original source identity. The status query does not relax sentinels, signature, payload, recovery, UAC or ancestry checks.

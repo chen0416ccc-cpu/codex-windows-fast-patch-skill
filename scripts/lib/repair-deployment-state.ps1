@@ -7,6 +7,12 @@ function ConvertTo-RepairUtcDateTime {
   return [DateTimeOffset]::Parse([string]$Value, [Globalization.CultureInfo]::InvariantCulture).UtcDateTime
 }
 
+function Test-RepairProcessNotFoundError {
+  param([Parameter(Mandatory = $true)][System.Management.Automation.ErrorRecord]$ErrorRecord)
+  return ($ErrorRecord.FullyQualifiedErrorId -like 'NoProcessFoundForId*' -or
+    $ErrorRecord.FullyQualifiedErrorId -like 'NoProcessFoundForGivenId*')
+}
+
 function Assert-RepairStatePath {
   param([Parameter(Mandatory = $true)][string]$Path)
   $fullPath = [IO.Path]::GetFullPath($Path)
@@ -105,7 +111,7 @@ function New-RepairDeploymentState {
 function Write-RepairDeploymentState {
   param(
     [Parameter(Mandatory = $true)][string]$Path,
-    [Parameter(Mandatory = $true)][System.Collections.IDictionary]$State
+    [Parameter(Mandatory = $true)][object]$State
   )
   $fullPath = Assert-RepairStatePath $Path
   $State.updatedUtc = [DateTime]::UtcNow.ToString('o')
@@ -131,6 +137,36 @@ function Write-RepairDeploymentState {
   } finally {
     if ($created -and [IO.File]::Exists($temporaryPath)) { [IO.File]::Delete($temporaryPath) }
   }
+}
+
+function Set-RepairAcceptanceCheckpoint {
+  param(
+    [Parameter(Mandatory = $true)][object]$State,
+    [Parameter(Mandatory = $true)][string]$CurrentPackageFullName,
+    [Parameter(Mandatory = $true)][bool]$InstallerExited,
+    [Parameter(Mandatory = $true)][bool]$DesktopLaunchPassed,
+    [Parameter(Mandatory = $true)][bool]$FastWirePassed,
+    [Parameter(Mandatory = $true)][object]$ModelList,
+    [Parameter(Mandatory = $true)][bool]$StrictVerificationPassed
+  )
+  if ($State.acceptancePassed -or $State.stage -notin @('deploying', 'verifying')) {
+    throw 'Post-deployment acceptance can only complete a pending deployment checkpoint.'
+  }
+  if ($CurrentPackageFullName -cne $State.targetPackageFullName) {
+    throw 'Post-deployment acceptance requires the exact currently registered target package.'
+  }
+  if (-not $InstallerExited -or -not $DesktopLaunchPassed -or -not $FastWirePassed -or -not $StrictVerificationPassed) {
+    throw 'Post-deployment acceptance evidence is incomplete.'
+  }
+  if (-not $ModelList.model -or @($ModelList.serviceTiers) -notcontains 'priority') {
+    throw 'Post-deployment model/list evidence does not expose the Fast tier for the default model.'
+  }
+
+  $State.acceptancePassed = $true
+  $State.verifiedPackageFullName = $CurrentPackageFullName
+  $State.verifiedUtc = [DateTime]::UtcNow.ToString('o')
+  $State.stage = 'cleanup-pending'
+  $State.cleanupStatus = 'pending'
 }
 
 function Read-RepairDeploymentState {

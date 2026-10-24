@@ -25,6 +25,18 @@ $recovery = [pscustomobject]@{ PackageFullName = 'OpenAI.Codex_26.1016.8120.2_x6
 $newer = [pscustomobject]@{ PackageFullName = 'OpenAI.Codex_26.1020.11127.0_x64__test'; Version = [version]'26.1020.11127.0' }
 $currentProcess = Get-Process -Id $PID
 $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$missingProcessError = [Management.Automation.ErrorRecord]::new(
+  [InvalidOperationException]::new('missing process'),
+  'NoProcessFoundForGivenId,Microsoft.PowerShell.Commands.GetProcessCommand',
+  [Management.Automation.ErrorCategory]::ObjectNotFound,
+  2147483647)
+$otherProcessError = [Management.Automation.ErrorRecord]::new(
+  [UnauthorizedAccessException]::new('access denied'),
+  'GetProcessAccessDenied,Microsoft.PowerShell.Commands.GetProcessCommand',
+  [Management.Automation.ErrorCategory]::PermissionDenied,
+  2147483647)
+Assert (Test-RepairProcessNotFoundError -ErrorRecord $missingProcessError) 'Windows PowerShell 5.1 missing-process error is recognized as exited'
+Assert (-not (Test-RepairProcessNotFoundError -ErrorRecord $otherProcessError)) 'other process errors remain unknown'
 function New-FixtureState {
   New-RepairDeploymentState -SourcePackage $source -InstallerProcess $currentProcess -UserSid $sid `
     -SessionId $currentProcess.SessionId -OutputRoot $resolvedOutputRoot -TranscriptPath $transcriptPath
@@ -37,6 +49,50 @@ Assert (-not $read.acceptancePassed) 'preparation never implies acceptance'
 Assert ($statePath.StartsWith($logRoot) -and -not $statePath.StartsWith($resolvedOutputRoot)) 'checkpoint is outside the disposable build tree'
 Assert ((Get-RepairDeploymentAssessment $read $target $null $sid).Status -eq 'installed-needs-verification') 'registration alone needs verification'
 Assert ((Get-RepairDeploymentAssessment $read $source $currentProcess $sid).Status -eq 'installer-running') 'PID, session and start time match a live process'
+
+$postDeploy = New-FixtureState | ConvertTo-Json -Depth 5 | ConvertFrom-Json
+$postDeploy.stage = 'deploying'
+$modelListEvidence = [pscustomobject]@{ model = 'gpt-6-astra'; serviceTiers = @('priority', 'ultrafast') }
+Set-RepairAcceptanceCheckpoint -State $postDeploy -CurrentPackageFullName $target.PackageFullName `
+  -InstallerExited $true -DesktopLaunchPassed $true -FastWirePassed $true `
+  -ModelList $modelListEvidence -StrictVerificationPassed $true
+Assert ($postDeploy.acceptancePassed -and $postDeploy.stage -eq 'cleanup-pending' -and
+  $postDeploy.verifiedPackageFullName -ceq $target.PackageFullName) 'post-deployment finalizer records only complete target-bound evidence'
+Write-RepairDeploymentState -Path $statePath -State $postDeploy
+$roundTripAccepted = Read-RepairDeploymentState $statePath
+Assert ($roundTripAccepted.acceptancePassed -and $roundTripAccepted.verifiedPackageFullName -ceq $target.PackageFullName) 'JSON-loaded acceptance checkpoint writes atomically'
+Assert (@($modelListEvidence.serviceTiers) -contains 'ultrafast') 'advertised Ultrafast remains model-specific evidence'
+Assert-Throws {
+  $bad = New-FixtureState; $bad.stage = 'deploying'
+  Set-RepairAcceptanceCheckpoint -State $bad -CurrentPackageFullName $source.PackageFullName `
+    -InstallerExited $true -DesktopLaunchPassed $true -FastWirePassed $true `
+    -ModelList $modelListEvidence -StrictVerificationPassed $true
+} 'a superseded or wrong package cannot be accepted'
+Assert-Throws {
+  $bad = New-FixtureState; $bad.stage = 'deploying'
+  Set-RepairAcceptanceCheckpoint -State $bad -CurrentPackageFullName $target.PackageFullName `
+    -InstallerExited $false -DesktopLaunchPassed $true -FastWirePassed $true `
+    -ModelList $modelListEvidence -StrictVerificationPassed $true
+} 'a live or unknown installer cannot be accepted'
+Assert-Throws {
+  $bad = New-FixtureState; $bad.stage = 'deploying'
+  Set-RepairAcceptanceCheckpoint -State $bad -CurrentPackageFullName $target.PackageFullName `
+    -InstallerExited $true -DesktopLaunchPassed $true -FastWirePassed $true `
+    -ModelList ([pscustomobject]@{ model = 'gpt-6-astra'; serviceTiers = @() }) -StrictVerificationPassed $true
+} 'model/list without priority cannot be accepted'
+Assert-Throws {
+  $bad = New-FixtureState; $bad.stage = 'deploying'
+  Set-RepairAcceptanceCheckpoint -State $bad -CurrentPackageFullName $target.PackageFullName `
+    -InstallerExited $true -DesktopLaunchPassed $false -FastWirePassed $true `
+    -ModelList $modelListEvidence -StrictVerificationPassed $true
+} 'a missing target Desktop launch cannot be accepted'
+Assert-Throws {
+  $bad = New-FixtureState; $bad.stage = 'deploying'
+  Set-RepairAcceptanceCheckpoint -State $bad -CurrentPackageFullName $target.PackageFullName `
+    -InstallerExited $true -DesktopLaunchPassed $true -FastWirePassed $true `
+    -ModelList $modelListEvidence -StrictVerificationPassed $false
+} 'a failed strict runtime check cannot be accepted'
+
 $reused = [pscustomobject]@{ Id = $PID; SessionId = $currentProcess.SessionId; StartTime = $currentProcess.StartTime.AddSeconds(1) }
 Assert ((Get-RepairDeploymentAssessment $read $source $reused $sid).Status -eq 'interrupted-not-installed') 'PID reuse cannot impersonate the installer'
 $otherSession = [pscustomobject]@{ Id = $PID; SessionId = $currentProcess.SessionId + 1; StartTime = $currentProcess.StartTime }
@@ -90,6 +146,16 @@ Assert (@(Get-ChildItem -LiteralPath $logRoot -Filter '*.tmp').Count -eq 0) 'fai
 
 # Execute the runner's actual checkpoint helper and transaction/cleanup tail with mock deployment.
 $runnerPath = Join-Path $PSScriptRoot 'repatch-model-experience-recoverable.ps1'
+$finalizerPath = Join-Path $PSScriptRoot 'complete-model-experience-repair.ps1'
+$finalizerTokens = $null; $finalizerErrors = $null
+$finalizerAst = [Management.Automation.Language.Parser]::ParseFile($finalizerPath, [ref]$finalizerTokens, [ref]$finalizerErrors)
+Assert ($finalizerErrors.Count -eq 0 -and $null -ne $finalizerAst) 'post-deployment finalizer parses'
+$finalizerSource = Get-Content -LiteralPath $finalizerPath -Raw
+foreach ($required in @('Test-InstallerExited', 'Get-DesktopLaunchEvidence', 'request wire service_tier=priority',
+  "'model/list'", '-StrictVerifyOnly', '-VerifyAllBundledPluginsAvailable', 'Set-RepairAcceptanceCheckpoint',
+  'VerifiedStatePath = $CheckpointPath', 'ExplicitTargetsOnly = $true', 'Confirm = $false', '[switch]$KeepArtifacts')) {
+  Assert ($finalizerSource.Contains($required)) "post-deployment acceptance guard: $required"
+}
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($runnerPath, [ref]$tokens, [ref]$errors)
 Assert ($errors.Count -eq 0) 'runner AST parses'
