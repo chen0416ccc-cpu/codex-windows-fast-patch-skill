@@ -25,11 +25,11 @@ function Test-InstallerExited {
 
 function Get-DesktopLaunchEvidence {
   param([object]$State, [object]$Package)
-  $expectedPath = Join-Path $Package.InstallLocation 'app\ChatGPT.exe'
+  $expectedPath = Resolve-RepairPhysicalPath (Join-Path $Package.InstallLocation 'app\ChatGPT.exe')
   $installerStart = ConvertTo-RepairUtcDateTime $State.installerStartedUtc
   $process = Get-Process -Name ChatGPT -ErrorAction SilentlyContinue |
     Where-Object {
-      $_.Path -ieq $expectedPath -and $_.MainWindowHandle -ne 0 -and
+      ($_.Path -and (Resolve-RepairPhysicalPath $_.Path) -ieq $expectedPath) -and $_.MainWindowHandle -ne 0 -and $_.Responding -and
       [int]$_.SessionId -eq [int]$State.sessionId -and
       $_.StartTime.ToUniversalTime() -ge $installerStart
     } |

@@ -1,3 +1,34 @@
+function Resolve-RepairPhysicalPath {
+  param([Parameter(Mandatory)][string]$Path)
+  if (-not ('RepairPhysicalPath' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public static class RepairPhysicalPath {
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+  static extern IntPtr CreateFile(string path, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+  static extern uint GetFinalPathNameByHandle(IntPtr handle, StringBuilder path, uint size, uint flags);
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+  public static string Resolve(string path) {
+    var handle=CreateFile(path,0,7,IntPtr.Zero,3,0x02000000,IntPtr.Zero);
+    if(handle==new IntPtr(-1)) throw new System.ComponentModel.Win32Exception();
+    try {
+      var buffer=new StringBuilder(32768);
+      uint size=GetFinalPathNameByHandle(handle,buffer,(uint)buffer.Capacity,0);
+      if(size==0 || size>=buffer.Capacity) throw new System.ComponentModel.Win32Exception();
+      string result=buffer.ToString();
+      if(result.StartsWith(@"\\?\UNC\")) return @"\\"+result.Substring(8);
+      return result.StartsWith(@"\\?\") ? result.Substring(4) : result;
+    } finally { CloseHandle(handle); }
+  }
+}
+'@
+  }
+  return [RepairPhysicalPath]::Resolve($Path)
+}
+
 function ConvertTo-RepairUtcDateTime {
   param([Parameter(Mandatory = $true)][object]$Value)
   # ConvertFrom-Json in recent PowerShell converts ISO timestamps to DateTime.

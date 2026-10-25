@@ -187,9 +187,9 @@ function Get-CurrentCodexPackageVersion {
 
 function Get-CurrentCodexDesktopProcess {
   param([Parameter(Mandatory = $true)][object]$Package)
-  $expectedPath = Join-Path $Package.InstallLocation 'app\ChatGPT.exe'
+  $expectedPath = Resolve-RepairPhysicalPath (Join-Path $Package.InstallLocation 'app\ChatGPT.exe')
   $process = Get-Process -Name ChatGPT -ErrorAction SilentlyContinue |
-    Where-Object { $_.Path -ieq $expectedPath -and $_.MainWindowHandle -ne 0 } |
+    Where-Object { ($_.Path -and (Resolve-RepairPhysicalPath $_.Path) -ieq $expectedPath) -and $_.MainWindowHandle -ne 0 -and $_.Responding } |
     Sort-Object StartTime -Descending |
     Select-Object -First 1
   if (-not $process) { throw "A visible Codex Desktop process from the registered package was not found: $expectedPath" }
