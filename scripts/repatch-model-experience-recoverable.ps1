@@ -654,6 +654,12 @@ function Start-AndValidateCodex {
   }
 }
 
+function Initialize-CuaRuntimeProxy {
+  $localRepair = Join-Path $PSScriptRoot 'install-computer-use-local.ps1'
+  & $localRepair -OnlyRuntimeProxy
+  if ($LASTEXITCODE -ne 0) { throw 'CUA runtime proxy preparation failed before Desktop restart.' }
+}
+
 $resolvedOutputRoot = $null
 $preparedPatchText = $null
 $oldTemp = $env:TEMP
@@ -830,6 +836,9 @@ try {
   $null = Test-MsixDeploymentPreflight -MsixPath $patchedMsix -PackageName 'OpenAI.Codex'
   $null = Test-MsixDeploymentPreflight -MsixPath $recoveryMsix -PackageName 'OpenAI.Codex'
   Write-Log 'both package deployment preflights passed before application shutdown'
+  # Repair the extracted source runtime before the transaction closes Desktop.
+  # Post-launch strict verification independently checks the selected runtime.
+  Initialize-CuaRuntimeProxy
 
   $cliPath = Get-CodexCli
   $script:RepairDeploymentState.recoveryPackageFullName = ([string]$package.PackageFullName).Replace("_$($package.Version)_", "_${recoveryVersion}_")
