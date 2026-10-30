@@ -3014,14 +3014,44 @@ function Test-DesktopChromeExtensionVisible {
     [pscustomobject]$RuntimeInventory
   )
 
+  try {
+    Test-DesktopBrowserExtensionVisible $ChromeCacheRoot $RuntimeInventory -BrowserFamily chrome
+    return
+  } catch {
+    $chromeFailure = $_.Exception.Message
+    if ($chromeFailure -notlike '*Chrome profile root that Codex Desktop scans does not exist*' -and
+        $chromeFailure -notlike '*Codex Desktop cannot see the Chrome extension*') { throw }
+  }
+  # The shipped runtime supports Edge too. An enabled Edge extension is sufficient
+  # when Chrome has no usable extension; never map one browser's profile to another.
+  try {
+    Test-DesktopBrowserExtensionVisible $ChromeCacheRoot $RuntimeInventory -BrowserFamily edge
+  } catch {
+    throw "$chromeFailure; Edge verification also failed: $($_.Exception.Message)"
+  }
+}
+
+function Test-DesktopBrowserExtensionVisible {
+  param(
+    [string]$ChromeCacheRoot,
+    [pscustomobject]$RuntimeInventory,
+    [ValidateSet('chrome', 'edge')][string]$BrowserFamily
+  )
+
+  $browserLabel = if ($BrowserFamily -eq 'edge') { 'Edge' } else { 'Chrome' }
   $checkScript = Join-Path $ChromeCacheRoot 'scripts\check-extension-installed.js'
   if (-not (Test-Path -LiteralPath $checkScript -PathType Leaf)) {
     throw "missing official Chrome extension diagnostic: $checkScript"
   }
 
-  $desktopRoot = Get-DesktopChromeUserDataDirectory
+  $desktopRoot = if ($BrowserFamily -eq 'chrome') {
+    Get-DesktopChromeUserDataDirectory
+  } else {
+    $localAppData = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { Join-Path $env:USERPROFILE 'AppData\Local' }
+    [IO.Path]::GetFullPath((Join-Path $localAppData 'Microsoft\Edge\User Data'))
+  }
   if (-not (Test-Path -LiteralPath $desktopRoot -PathType Container)) {
-    throw "Chrome profile root that Codex Desktop scans does not exist: $desktopRoot"
+    throw "$browserLabel profile root that Codex Desktop scans does not exist: $desktopRoot"
   }
 
   # Desktop resolves the profile root from LOCALAPPDATA/APPDATA only. Clearing
@@ -3040,7 +3070,7 @@ function Test-DesktopChromeExtensionVisible {
     foreach ($name in $overrideNames) {
       [Environment]::SetEnvironmentVariable($name, $null, 'Process')
     }
-    $output = @(& $RuntimeInventory.NodePath $checkScript '--browser' 'chrome' '--json' 2>&1)
+    $output = @(& $RuntimeInventory.NodePath $checkScript '--browser' $BrowserFamily '--json' 2>&1)
     $exitCode = $LASTEXITCODE
   } finally {
     $ErrorActionPreference = $previousErrorActionPreference
@@ -3051,25 +3081,31 @@ function Test-DesktopChromeExtensionVisible {
 
   $text = ($output | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
   if ($exitCode -ne 0) {
-    throw "Codex Desktop cannot see the Chrome extension in $desktopRoot (official diagnostic exit=$exitCode): $text"
+    if ($exitCode -notin @(1, 2)) {
+      throw "official $browserLabel extension diagnostic failed (exit=$exitCode): $text"
+    }
+    throw "Codex Desktop cannot see the $browserLabel extension in $desktopRoot (official diagnostic exit=$exitCode): $text"
   }
 
   try {
     $status = $text | ConvertFrom-Json -ErrorAction Stop
   } catch {
-    throw "official Chrome extension diagnostic returned invalid JSON: $text"
+    throw "official $browserLabel extension diagnostic returned invalid JSON: $text"
+  }
+  if ([string]$status.browserFamily -cne $BrowserFamily) {
+    throw "official $browserLabel extension diagnostic reported a different browser family"
   }
   if (-not [bool]$status.installed -or -not [bool]$status.enabled) {
-    throw "official Chrome extension diagnostic did not report an installed and enabled extension: $text"
+    throw "official $browserLabel extension diagnostic did not report an installed and enabled extension: $text"
   }
 
   $reportedRoot = [string]$status.userDataDirectory
   if ([string]::IsNullOrWhiteSpace($reportedRoot) -or
       ([System.IO.Path]::GetFullPath($reportedRoot).TrimEnd('\') -ine $desktopRoot.TrimEnd('\'))) {
-    throw "official Chrome extension diagnostic did not evaluate the Desktop-visible profile root: $reportedRoot"
+    throw "official $browserLabel extension diagnostic did not evaluate the Desktop-visible profile root: $reportedRoot"
   }
 
-  Write-Log "Desktop-visible Chrome extension verification ok: root=$desktopRoot extension=$([string]$status.extensionId)"
+  Write-Log "Desktop-visible $browserLabel extension verification ok: root=$desktopRoot extension=$([string]$status.extensionId)"
 }
 
 function Test-ChromeAppServerHostConfig {

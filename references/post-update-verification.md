@@ -84,6 +84,16 @@ If the state file is absent (including older runs or failure before initial vali
 
 `-ResumePreparedBuild` is still restricted to the documented pre-deployment failures and exact original source identity. The status query does not relax sentinels, signature, payload, recovery, UAC or ancestry checks.
 
+## PowerShell 5.1 model-probe false rollback
+
+On Desktop `26.1023.6123`, the patched `.1` package launched and logged browser availability plus native-pipe readiness, but the installer then reported `[eval]:4` in its model-list acceptance step and installed the original-content `.2` recovery package. The installer passed double-quoted JavaScript through `node -e`; Windows PowerShell 5.1 altered those native arguments before Node could run the model query. The same extracted acceptance function passed under PowerShell 7.
+
+Both the runner and finalizer now write a unique UTF-8 `.cjs` probe beside their run evidence, execute that file with a separate CLI-path argument, capture native errors without losing their exit code, and remove only that probe file in `finally`. Model-tier and runtime acceptance requirements remain unchanged. Run `scripts/test-model-list-probe-transport.ps1 -TemporaryRoot <local-test-root>` under PowerShell 5.1 and 7; it exercises the real acceptance functions with an offline app-server fixture, a space/non-ASCII path, positive tier metadata, missing-priority rejection, and probe cleanup. Then rerun the extracted function against the current user-local CLI before deployment.
+
+A completed recovery is a failed repair, not an installation still in progress. Keep its state and artifacts, diagnose the validation error, and prepare a new source-bound candidate from the currently registered recovery version. Do not reinstall the older patch or use `-ResumePreparedBuild` to bypass the source-version boundary.
+
+The recovery's new revision also changes the native-host `resourcesPath` identity. A strict check on the observed `.2` recovery reported `Chrome native-host v2 state has no current app-server entry`; the ordinary local `-VerifyOnly` refresh addresses this package-path drift. The recoverable installer now runs that local refresh against the installed target before a separate `-StrictVerifyOnly -VerifyAllBundledPluginsAvailable` pass. Both passes must succeed; original-content recovery launches do not run or accept patched-package verification.
+
 ## Keep both audit baselines
 
 Before the first mutation, retain the task's initial backup/snapshot. If another Store update or setup operation occurs, also retain a new snapshot immediately before that repair, without replacing the initial one. Compare initial-to-final for the complete user-visible changes; use intermediate snapshots only to attribute phases.
