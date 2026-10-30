@@ -92,6 +92,9 @@ $cases = @(
     @{ name='missing-surface'; combined=$true; already=$false; surface='patched'; dry=$false; count=1; packs=0; error='unsupported surface' }
 )
 try {
+    $originalFixture = $script:proxyFixture
+    foreach ($quote in @('`', '"', "'")) {
+    $script:proxyFixture = $originalFixture.Replace('`CODEX_WINDOWS_REGISTERED_CORE`', ($quote + 'CODEX_WINDOWS_REGISTERED_CORE' + $quote))
     foreach ($case in $cases) {
         $OnlyNodeReplProxyEnv = -not $case.combined
         $OnlyComputerUseSurfaceAndProxyEnv = $case.combined
@@ -102,7 +105,7 @@ try {
         $script:rejectSurface = $case.name -eq 'missing-surface'
         $script:packCalls = 0
         $script:surfaceCalls = 0
-        $dir = Join-Path $testRoot $case.name
+        $dir = Join-Path $testRoot (([int][char]$quote).ToString() + '-' + $case.name)
         $app = Join-Path $dir 'app'
         New-Item -ItemType Directory -Force -Path (Join-Path $app 'resources') | Out-Null
         $asar = Join-Path $app 'resources\app.asar'
@@ -121,6 +124,7 @@ try {
         if ([IO.File]::ReadAllText($asar) -ne $expected) { throw "Unexpected ASAR write: $($case.name)" }
     }
     Write-Output "PROXY_ORCHESTRATION_PASSED cases=$($cases.Count)"
+    }
 } finally {
     if (Test-Path -LiteralPath $testRoot) {
         $resolved = (Resolve-Path -LiteralPath $testRoot).Path

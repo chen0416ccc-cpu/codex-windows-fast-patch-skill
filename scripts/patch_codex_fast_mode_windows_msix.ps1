@@ -2703,7 +2703,7 @@ function Invoke-PatchAppAsar {
         $content.Contains('NODE_REPL_TRUSTED_CODE_PATHS') -and
         $content.Contains('CODEX_WINDOWS_REGISTERED_CORE') -and
         ($content.Contains('CODEX_NODE_REPL_PROXY_ENV_V1') -or
-         $content -match 'let ([A-Za-z_$][\w$]*)=`CODEX_WINDOWS_REGISTERED_CORE`;([A-Za-z_$][\w$]*)=\[\.\.\.new Set\(\[\.\.\.([A-Za-z_$][\w$]*),\1\]\)\];')
+         $content -match 'let ([A-Za-z_$][\w$]*)=([`"''])CODEX_WINDOWS_REGISTERED_CORE\2;([A-Za-z_$][\w$]*)=\[\.\.\.new Set\(\[\.\.\.([A-Za-z_$][\w$]*),\1\]\)\];')
     })
     if ($proxyTargets.Count -ne 1) {
       Fail "expected exactly one Node REPL proxy environment target; found $($proxyTargets.Count)"

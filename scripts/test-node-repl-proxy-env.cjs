@@ -32,3 +32,16 @@ assert.throws(() => patchSource(source.replace('...n,e', '...n,e,extra')), /exac
 assert.throws(() => patchSource(source + '/*CODEX_NODE_REPL_PROXY_ENV_V1*/'), /incomplete/);
 assert.throws(() => patchSource(result.source.replace('HTTPS_PROXY', 'OTHER')), /incomplete/);
 console.log(`NODE_REPL_PROXY_ENV_TESTS_PASSED behavior_cases=${cases} guard_cases=5`);
+
+// Webpack's early-bootstrap emits double quotes; retain the exact local binding guard.
+for (const quote of ['"', "'"]) {
+  const fixture = source.replace('`CODEX_WINDOWS_REGISTERED_CORE`', quote + 'CODEX_WINDOWS_REGISTERED_CORE' + quote);
+  const patched = patchSource(fixture);
+  assert.equal(patched.status, 'patched');
+  assert.equal(patched.source, result.source);
+  assert.equal(patchSource(patched.source).status, 'already-patched');
+  assert.throws(() => patchSource(fixture + source), /exactly once/);
+  assert.throws(() => patchSource(fixture.replace('...n,e', '...n,wrong')), /exactly once/);
+}
+assert.throws(() => patchSource(source.replace('`CODEX_WINDOWS_REGISTERED_CORE`', '"CODEX_WINDOWS_REGISTERED_CORE`')), /exactly once/);
+console.log('NODE_REPL_PROXY_QUOTED_ANCHOR_PASSED quotes=3 mismatch_and_duplicate_guards=5');
