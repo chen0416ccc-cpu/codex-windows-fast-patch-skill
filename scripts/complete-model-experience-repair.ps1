@@ -54,7 +54,7 @@ function Test-ModelListFastTiers {
   $probe = @'
 const { spawn } = require('child_process');
 const nl = String.fromCharCode(10);
-const child = spawn(process.argv[1], ['app-server', '--stdio'], { stdio: ['pipe', 'pipe', 'ignore'] });
+const child = spawn(process.argv[2], ['app-server', '--stdio'], { stdio: ['pipe', 'pipe', 'ignore'] });
 let buffer = ''; let nextId = 1; const pending = new Map();
 child.stdout.on('data', chunk => {
   buffer += chunk.toString();
@@ -108,8 +108,18 @@ function request(method, params) {
   }
 })();
 '@
-  $result = @(& $node.Source -e $probe $CliPath 2>&1)
-  if ($LASTEXITCODE -ne 0) { throw "app-server model/list verification failed: $($result -join ' ')" }
+  $probePath = Join-Path (Split-Path -Parent $StatePath) ('model-list-probe-' + [guid]::NewGuid().ToString('N') + '.cjs')
+  [IO.File]::WriteAllText($probePath, $probe, [Text.UTF8Encoding]::new($false))
+  $previousErrorActionPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = 'Continue'
+    $result = @(& $node.Source $probePath $CliPath 2>&1)
+    $probeExitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+    [IO.File]::Delete($probePath)
+  }
+  if ($probeExitCode -ne 0) { throw "app-server model/list verification failed: $($result -join ' ')" }
   $parsed = (($result -join '').Trim()) | ConvertFrom-Json -ErrorAction Stop
   if (-not $parsed.model -or @($parsed.serviceTiers) -notcontains 'priority') {
     throw "Unexpected model/list verification response: $($result -join '')"

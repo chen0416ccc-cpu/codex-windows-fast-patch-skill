@@ -3,7 +3,7 @@ param(
   [switch]$ResumePreparedBuild,
   [string]$PreparedOutputRoot,
   [string]$PreparedTranscriptPath,
-  [string[]]$CustomModels = @('gpt-6-astra', 'gpt-6-sol', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna')
+  [string[]]$CustomModels
 )
 
 $ErrorActionPreference = 'Stop'
@@ -11,6 +11,7 @@ $runner = Join-Path $PSScriptRoot 'repatch-model-experience-recoverable.ps1'
 $dataRoot = 'D:\CodexData\codex-windows-fast-patch'
 $runRoot = Join-Path $dataRoot 'model-experience-repair-runs'
 $logRoot = Join-Path $dataRoot 'model-experience-repair-logs'
+. (Join-Path $PSScriptRoot 'lib\post-update-readiness.ps1')
 
 function Assert-LocalDirectory {
   param([string]$Path, [switch]$Create)
@@ -50,6 +51,17 @@ $package = Get-AppxPackage -Name OpenAI.Codex -ErrorAction Stop |
   Sort-Object Version -Descending |
   Select-Object -First 1
 if (-not $package) { throw 'The current-user Codex MSIX package is unavailable.' }
+
+$transaction = Get-PostUpdateTransaction -LogRoot $logRoot -StatusScript (Join-Path $PSScriptRoot 'get-model-experience-repair-status.ps1')
+if ($transaction -and $transaction.Assessment.Status -in @('installer-running', 'installer-status-unknown', 'different-user',
+    'installed-needs-verification', 'verified-cleanup-needed')) {
+  throw "An existing repair requires attention instead of a new installer: $($transaction.Assessment.Status); state=$($transaction.StatePath)"
+}
+if (-not $PSBoundParameters.ContainsKey('CustomModels')) {
+  $CustomModels = @((Get-RepairModelInventory).customModels)
+  Write-Host "Selected $($CustomModels.Count) repair model IDs from the active catalog."
+}
+if (@($CustomModels).Count -eq 0) { throw 'CustomModels must not be empty.' }
 
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $sessionId = (Get-Process -Id $PID -ErrorAction Stop).SessionId

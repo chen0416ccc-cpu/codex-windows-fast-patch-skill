@@ -717,6 +717,14 @@ function Find-UltraSliderTarget {
       return $candidate
     }
   }
+  $nativeCandidates = @((Invoke-RgList $RgPath '1186680773' $AssetsDir) | Where-Object {
+    $nativeText = Get-Content -Raw -LiteralPath $_
+    $nativeText.Contains('includeUltraReasoningEffort:') -and
+      $nativeText.Contains('isCustomModelProvider:') -and
+      $nativeText.Contains('hasModelSupportingUltraReasoningEffort:')
+  })
+  if ($nativeCandidates.Count -gt 1) { Fail 'ambiguous native Ultra reasoning targets' }
+  if ($nativeCandidates.Count -eq 1) { return $nativeCandidates[0] }
   return $null
 }
 
@@ -1053,6 +1061,61 @@ if (!file || file === '__none__') {
 }
 
 const text = fs.readFileSync(file, 'utf8');
+// Native 26.1023 no longer uses the account-settings Ultra slider hook.
+// Keep the official gate for normal providers; custom providers use only the
+// reasoning efforts advertised by their catalog and enabled by user settings.
+if (text.includes('hasModelSupportingUltraReasoningEffort:') && text.includes('1186680773')) {
+  const path = require('node:path');
+  const { spawnSync } = require('node:child_process');
+  const queryMarker = 'CODEX_NATIVE_ULTRA_QUERY_V1';
+  const hostMarker = 'CODEX_NATIVE_ULTRA_HOST_V1';
+  const fail = reason => { process.stderr.write(reason + '\n'); process.exit(2); };
+  const id = '([$A-Za-z_][$\\w]*)';
+  const headRe = new RegExp('\\(\\{additionalAvailableModels:' + id + ',authMethod:' + id + ',enabledReasoningEfforts:' + id + ',hasConfiguredModelCatalog:' + id + ',hostId:' + id + ',includeUltraReasoningEffort:' + id + ',isCustomModelProvider:' + id + ',limit:' + id + ',modelCatalogPath:' + id + ',modelProvider:' + id + ',teamCatalog:' + id + '\\},\\{get:' + id + ',queryClient:' + id + ',scope:' + id + '\\}\\)=>\\{', 'g');
+  const heads = [...text.matchAll(headRe)];
+  if (heads.length !== 1) fail('native-ultra-query-head-ambiguous');
+  const head = heads[0], include = head[6], custom = head[7], get = head[12];
+  const escape = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const tailIndex = text.indexOf(';return{queryKey:', head.index + head[0].length);
+  if (tailIndex < 0 || tailIndex - head.index > 2400) fail('native-ultra-query-body-unknown');
+  const body = text.slice(head.index + head[0].length, tailIndex);
+  const gate = escape(get) + '\\(' + id + ',`1186680773`\\)';
+  const originalRe = new RegExp(',' + id + '=' + escape(include) + '&&' + gate + '$');
+  const patchedRe = new RegExp(',' + id + '=' + escape(include) + '&&\\(' + escape(custom) + '\\|\\|' + gate + '\\)/\\*' + queryMarker + '\\*/$');
+  const original = body.match(originalRe), patched = body.match(patchedRe);
+  const queryDone = patched != null && text.split(queryMarker).length === 2;
+  if (!original && !queryDone) fail('native-ultra-query-gate-unknown');
+  if (original && text.includes(queryMarker)) fail('native-ultra-query-partial-marker');
+  const bootstrapFiles = fs.readdirSync(path.dirname(file)).filter(name => /^initialize-app-host-services-.*\.js$/.test(name));
+  if (bootstrapFiles.length !== 1) fail('native-ultra-bootstrap-ambiguous');
+  const hostFile = path.join(path.dirname(file), bootstrapFiles[0]);
+  const host = fs.readFileSync(hostFile, 'utf8');
+  const hosts = [...host.matchAll(/includeUltraReasoningEffort:(.{1,220}?),isAuthLoading:/g)].filter(match => match[1].includes('1186680773'));
+  if (hosts.length !== 1) fail('native-ultra-bootstrap-gate-ambiguous');
+  const hostMatch = hosts[0];
+  const hostTail = host.slice(hostMatch.index + hostMatch[0].length, hostMatch.index + hostMatch[0].length + 650);
+  const customMatch = hostTail.match(/isCustomModelProvider:([$A-Za-z_][$\w]*)\(([$A-Za-z_][$\w]*)\),workspaceDependenciesEnabled:/);
+  if (!customMatch) fail('native-ultra-bootstrap-provider-unknown');
+  const customCall = customMatch[1] + '(' + customMatch[2] + ')';
+  const hostOriginal = new RegExp('^' + id + '\\(' + id + ',`1186680773`\\)$');
+  const hostPatched = new RegExp('^' + escape(customCall) + '\\|\\|' + id + '\\(' + id + ',`1186680773`\\)/\\*' + hostMarker + '\\*/$');
+  const hostDone = hostPatched.test(hostMatch[1]) && host.split(hostMarker).length === 2;
+  if (!hostOriginal.test(hostMatch[1]) && !hostDone) fail('native-ultra-bootstrap-gate-unknown');
+  if (host.includes(hostMarker) && !hostDone) fail('native-ultra-bootstrap-partial-marker');
+  if (queryDone !== hostDone) fail('native-ultra-mixed-patch-state');
+  if (queryDone) { process.stdout.write('already-patched'); process.exit(0); }
+  const nextBody = body.replace(originalRe, ',' + original[1] + '=' + include + '&&(' + custom + '||' + get + '(' + original[2] + ',`1186680773`))/*' + queryMarker + '*/');
+  const nextQuery = text.slice(0, head.index + head[0].length) + nextBody + text.slice(tailIndex);
+  const nextHost = host.slice(0, hostMatch.index) + hostMatch[0].replace(hostMatch[1], customCall + '||' + hostMatch[1] + '/*' + hostMarker + '*/') + host.slice(hostMatch.index + hostMatch[0].length);
+  for (const source of [nextQuery, nextHost]) {
+    const check = spawnSync(process.execPath, ['--check', '--input-type=module'], { input: source, encoding: 'utf8', maxBuffer: 1024 * 1024 });
+    if (check.status !== 0) fail('native-ultra-output-syntax-invalid');
+  }
+  fs.writeFileSync(file, nextQuery);
+  fs.writeFileSync(hostFile, nextHost);
+  process.stdout.write('patched');
+  process.exit(0);
+}
 if (text.includes(marker) && text.includes(migrationMarker) && text.includes('ultraEffortLocalFallback')) {
   process.stdout.write('already-patched');
   process.exit(0);
@@ -1500,18 +1563,29 @@ function patchFeatureHook(file) {
   // WSL read, and the derived availability vars no longer sit in one let chain.
   // Match the two split declarations by their stable neighbor expressions and
   // force the WSL availability result separately.
-  const inAppConfigV3OriginalRe = /let ([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\)(,[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\),([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\?\.authMethod\?\?null,([A-Za-z_$][\w$]*);)/;
-  const externalConfigV3OriginalRe = /let ([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\)(,[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\),([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\|\|[A-Za-z_$][\w$]*===`chrome-extension`,)/;
+  // Bind split config reads to the exact options local carrying the browser
+  // feature. A global authMethod-shaped match can hit computer_use first in
+  // app-initial and require another run before the real browser hook changes.
+  const v3Id = '[A-Za-z_$][\\w$]*';
+  const v3Prefix = feature => '(?<prefix>(?<options>' + v3Id + ')=\\{enabled:' + v3Id + ',featureName:`' + feature + '`,hostId:' + v3Id + '\\}[^;]{0,160};let )(?<config>' + v3Id + ')=';
+  const inAppV3Tail = '(?<tail>,(?<auth>' + v3Id + ')=' + v3Id + '\\(' + v3Id + '\\),' + v3Id + '=\\k<auth>\\?\\.authMethod\\?\\?null,' + v3Id + ';)';
+  const externalV3Tail = '(?<tail>,' + v3Id + '=' + v3Id + '\\(' + v3Id + '\\),' + v3Id + '=' + v3Id + '\\|\\|' + v3Id + '===`chrome-extension`,)';
+  const inAppConfigV3OriginalRe = new RegExp(v3Prefix('browser_use') + v3Id + '\\(\\k<options>\\)' + inAppV3Tail);
+  const externalConfigV3OriginalRe = new RegExp(v3Prefix('browser_use_external') + v3Id + '\\(\\k<options>\\)' + externalV3Tail);
+  const inAppConfigV3PatchedRe = new RegExp(v3Prefix('browser_use') + '\\{enabled:!0,isLoading:!1\\}/\\*CODEX_BROWSER_IN_APP_CONFIG_V3\\*/' + inAppV3Tail);
+  const externalConfigV3PatchedRe = new RegExp(v3Prefix('browser_use_external') + '\\{enabled:!0,isLoading:!1\\}/\\*CODEX_BROWSER_EXTERNAL_CONFIG_V3\\*/' + externalV3Tail);
+  for (const pair of [[inAppConfigV3OriginalRe, inAppConfigV3PatchedRe], [externalConfigV3OriginalRe, externalConfigV3PatchedRe]]) {
+    if (pair.reduce((count, re) => count + [...before.matchAll(new RegExp(re.source, 'g'))].length, 0) > 1) {
+      process.stderr.write('browser-use-split-config-ambiguous\n'); process.exit(2);
+    }
+  }
   const wslResultV3Re = /([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*===!0\|\|[A-Za-z_$][\w$]*\.kind===`wsl`/g;
-  const v3ConfigPatched = before.includes('/*CODEX_BROWSER_IN_APP_CONFIG_V3*/') &&
-                          before.includes('/*CODEX_BROWSER_EXTERNAL_CONFIG_V3*/');
-  const v3ConfigOriginal = inAppConfigV3OriginalRe.test(before) &&
-                           externalConfigV3OriginalRe.test(before);
+  const v3ConfigPatched = inAppConfigV3PatchedRe.test(before) && externalConfigV3PatchedRe.test(before);
   if (hasCurrentCompiledShape && (
       !(currentInAppPairOriginalRe.test(before) || currentInAppPairPatchedRe.test(before)) ||
-      !((currentInAppConfigOriginalRe.test(before) || currentInAppConfigPatchedRe.test(before)) || v3ConfigOriginal || v3ConfigPatched) ||
+      !((currentInAppConfigOriginalRe.test(before) || currentInAppConfigPatchedRe.test(before)) || inAppConfigV3OriginalRe.test(before) || inAppConfigV3PatchedRe.test(before)) ||
       !(currentExternalGateOriginalRe.test(before) || currentExternalGatePatchedRe.test(before)) ||
-      !((currentExternalConfigOriginalRe.test(before) || currentExternalConfigPatchedRe.test(before)) || v3ConfigOriginal || v3ConfigPatched))) {
+      !((currentExternalConfigOriginalRe.test(before) || currentExternalConfigPatchedRe.test(before)) || externalConfigV3OriginalRe.test(before) || externalConfigV3PatchedRe.test(before)))) {
     process.stderr.write('browser-use-current-feature-hook-incomplete\n');
     process.exit(2);
   }
@@ -1536,11 +1610,11 @@ function patchFeatureHook(file) {
     );
     after = after.replace(
       inAppConfigV3OriginalRe,
-      'let $1={enabled:!0,isLoading:!1}/*CODEX_BROWSER_IN_APP_CONFIG_V3*/$2'
+      '$<prefix>$<config>={enabled:!0,isLoading:!1}/*CODEX_BROWSER_IN_APP_CONFIG_V3*/$<tail>'
     );
     after = after.replace(
       externalConfigV3OriginalRe,
-      'let $1={enabled:!0,isLoading:!1}/*CODEX_BROWSER_EXTERNAL_CONFIG_V3*/$2'
+      '$<prefix>$<config>={enabled:!0,isLoading:!1}/*CODEX_BROWSER_EXTERNAL_CONFIG_V3*/$<tail>'
     );
     after = after.replace(
       wslResultV3Re,

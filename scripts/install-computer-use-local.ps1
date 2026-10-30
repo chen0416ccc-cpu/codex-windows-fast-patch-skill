@@ -215,7 +215,7 @@ function Set-TomlTableKey {
     [string]$ConfigPath,
     [string]$Header,
     [string]$Key,
-    [string]$Value,
+    [object]$Value,
     [string]$Reason = 'set-table-key'
   )
 
@@ -226,7 +226,8 @@ function Set-TomlTableKey {
   $escapedHeader = [regex]::Escape($Header)
   $tablePattern = "(?ms)^(?<header>$escapedHeader)\s*\r?\n(?<body>(?:(?!^\[).)*)"
   $tableMatch = [regex]::Match($content, $tablePattern)
-  $line = "$Key = $(ConvertTo-CodexTomlString $Value)"
+  $serializedValue = if ($Value -is [bool]) { $Value.ToString().ToLowerInvariant() } else { ConvertTo-CodexTomlString ([string]$Value) }
+  $line = "$Key = $serializedValue"
   if ($tableMatch.Success) {
     $body = $tableMatch.Groups['body'].Value
     $escapedKey = [regex]::Escape($Key)
@@ -1260,6 +1261,90 @@ function Get-ComputerUsePipeConfigState {
   )
 
   return [pscustomobject]@{ Present = $true; Active = $active; PipePath = $pipePath }
+}
+
+function Sync-ReservedBundledMarketplaceVersions {
+  param([string]$InstalledMarketplaceRoot)
+
+  $reservedRoot = Get-ReservedBundledMarketplaceRoot (Resolve-OrCreateDirectory $CodexHome)
+  if (-not (Test-BundledMarketplaceRootUsable $reservedRoot)) { return }
+  $manifest = Get-Content -Raw -LiteralPath (Join-Path $reservedRoot '.agents\plugins\marketplace.json') | ConvertFrom-Json
+  $packagedNames = @(Get-BundledMarketplacePluginNames $InstalledMarketplaceRoot)
+  foreach ($entry in $manifest.plugins) {
+    $name = [string]$entry.name
+    if ($name -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$' -or $packagedNames -notcontains $name) { continue }
+    if (-not (Test-BundledMarketplacePluginPublishable $InstalledMarketplaceRoot $name)) { continue }
+    $source = Join-Path $InstalledMarketplaceRoot "plugins\$name"
+    $target = Join-Path $reservedRoot "plugins\$name"
+    Assert-UnderPath $target $reservedRoot
+    $expectedVersion = Get-PluginVersion $source
+    $currentVersion = ''
+    if (Test-Path -LiteralPath (Join-Path $target '.codex-plugin\plugin.json') -PathType Leaf) {
+      $currentVersion = Get-PluginVersion $target
+    }
+    if ($currentVersion -eq $expectedVersion) { continue }
+    if (Test-Path -LiteralPath $target) {
+      $backupRoot = Join-Path $CodexHome ('backups\bundled-marketplace-drift\' + (Get-Date -Format 'yyyyMMdd-HHmmss-fff') + '-' + [guid]::NewGuid().ToString('N'))
+      Copy-DirectoryDataOnly $target (Join-Path $backupRoot $name)
+      Write-Log "reserved bundled plugin backup: $backupRoot"
+    }
+    # Refresh only entries Desktop already published. Do not introduce optional
+    # or INTERNAL_ONLY descriptors, and source bytes from the installed package.
+    Copy-DirectoryDataOnly $source $target
+    if ($name -eq 'computer-use') { Write-PluginTree $target }
+    Write-Log "refreshed reserved bundled plugin: $name $currentVersion -> $expectedVersion"
+  }
+}
+
+function Sync-InstalledBundledPluginVersions {
+  param([string]$InstalledMarketplaceRoot)
+
+  $before = Get-BundledMarketplacePluginListWithCodexCli
+  $packagedNames = @(Get-BundledMarketplacePluginNames $InstalledMarketplaceRoot)
+  foreach ($entry in @($before.installed)) {
+    $name = [string]$entry.name
+    if (-not [bool]$entry.installed -or $name -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$' -or
+        [string]$entry.pluginId -ne "$name@openai-bundled" -or $packagedNames -notcontains $name) { continue }
+    if (-not (Test-BundledMarketplacePluginPublishable $InstalledMarketplaceRoot $name)) { continue }
+    $expectedVersion = Get-PluginVersion (Join-Path $InstalledMarketplaceRoot "plugins\$name")
+    if ([string]$entry.version -eq $expectedVersion) { continue }
+    $wasEnabled = [bool]$entry.enabled
+    $configPath = Join-Path $CodexHome 'config.toml'
+    Backup-ConfigBeforeOverwrite $configPath 'refresh-installed-bundled-plugin'
+    Stop-OpenAiBundledExtensionHosts @((Join-Path $CodexHome "plugins\cache\openai-bundled\$name"))
+    try {
+      Install-BundledMarketplacePluginWithCodexCli $name
+    } finally {
+      # `plugin add` enables the upgraded entry; preserve a user's disabled
+      # optional plugin even when registration or subsequent validation fails.
+      if (-not $wasEnabled) {
+        Set-TomlTableKey $configPath ('[plugins."' + $name + '@openai-bundled"]') 'enabled' $false 'preserve-disabled-bundled-plugin'
+      }
+    }
+    $after = Get-BundledMarketplacePluginListWithCodexCli
+    $matches = @($after.installed | Where-Object { [string]$_.pluginId -eq "$name@openai-bundled" -and [bool]$_.installed })
+    if ($matches.Count -ne 1 -or [string]$matches[0].version -ne $expectedVersion -or [bool]$matches[0].enabled -ne $wasEnabled) {
+      throw "bundled plugin upgrade did not preserve version and enablement: $name@openai-bundled"
+    }
+    Write-Log "upgraded existing bundled plugin: $name@$expectedVersion enabled=$wasEnabled"
+  }
+}
+
+function Test-InstalledBundledPluginVersions {
+  param([string]$InstalledMarketplaceRoot)
+
+  $plugins = Get-BundledMarketplacePluginListWithCodexCli
+  $packagedNames = @(Get-BundledMarketplacePluginNames $InstalledMarketplaceRoot)
+  foreach ($entry in @($plugins.installed)) {
+    $name = [string]$entry.name
+    if (-not [bool]$entry.installed -or $name -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$' -or
+        [string]$entry.pluginId -ne "$name@openai-bundled" -or $packagedNames -notcontains $name) { continue }
+    if (-not (Test-BundledMarketplacePluginPublishable $InstalledMarketplaceRoot $name)) { continue }
+    $expectedVersion = Get-PluginVersion (Join-Path $InstalledMarketplaceRoot "plugins\$name")
+    if ([string]$entry.version -ne $expectedVersion) {
+      throw "installed bundled plugin version drift: $name@openai-bundled package=$expectedVersion cli=$($entry.version)"
+    }
+  }
 }
 
 function Update-CodexConfig {
@@ -4059,6 +4144,7 @@ function Install-ComputerUse {
   $installedMarketplaceRoot = Get-InstalledBundledMarketplaceRoot
   $trustedChromeBrowserClient = Get-InstalledChromeBrowserClientTrust $installedMarketplaceRoot
   Sync-BundledMarketplaceFromInstalledApp $marketplaceRoot $installedMarketplaceRoot
+  Sync-ReservedBundledMarketplaceVersions $installedMarketplaceRoot
   Repair-ComputerUseNodeReplContext
   Patch-ChromeWindowsRegistryParsing (Join-Path $marketplaceRoot 'plugins\chrome') $trustedChromeBrowserClient
   Write-PluginTree $pluginSourceRoot
@@ -4102,6 +4188,7 @@ function Install-ComputerUse {
   # 'current'. A missing chrome plugin makes it take the delete branch instead.
   Assert-BundledMarketplacePluginInstalledWithCodexCli 'chrome'
   Update-CodexConfig $marketplaceRoot
+  Sync-InstalledBundledPluginVersions $installedMarketplaceRoot
 
   $headerPatcher = Join-Path $PSScriptRoot 'patch-chrome-custom-provider-headers.cjs'
   $headerServices = @(Get-ChromeHeaderCompatibilityServicePaths $codexHomeResolved $marketplaceRoot $installedMarketplaceRoot `
@@ -4122,6 +4209,7 @@ function Install-ComputerUse {
 function Test-ComputerUse {
   $codexHomeResolved = Resolve-ExistingDirectory $CodexHome
   $installedMarketplaceRoot = Get-InstalledBundledMarketplaceRoot
+  Test-InstalledBundledPluginVersions $installedMarketplaceRoot
   $installedChromeRoot = Join-Path $installedMarketplaceRoot 'plugins\chrome'
   $installedChromeVersion = Get-PluginVersion $installedChromeRoot
   $installedChromeCacheRoot = Join-Path $codexHomeResolved "plugins\cache\openai-bundled\chrome\$installedChromeVersion"

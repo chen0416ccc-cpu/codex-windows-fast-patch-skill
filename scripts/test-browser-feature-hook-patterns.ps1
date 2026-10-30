@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)]
-  [string]$TemporaryRoot
+  [string]$TemporaryRoot,
+  [string]$CurrentAsset
 )
 
 $ErrorActionPreference = 'Stop'
@@ -130,6 +131,39 @@ try {
   }
   if ([System.IO.File]::ReadAllText($negative.AssetPath) -cne $negativeSource) {
     throw 'unrelated Browser feature-hook fixture was modified'
+  }
+
+  $unrelated = 'function computer(e){let c={enabled:e,featureName:`computer_use`,hostId:e},cache=0;let l=query(c),u=auth(e),d=u?.authMethod??null,f;return l}'
+  $v3InApp = 'function inApp(e){let o=cap(a,b).isCapable,s=gate(`410262010`),c;c={enabled:e,featureName:`browser_use`,hostId:e},cache=0;let l=query(c),u=auth(e),d=u?.authMethod??null,f;let w=read(X.runCodexInWsl),h=l.enabled&&!l.isLoading,v=l.isLoading,x=w===!0||runtime.kind===`wsl`;return l}'
+  $v3External = 'function external(e){let s=gate(`410065390`),c;c={enabled:e,featureName:`browser_use_external`,hostId:e},cache=0;let l=query(c),u=auth(e),d=e||kind===`chrome-extension`,f;let w=read(X.runCodexInWsl),x=w===!0||runtime.kind===`wsl`;return l}'
+  $v3Source = 'const browserConfig=`browser.in-app`;' + $unrelated + $v3InApp + $v3External
+  $v3 = Invoke-PatcherFixture -Name 'scoped-v3-browser-hooks' -Source $v3Source -ExpectedExitCode 0
+  $v3Patched = [IO.File]::ReadAllText($v3.AssetPath)
+  if (-not $v3Patched.Contains($unrelated)) { throw 'Browser repair modified the preceding Computer Use hook' }
+  if (-not $v3Patched.Contains('let l={enabled:!0,isLoading:!1}/*CODEX_BROWSER_IN_APP_CONFIG_V3*/') -or
+      -not $v3Patched.Contains('let l={enabled:!0,isLoading:!1}/*CODEX_BROWSER_EXTERNAL_CONFIG_V3*/')) { throw 'First run missed a scoped browser hook' }
+  $repeat = @(& $node.Source $patcherPath $v3.AssetPath 2>&1)
+  if ($LASTEXITCODE -ne 0 -or ($repeat -join '').Trim() -ne 'already-patched' -or [IO.File]::ReadAllText($v3.AssetPath) -cne $v3Patched) {
+    throw 'Scoped V3 browser hooks required another repair pass'
+  }
+  $duplicate = Invoke-PatcherFixture -Name 'duplicate-v3-in-app' -Source ($v3Source + $v3InApp) -ExpectedExitCode 2
+  if ([IO.File]::ReadAllText($duplicate.AssetPath) -cne ($v3Source + $v3InApp)) { throw 'Duplicate scoped hooks were modified before rejection' }
+  $mismatch = $v3Source.Replace('l=query(c),u=auth(e),d=u?.authMethod', 'l=query(other),u=auth(e),d=u?.authMethod')
+  $null = Invoke-PatcherFixture -Name 'v3-config-local-mismatch' -Source $mismatch -ExpectedExitCode 2
+  # Earlier versions could leave this marker in the neighboring Computer Use
+  # hook. It must not be accepted as proof that the browser hook was repaired.
+  $wrongMarker = $v3Source.Replace($unrelated, $unrelated.Replace('l=query(c)', 'l={enabled:!0,isLoading:!1}/*CODEX_BROWSER_IN_APP_CONFIG_V3*/'))
+  $wrong = Invoke-PatcherFixture -Name 'v3-neighbor-marker-migration' -Source $wrongMarker -ExpectedExitCode 0
+  if ([IO.File]::ReadAllText($wrong.AssetPath).Split(@('CODEX_BROWSER_IN_APP_CONFIG_V3'), [StringSplitOptions]::None).Count -ne 3) {
+    throw 'A neighboring historical marker hid the missing browser patch'
+  }
+  if ($CurrentAsset) {
+    $current = Invoke-PatcherFixture -Name 'current-shipped-browser-hook' -Source ([IO.File]::ReadAllText($CurrentAsset)) -ExpectedExitCode 0
+    $firstHash = (Get-FileHash -LiteralPath $current.AssetPath).Hash
+    $repeat = @(& $node.Source $patcherPath $current.AssetPath 2>&1)
+    if ($LASTEXITCODE -ne 0 -or ($repeat -join '').Trim() -ne 'already-patched' -or (Get-FileHash -LiteralPath $current.AssetPath).Hash -ne $firstHash) {
+      throw 'Current shipped browser hook was not stable after one pass'
+    }
   }
 } finally {
   if ($hasNativePreference) {

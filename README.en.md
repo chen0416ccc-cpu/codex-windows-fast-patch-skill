@@ -79,6 +79,24 @@ Use codex-windows-fast-patch to repair phone remote control while keeping
 my third-party API configuration, existing login, and conversation history.
 ```
 
+### Check and recover after an update
+
+The repository includes a reusable entry point instead of a script copied from a repair chat:
+
+```powershell
+& "$SkillRoot\scripts\codex-after-update.ps1"
+& "$SkillRoot\scripts\codex-after-update.ps1" -CheckApp
+& "$SkillRoot\scripts\codex-after-update.ps1" -RepairPlugins -RepairApp
+```
+
+The first command checks the current package transaction, live model catalog and plugin/runtime contracts. A package without its own accepted checkpoint returns `app-check-needed`; passing plugin checks does not establish that app patches survived. `-CheckApp` also runs the full package dry run, checking locale, plugins, browser/Computer Use, Fast and Ultra paths, then removes its temporary package copy. Use `-CheckRoot 'D:\CodexChecks'` to select a temporary directory with enough free space.
+
+The third command explicitly repairs plugins and dispatches the recoverable full non-phone installer only when a compatible dry run establishes missing patches. Deployment requests normal UAC and restarts Desktop. A pending installed target resumes acceptance instead of redeploying; running or unknown installer state blocks another launch.
+
+Model visibility overrides default to the active provider's visible `model/list` entries plus its selected default, preserving the catalog's reasoning/service tiers. Supply `-CustomModels @('your-model-a','your-model-b')` to override this list; it never creates model or speed capabilities. The recoverable launcher also resolves live defaults and stops on probe failure instead of silently falling back to an old hard-coded list.
+
+The entry point emits a JSON status. `-ReportPath '<new-report-path>.json'` saves it without overwriting existing files. `-WhatIf` permits diagnostics, but does not repair plugins, dispatch an installer or save a report. Full bundle inspection uses temporary disk space and does not modify the installed application. No scheduled task, monitor or automatic restart is registered. Store updates can still replace patched files; this workflow detects and restores supported paths after an update, and rejects unknown layouts before installation. It cannot guarantee compatibility with arbitrary future releases. See [post-update verification](references/post-update-verification.md).
+
 ### Configure Tinghuashui (听话水)
 
 "听话水" (Tinghuashui) is this project's name for its bundled system prompt. Send this request to your agent:

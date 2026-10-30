@@ -2,6 +2,54 @@
 
 Use this procedure when Codex closes during a recoverable repair, the user returns with "continue", or a further Store update arrives before acceptance. It supplements the guarded installer; it does not authorize a new deployment.
 
+## Repository entry point
+
+`scripts/codex-after-update.ps1` defaults to checks of the current package's
+transaction, live model inventory, and strict plugin/runtime contracts. It
+does not launch an installer or modify plugin/config state without repair
+switches. Optional reports are explicit new files and contain model names,
+capabilities and local checkpoint paths, never auth/config contents.
+
+| JSON status | Meaning / next step |
+| --- | --- |
+| `installer-busy-or-unknown` | Wait or resolve the existing transaction; no new repair is dispatched. |
+| `resume-verification` | `-RepairApp` invokes the exact existing finalizer, not a second deployment. |
+| `model-probe-failed` | Resolve catalog/CLI failure; do not substitute old default models. |
+| `plugin-repair-needed` | Use `-RepairPlugins`; repair is followed by a separate strict pass. |
+| `app-check-needed` | No accepted current-package checkpoint; run `-CheckApp`. |
+| `app-repair-needed` | The complete dry run found known missing patches. `-RepairApp` can dispatch the recoverable installer. |
+| `unsupported-app-layout` | Missing, duplicate or unknown patch results, a failed dry run, or unsupported Ultra filtering. Inspect the new shipped layout before repair. |
+| `verified-contracts` | Current accepted checkpoint plus live checks, or a passing full static check plus live checks. This does not establish visible menus, screenshots/input or upstream speed. |
+| `awaiting-installation-and-acceptance` | Installer dispatched; deployment and acceptance are still outstanding. |
+
+`-CheckApp` runs the existing full dry-run patcher against the explicit current
+package and the live model IDs, inside a uniquely named scratch directory.
+The source package is never changed. All feature results must be present once;
+unsupported results are rejected. Ultra `not-applicable` cannot pass when the
+active catalog advertises Ultra. Both stdout/stderr are collected without
+PowerShell 5.1 stderr promotion. Scratch cleanup verifies its exact parent,
+sentinel and absence of reparse points before removal. Choose `-CheckRoot` on a
+drive with room for a temporary complete package copy.
+
+The model probe calls only initialize/model-list, retains per-model declared
+efforts/tiers, excludes hidden models unless selected as default, and rejects
+partial paginated results or malformed identifiers. The launcher uses that
+inventory when CustomModels is omitted. Explicit CustomModels bypasses default
+resolution in the launcher; it cannot invent capabilities.
+
+`-WhatIf` still performs diagnostics and temporary scratch cleanup, but skips
+plugin repair, finalization, installer dispatch and report writes. No scheduler
+or automatic restart is installed. Store replacement is expected to invalidate
+the previous package's checkpoint, even if the old transaction remains accepted
+in its historical record. Unknown future versions require reviewed adaptation.
+
+Maintainers should run `test-post-update-readiness.ps1` under Windows PowerShell
+5.1 and PowerShell 7, `node scripts/test-probe-repair-models.cjs`, and the existing
+deployment-state/recoverable guard suites. Public-entry fixtures cover locale
+loss, future model IDs, separate plugin repair, busy/unknown state, resumable
+acceptance, unsupported output, WhatIf, reports and diagnostic cleanup without
+deploying any package.
+
 ## Inspect the existing attempt first
 
 `start-model-experience-repair.ps1` prints the transcript and state paths. Once identity, session, source package, elevation and executor ancestry have been validated, the runner atomically writes `<transcript>.state.json` in the log directory. It records the source and intended target identities, installer PID and UTC start time, phase, acceptance and cleanup separately. It contains no credentials or configuration contents and survives successful build cleanup.

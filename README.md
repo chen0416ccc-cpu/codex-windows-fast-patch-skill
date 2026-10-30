@@ -71,6 +71,22 @@ Claude Code 可将目标改为 `$env:USERPROFILE\.claude\skills\codex-windows-fa
 
 默认采用后台只读验收，不自动打开计算器等测试应用，不切换原生窗口焦点或发送鼠标键盘输入。运行时、插件、窗口枚举等检查会分别报告；真实截图和原生输入测试仅在你明确要求或同意后执行，未执行时会如实注明。
 
+### 更新后统一检查与恢复
+
+项目现在包含统一入口，不需要从某次聊天复制临时脚本：
+
+```powershell
+& "$SkillRoot\scripts\codex-after-update.ps1"
+& "$SkillRoot\scripts\codex-after-update.ps1" -CheckApp
+& "$SkillRoot\scripts\codex-after-update.ps1" -RepairPlugins -RepairApp
+```
+
+第一条只检查当前包的安装事务、实时模型目录和插件/运行时；没有当前包的验收记录时，会明确返回 `app-check-needed`，不会因为插件正常就宣称应用补丁正常。第二条还会对当前包运行完整补丁试运行，逐项检查语言、插件、浏览器/电脑控制、Fast 和 Ultra 路径，并清理本次临时副本；可用 `-CheckRoot 'D:\CodexChecks'` 指定空间充足的临时目录。第三条显式修复插件，并在试运行确认需要且兼容时调用带回退保护的完整非手机安装器，会请求正常 UAC 并重启 Codex。已安装但未验收的事务只续做验收；安装器运行中或状态不明时不会再启动一个。
+
+模型白名单默认从当前提供方的 `model/list` 获取可见模型和用户选中的默认模型，保留各模型原有 reasoning/service tiers，避免更新修复回退到旧的写死列表。也可显式传 `-CustomModels @('your-model-a','your-model-b')`；这只控制已有目录项的可见性，不会创造模型或速度能力。恢复启动器默认也使用实时目录；读取失败会停止并给出诊断，而不悄悄使用旧列表。
+
+输出包含机器可读 JSON 状态。可加 `-ReportPath '<新的报告路径>.json'` 保存报告（不会覆盖已有文件）；`-WhatIf` 允许诊断，但不修复插件、不启动安装器、不保存报告。完整包诊断需要临时磁盘空间，不修改已安装应用。工具不会安装定时任务、自动监控或后台自动重启。商店仍可覆盖包内补丁；本入口用于在更新后发现并恢复兼容的已知路径，未知结构会报告不支持并停止安装，不能保证所有未来版本都自动兼容。详细状态与边界见[更新后验证](references/post-update-verification.md)。
+
 **需要手机远控时单独提出：**
 
 ```text
