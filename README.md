@@ -32,6 +32,8 @@
 
 ## 能修复什么
 
+一键修复已包含 CUA 浏览器代理恢复：从 Windows 显式 HTTP 系统代理生成受管理的本地 runtime 补丁，保留原件备份；代理改变后可重新应用。修改后需重启 Codex，并分别验证 Chrome 与内置浏览器。仅修复此项可运行 `scripts/install-computer-use-local.ps1 -OnlyRuntimeProxy`；加 `-StrictVerifyOnly` 只检查。暂不支持 PAC、带认证或非 HTTP 代理。
+
 | 问题 | 覆盖范围 |
 | --- | --- |
 | **模型与速度选项缺失** | Fast Mode、被隐藏的已有模型、Power 拖动条、Ultra 开关 |

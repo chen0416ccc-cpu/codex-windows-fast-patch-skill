@@ -27,6 +27,8 @@
 
 This community-maintained **Agent Skill** contains diagnostic workflows and repair scripts. It is not an official client or a universal one-click installer.
 
+The one-click repair includes CUA browser proxy recovery using the explicit Windows HTTP system proxy, with original-byte backups and reapplication after proxy changes. Restart Codex after a write and verify Chrome and the in-app browser separately. Run `scripts/install-computer-use-local.ps1 -OnlyRuntimeProxy` for only this repair; add `-StrictVerifyOnly` for read-only checks. PAC, authenticated and non-HTTP proxies are unsupported.
+
 > [!WARNING]
 > **Windows only. Some repairs include reinstalling Codex.** The app will close and the current conversation may be interrupted. After installation, reopen Codex, return to the original repair conversation, and send "continue" to resume. See the [reinstallation details](#which-repairs-reinstall-codex).
 
