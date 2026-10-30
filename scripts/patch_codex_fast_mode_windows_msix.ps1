@@ -1863,7 +1863,10 @@ const hasNativeWindowsCopyFallback =
   (after.includes('copyDirectoryAllowDecryptedDestinationOnEncryptionFailure') &&
    after.includes('windows-file-copy-')) ||
   /platform!==`win32`\)\{await [A-Za-z_$][\w$]*\.default\.cp\([^)]*\{recursive:!0,verbatimSymlinks:!0\}\);return\}/.test(after) ||
-  /require\(`\.\/windows-file-copy-[A-Za-z0-9_-]+\.js`\)/.test(after);
+  /require\(`\.\/windows-file-copy-[A-Za-z0-9_-]+\.js`\)/.test(after) ||
+  // Desktop 26.1027 keeps the native fallback but loads it as a lazy chunk and
+  // minifies the guard with Yoda comparisons and double-quoted literals.
+  /"win32"!==[A-Za-z_$][\w$]*\(\)\.platform\)return void await [A-Za-z_$][\w$]*\(\)\.cp\([^)]*\{recursive:!0,verbatimSymlinks:!0\}\)/.test(after);
 
 if (!after.includes(copyPatchedMarker) && !hasNativeWindowsCopyFallback) {
   const originalRe = /async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{if\(([A-Za-z_$][\w$]*)\.default\.platform===`darwin`\)\{await ([A-Za-z_$][\w$]*)\(`ditto`,\[`--noqtn`,\2,\3\]\);return\}await ([A-Za-z_$][\w$]*)\.default\.cp\(\2,\3,\{recursive:!0,verbatimSymlinks:!0\}\)\}/;
@@ -1893,7 +1896,10 @@ if (!after.includes(copyPatchedMarker) && !hasNativeWindowsCopyFallback) {
 if (!after.includes(sitesPatchedMarker)) {
   const sitesAvailabilityRe = /isAvailable:\(\{features:([A-Za-z_$][\w$]*)\}\)=>\1\.sites/;
   const sitesRetirementRe = /async function [A-Za-z_$][\w$]*\(([A-Za-z_$][\w$]*)\)\{let\{plugins:([A-Za-z_$][\w$]*)\}=await \1\.getUserSavedConfiguration\(\);typeof \2==`object`&&\2&&!Array\.isArray\(\2\)&&Object\.hasOwn\(\2,`sites@openai-bundled`\)&&await \1\.uninstallPlugin\(\{pluginId:`sites@openai-bundled`\}\)\}/g;
-  const sitesRetired = [...after.matchAll(sitesRetirementRe)].length === 1 &&
+  // Desktop 26.1027 retires the same plugin with reversed comparisons and double quotes.
+  const yodaSitesRetirementRe = /async function [A-Za-z_$][\w$]*\(([A-Za-z_$][\w$]*)\)\{let\{plugins:([A-Za-z_$][\w$]*)\}=await \1\.getUserSavedConfiguration\(\);null!=\2&&"object"==typeof \2&&!Array\.isArray\(\2\)&&Object\.hasOwn\(\2,"sites@openai-bundled"\)&&await \1\.uninstallPlugin\(\{pluginId:"sites@openai-bundled"\}\)\}/g;
+  const sitesRetired = ([...after.matchAll(sitesRetirementRe)].length +
+    [...after.matchAll(yodaSitesRetirementRe)].length) === 1 &&
     !/\.\.\.[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\.sites\b/.test(after);
   if (sitesAvailabilityRe.test(after)) {
     after = after.replace(sitesAvailabilityRe, `isAvailable:()=>!0/*${sitesPatchedMarker}*/`);
@@ -1961,7 +1967,8 @@ if (text.includes(marker)) {
   process.exit(0);
 }
 
-const keyMatch = text.match(/([A-Za-z_$][\w$]*)=`NODE_REPL_TRUSTED_CODE_PATHS`/);
+// Desktop 26.1027 emits the key constant with double quotes instead.
+const keyMatch = text.match(/([A-Za-z_$][\w$]*)=(?:`NODE_REPL_TRUSTED_CODE_PATHS`|"NODE_REPL_TRUSTED_CODE_PATHS")/);
 if (!keyMatch) {
   process.stderr.write('node-repl-trusted-paths-key-not-found\n');
   process.exit(2);
@@ -2010,17 +2017,24 @@ const patchedPluginGateRe = new RegExp(`if\\(!(${id})\\.installed\\|\\|(${id})==
 const originalSurfaceGateRe = new RegExp(`(${id})=(${id})&&(${id})\\.platform===\`darwin\`&&(${id})\\.computerUse&&(${id})\\.enabled&&\\5\\.paths\\.serviceAppPath!=null`, 'g');
 // Desktop 26.1021 ships a native Windows surface with its own plugin guard.
 const nativeWindowsSurfaceGateRe = new RegExp(`(${id})=(${id})&&(${id})\\.computerUse&&(${id})\\.enabled&&\\((${id})\\.platform===\`win32\`\\|\\|\\5\\.platform===\`darwin\`&&\\4\\.paths\\.serviceAppPath!=null\\)`, 'g');
+// Desktop 26.1027 keeps the same meaning from a minifier that reverses string
+// comparisons and double-quotes literals; Windows is native there, so this
+// layout is only ever recognized, never rewritten.
+const yodaPluginGateRe = new RegExp(`if\\(!(${id})\\.installed\\|\\|null==(${id})\\|\\|(${id})&&"darwin"!==(${id})\\.platform\\)return null;`, 'g');
+const yodaNativeSurfaceGateRe = new RegExp(`(${id})=(${id})&&(${id})\\.computerUse&&(${id})\\.enabled&&\\("win32"===(${id})\\.platform\\|\\|"darwin"===\\5\\.platform&&null!=\\4\\.paths\\.serviceAppPath\\)`, 'g');
 const modernPatchedSurfaceGateRe = new RegExp(`(${id})=(${id})&&(${id})\\.computerUse&&\\((${id})\\.platform===\`darwin\`&&(${id})\\.enabled&&\\5\\.paths\\.serviceAppPath!=null\\|\\|\\4\\.platform===\`win32\`\\)`, 'g');
 const legacyPatchedSurfaceGateRe = new RegExp(`(${id})=(${id})&&\\((${id})\\.platform===\`darwin\`&&(${id})\\.computerUse&&(${id})\\.enabled&&\\5\\.paths\\.serviceAppPath!=null\\|\\|\\3\\.platform===\`win32\`&&\\4\\.computerUse&&\\4\\.computerUseNodeRepl\\)`, 'g');
 const unversionedPatchedSurfaceGateRe = new RegExp(`(${id})=(${id})&&\\((${id})\\.platform===\`darwin\`&&(${id})\\.computerUse&&(${id})\\.enabled&&\\5\\.paths\\.serviceAppPath!=null\\|\\|\\3\\.platform===\`win32\`&&\\4\\.computerUse\\)`, 'g');
 // Desktop 26.917 removes computerUseNodeRepl. Its shared readiness result f
 // already requires the enabled CUA plugin, both Node paths and mcpToolExposure.
 const modernReadinessRe = /return t\.browserUseTinysky&&!o&&a\.nodePath!=null&&a\.nodeReplPath!=null&&[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\(e,`mcpToolExposure`\)&&s\?\.plugin\.installed===!0&&s\.plugin\.enabled&&s\.plugin\.availability===`AVAILABLE`/g;
+const yodaReadinessRe = /return [A-Za-z_$][\w$]*\.browserUseTinysky&&![A-Za-z_$][\w$]*&&null!=[A-Za-z_$][\w$]*\.nodePath&&null!=[A-Za-z_$][\w$]*\.nodeReplPath&&\(0,[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\)\([A-Za-z_$][\w$]*,"mcpToolExposure"\)&&[A-Za-z_$][\w$]*\?\.plugin\.installed===!0&&[A-Za-z_$][\w$]*\.plugin\.enabled&&"AVAILABLE"===[A-Za-z_$][\w$]*\.plugin\.availability/g;
 const patchedSurfaceGateRes = [modernPatchedSurfaceGateRe, legacyPatchedSurfaceGateRe, unversionedPatchedSurfaceGateRe];
 // Do not infer the host layout from a dependency inserted by a previous patch.
 const layoutText = patchedSurfaceGateRes.reduce((source, re) => source.replace(re, ''), text);
 const legacyLayout = layoutText.includes('computerUseNodeRepl');
-const modernLayout = !legacyLayout && [...layoutText.matchAll(modernReadinessRe)].length === 1;
+const modernLayout = !legacyLayout &&
+  ([...layoutText.matchAll(modernReadinessRe)].length + [...layoutText.matchAll(yodaReadinessRe)].length) === 1;
 
 function buildPluginGate(p, i, a, e) {
   return `if(!${p}.installed||${i}==null||${a}&&(${e}.platform!==\`darwin\`&&${e}.platform!==\`win32\`))return null;/*${marker}*/`;
@@ -2048,13 +2062,13 @@ function countRe(re, source = text) {
   return (source.match(re) || []).length;
 }
 
-const pluginCount = countRe(originalPluginGateRe);
+const pluginCount = countRe(originalPluginGateRe) + countRe(yodaPluginGateRe);
 const surfaceCount = countRe(originalSurfaceGateRe);
 const markerCount = count(marker);
 const patchedPluginCount = countRe(patchedPluginGateRe);
 const patchedSurfaceCounts = patchedSurfaceGateRes.map(re => countRe(re));
 const patchedSurfaceCount = patchedSurfaceCounts.reduce((total, value) => total + value, 0);
-const nativeSurfaceCount = countRe(nativeWindowsSurfaceGateRe);
+const nativeSurfaceCount = countRe(nativeWindowsSurfaceGateRe) + countRe(yodaNativeSurfaceGateRe);
 if (nativeSurfaceCount) {
   if (nativeSurfaceCount === 1 && modernLayout && pluginCount === 1 &&
       surfaceCount === 0 && markerCount === 0 && patchedPluginCount === 0 && patchedSurfaceCount === 0) {
@@ -2649,13 +2663,17 @@ function Find-ComputerUseSurfaceTarget {
   $candidates = @(foreach ($candidate in (Get-ChildItem -LiteralPath $viteBuildDir -Filter '*.js' -File)) {
     $text = [IO.File]::ReadAllText($candidate.FullName)
     $modernReadinessPattern = 'return t\.browserUseTinysky&&!o&&a\.nodePath!=null&&a\.nodeReplPath!=null&&[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\(e,`mcpToolExposure`\)&&s\?\.plugin\.installed===!0&&s\.plugin\.enabled&&s\.plugin\.availability===`AVAILABLE`'
+    # Desktop 26.1027 minifies the same predicate with reversed comparisons and
+    # double-quoted string literals.
+    $yodaReadinessPattern = 'return [A-Za-z_$][\w$]*\.browserUseTinysky&&![A-Za-z_$][\w$]*&&null!=[A-Za-z_$][\w$]*\.nodePath&&null!=[A-Za-z_$][\w$]*\.nodeReplPath&&\(0,[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\)\([A-Za-z_$][\w$]*,"mcpToolExposure"\)&&[A-Za-z_$][\w$]*\?\.plugin\.installed===!0&&[A-Za-z_$][\w$]*\.plugin\.enabled&&"AVAILABLE"===[A-Za-z_$][\w$]*\.plugin\.availability'
     if ($text.Contains('CODEX_CUA_WINDOWS_SURFACE_V1') -or
         ($text.Contains('CUA_REPL_ENABLED_SURFACES') -and
          $text.Contains('cuaReplSurfaces') -and
          ($text.Contains('computerUseNodeRepl') -or
-          [regex]::Matches($text, $modernReadinessPattern).Count -eq 1) -and
-         $text.Contains('serviceAppPath!=null') -and
-         $text.Contains('platform===`darwin`'))) {
+          [regex]::Matches($text, $modernReadinessPattern).Count -eq 1 -or
+          [regex]::Matches($text, $yodaReadinessPattern).Count -eq 1) -and
+         $text.Contains('paths.serviceAppPath') -and
+         ($text.Contains('platform===`darwin`') -or $text.Contains('"darwin"===')))) {
       $candidate.FullName
     }
   })

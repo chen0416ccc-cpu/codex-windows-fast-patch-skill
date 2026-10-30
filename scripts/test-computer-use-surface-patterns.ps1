@@ -229,6 +229,23 @@ console.log(`NATIVE_WINDOWS_CUA_MATRIX_PASSED cases=${cases}`);
 & $node.Source $nativeBehaviorPath $native.AssetPath
 if ($LASTEXITCODE -ne 0) { throw 'native Windows CUA readiness/platform behavior matrix failed' }
 
+# Desktop 26.1027 minifies the same gates with reversed comparisons and
+# double-quoted literals; Windows stays native, so recognition must not rewrite.
+$yodaSource = @'
+function exposePlugin(r,i,a,e){if(!r.installed||null==n||i&&"darwin"!==e.platform)return null;return true;}
+function buildSurface(f,l,t,u){let p;p=f&&t.computerUse&&u.enabled&&("win32"===l.platform||"darwin"===l.platform&&null!=u.paths.serviceAppPath);return p;}
+function ready(t,o,a,n,e,s){return t.browserUseTinysky&&!o&&null!=a.nodePath&&null!=a.nodeReplPath&&(0,ec.JFB)(e,"mcpToolExposure")&&s?.plugin.installed===!0&&s.plugin.enabled&&"AVAILABLE"===s.plugin.availability}
+'@
+foreach ($name in @('yoda-native-windows', 'yoda-native-windows-repeat')) {
+  $yoda = Invoke-PatcherFixture -Name $name -Source $yodaSource -ExpectedExitCode 0
+  if ($yoda.Output -cne 'already-open-native-windows' -or [IO.File]::ReadAllText($yoda.AssetPath) -cne $yodaSource) {
+    throw '26.1027 Yoda-minified native Windows layout must be recognized without rewriting'
+  }
+}
+# A Yoda-minified bundle without the native Windows branch stays unsupported.
+$yodaDarwinOnly = $yodaSource.Replace('("win32"===l.platform||"darwin"===l.platform', '("darwin"===l.platform')
+$null = Invoke-PatcherFixture -Name 'yoda-darwin-only' -Source $yodaDarwinOnly -ExpectedExitCode 2
+
 # The same readiness predicate shipped with renamed import and export symbols.
 $renamedModernSources = @()
 foreach ($helper in @('n.Wu', 'helpers.$q12')) {

@@ -1009,6 +1009,14 @@ The Power slider moved into `app-primary` and no longer carries `harborEnabled` 
 
 Run `test-computer-use-surface-patterns.ps1` and `test-native-layout-discovery.ps1 -TemporaryRoot <local-test-root> -CurrentExtractDir <extracted-asar>`. The latter reads the current asset set and checks the native slider remains byte-identical. These checks and a full DryRun establish compatibility of the selected bundle; installed-package and runtime acceptance remain separate.
 
+## Desktop 26.1027 Splits the Main Bundle and Yoda-Minifies the Gates
+
+On the exact Store package `26.1027.3384.0`, `.vite\build` no longer ships `main-*.js`; the Electron main code lives in `early-bootstrap.js` plus numbered `early-bootstrap-<n>-<hash>.js` chunks. The minifier reverses string comparisons and double-quotes literals. Windows CUA is still native (`h=u&&t.computerUse&&c.enabled&&("win32"===o.platform||"darwin"===o.platform&&null!=c.paths.serviceAppPath)`), the plugin exposure guard becomes `if(!r.installed||null==n||i&&"darwin"!==e.platform)return null;`, and the shared readiness predicate uses `null!=`, `(0,ns.JFB)(e,"mcpToolExposure")` and `"AVAILABLE"===s.plugin.availability`. Discovery and the embedded surface patcher accept both quoting styles and still report `already-open-native-windows` without rewriting the asset. A Yoda-shaped bundle without the native Windows branch fails closed instead of being patched. `NODE_REPL_TRUSTED_CODE_PATHS` and `CODEX_WINDOWS_REGISTERED_CORE` are double-quoted for the same reason.
+
+This build also retires the `sites` bundled plugin: the package marketplace ships eight descriptors and only the uninstall helper remains, in the reversed form `null!=t&&"object"==typeof t&&...Object.hasOwn(t,"sites@openai-bundled")`. The native Windows copy fallback survives but loads through a lazy chunk (`r.e(523).then(r.bind(r,9496))`) with no `windows-file-copy-` filename, so detection must also accept `"win32"!==X().platform)return void await Y().cp(...)`.
+
+The fixture suite adds a recognized native case, a refused Darwin-only Yoda variant, and idempotent repeats. On `26.1027.3384.0` the full DryRun reports `already-open-native-windows` and `patched` for every remaining gate.
+
 ## CUA Requests Time Out After Proxy Variables Are Removed
 
 On Desktop `26.915.4065.0`, native app enumeration can work and Chrome can connect while tab creation or listing fails with `nodeRepl.fetch request failed`. Compare the actual `cua_repl` child process environment with its app-server parent. Checking `codex-computer-use-swift.exe` alone does not test the process that performs the request.
