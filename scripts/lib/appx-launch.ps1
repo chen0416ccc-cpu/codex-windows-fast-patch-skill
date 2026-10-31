@@ -7,14 +7,11 @@
 # no window ever appears. Launching through the AppUserModelId lets Windows resolve whatever
 # executable the AppxManifest declares.
 #
-# Dot-source this file from a patcher that already defines Write-Log, Fail and
-# Get-RequiredCommand:
+# Dot-source this file from a patcher that already defines Write-Log and Fail:
 #   . (Join-Path $PSScriptRoot 'lib\appx-launch.ps1')
 
-function Start-InstalledAppxPackage {
-  param(
-    [Parameter(Mandatory = $true)]$Package
-  )
+function Get-InstalledAppxApplicationEntry {
+  param([Parameter(Mandatory = $true)]$Package)
   $manifest = Get-AppxPackageManifest -Package $Package -ErrorAction Stop
   $applications = @($manifest.Package.Applications.Application)
   if ($applications.Count -lt 1) {
@@ -34,9 +31,101 @@ function Start-InstalledAppxPackage {
   if ([string]::IsNullOrWhiteSpace($packageFamilyName) -or [string]::IsNullOrWhiteSpace($applicationId)) {
     Fail "installed package is missing PackageFamilyName or Application Id: $($Package.PackageFullName)"
   }
-  $aumid = "$packageFamilyName!$applicationId"
-  $explorer = Get-RequiredCommand 'explorer.exe'
-  Write-Log "launching Codex through AppUserModelId: $aumid"
-  Start-Process -FilePath $explorer -ArgumentList "shell:AppsFolder\$aumid" -WindowStyle Hidden -ErrorAction Stop | Out-Null
-  return $aumid
+  return [pscustomobject]@{
+    AppUserModelId = "$packageFamilyName!$applicationId"
+    Executable = Join-Path $Package.InstallLocation ([string]$application.Executable).Replace('/', '\')
+    ProcessName = [IO.Path]::GetFileNameWithoutExtension([string]$application.Executable)
+  }
+}
+
+function Invoke-InstalledAppxApplicationActivation {
+  param([Parameter(Mandatory = $true)][string]$AppUserModelId)
+  # Run the system activation call in the OS-bitness-matched PowerShell. A
+  # Store-installed pwsh can be 32-bit and fail COM activation with 0x8007000B.
+  $powershellExe = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  if (-not (Test-Path -LiteralPath $powershellExe -PathType Leaf)) {
+    throw "Windows PowerShell is required for packaged app activation: $powershellExe"
+  }
+  $source = @'
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+[ComImport, Guid("2e941141-7f97-4756-ba1d-9decde894a3d"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IApplicationActivationManager {
+  [PreserveSig]
+  int ActivateApplication(
+    [MarshalAs(UnmanagedType.LPWStr)] string appUserModelId,
+    [MarshalAs(UnmanagedType.LPWStr)] string arguments,
+    uint options,
+    out uint processId);
+}
+[ComImport, Guid("45BA127D-10A8-46EA-8AB7-56EA9078943C")]
+public class ApplicationActivationManager { }
+public static class PackagedAppActivation {
+  public static uint Launch(string appUserModelId) {
+    var manager = (IApplicationActivationManager)new ApplicationActivationManager();
+    try {
+      uint processId;
+      int result = manager.ActivateApplication(appUserModelId, null, 0, out processId);
+      if (result != 0) Marshal.ThrowExceptionForHR(result);
+      return processId;
+    } finally { Marshal.FinalReleaseComObject(manager); }
+  }
+}
+"@
+[Console]::Out.WriteLine([PackagedAppActivation]::Launch($args[0]))
+'@
+  $source = $source.Replace('$args[0]', "'$($AppUserModelId.Replace("'", "''"))'")
+  $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($source))
+  $output = & $powershellExe -NoProfile -ExecutionPolicy RemoteSigned -EncodedCommand $encoded 2>&1
+  if ($LASTEXITCODE -ne 0 -or @($output).Count -ne 1 -or [string]$output[0] -notmatch '^\d+$') {
+    throw "Packaged app activation failed for $AppUserModelId : $($output -join [Environment]::NewLine)"
+  }
+  return [uint32]([string]$output[0])
+}
+
+function Wait-InstalledAppxDesktopProcess {
+  param(
+    [Parameter(Mandatory = $true)][string]$Executable,
+    [Parameter(Mandatory = $true)][string]$ProcessName,
+    [int]$TimeoutSeconds = 45
+  )
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  do {
+    $process = Get-Process -Name $ProcessName -ErrorAction SilentlyContinue | Where-Object {
+      $_.Path -and $_.Path.Equals($Executable, [StringComparison]::OrdinalIgnoreCase) -and
+      $_.SessionId -eq (Get-Process -Id $PID).SessionId
+    } | Sort-Object -Property @{ Expression = { $_.MainWindowHandle -ne 0 }; Descending = $true }, Id | Select-Object -First 1
+    if ($process) {
+      try {
+        $process.Refresh()
+        if (-not $process.HasExited) { return $process }
+      } catch {
+        # A short-lived renderer can exit between enumeration and inspection.
+      }
+    }
+    Start-Sleep -Milliseconds 500
+  } while ((Get-Date) -lt $deadline)
+  throw "Codex did not start from the installed package path: $Executable"
+}
+
+function Start-InstalledAppxPackage {
+  param(
+    [Parameter(Mandatory = $true)]$Package,
+    [switch]$WaitForProcess,
+    [int]$TimeoutSeconds = 45
+  )
+  $entry = Get-InstalledAppxApplicationEntry -Package $Package
+  $application = @(Get-AppxPackageManifest -Package $Package -ErrorAction Stop).Package.Applications.Application |
+    Where-Object { "$($Package.PackageFamilyName)!$($_.Id)" -ceq $entry.AppUserModelId }
+  if ([string]$application.EntryPoint -cne 'Windows.FullTrustApplication') {
+    Fail "installed package application is not a supported full-trust Desktop entry: $($entry.AppUserModelId)"
+  }
+  Write-Log "launching Codex through AppUserModelId: $($entry.AppUserModelId)"
+  $null = Invoke-InstalledAppxApplicationActivation -AppUserModelId $entry.AppUserModelId
+  if ($WaitForProcess) {
+    $null = Wait-InstalledAppxDesktopProcess -Executable $entry.Executable -ProcessName $entry.ProcessName -TimeoutSeconds $TimeoutSeconds
+  }
+  return $entry.AppUserModelId
 }
