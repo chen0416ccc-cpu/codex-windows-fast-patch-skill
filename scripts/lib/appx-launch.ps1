@@ -40,38 +40,49 @@ function Get-InstalledAppxApplicationEntry {
 
 function Invoke-InstalledAppxApplicationActivation {
   param([Parameter(Mandatory = $true)][string]$AppUserModelId)
-  # IApplicationActivationManager runs in the caller's desktop session, including
-  # an elevated external installer. An elevated explorer.exe child cannot be used
-  # as a Shell launch proxy and may return without activating the packaged app.
-  if (-not ('CodexWindowsFastPatch.ApplicationActivationManager' -as [type])) {
-    Add-Type -TypeDefinition @'
+  # Run the system activation call in the OS-bitness-matched PowerShell. A
+  # Store-installed pwsh can be 32-bit and fail COM activation with 0x8007000B.
+  $powershellExe = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  if (-not (Test-Path -LiteralPath $powershellExe -PathType Leaf)) {
+    throw "Windows PowerShell is required for packaged app activation: $powershellExe"
+  }
+  $source = @'
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
-namespace CodexWindowsFastPatch {
-  [ComImport, Guid("2e941141-7f97-4756-ba1d-9decde894a3d"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-  public interface IApplicationActivationManager {
-    [PreserveSig]
-    int ActivateApplication(
-      [MarshalAs(UnmanagedType.LPWStr)] string appUserModelId,
-      [MarshalAs(UnmanagedType.LPWStr)] string arguments,
-      uint options,
-      out uint processId);
-  }
-  [ComImport, Guid("45BA127D-10A8-46EA-8AB7-56EA9078943C")]
-  public class ApplicationActivationManager { }
+[ComImport, Guid("2e941141-7f97-4756-ba1d-9decde894a3d"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IApplicationActivationManager {
+  [PreserveSig]
+  int ActivateApplication(
+    [MarshalAs(UnmanagedType.LPWStr)] string appUserModelId,
+    [MarshalAs(UnmanagedType.LPWStr)] string arguments,
+    uint options,
+    out uint processId);
 }
-'@ -ErrorAction Stop
+[ComImport, Guid("45BA127D-10A8-46EA-8AB7-56EA9078943C")]
+public class ApplicationActivationManager { }
+public static class PackagedAppActivation {
+  public static uint Launch(string appUserModelId) {
+    var manager = (IApplicationActivationManager)new ApplicationActivationManager();
+    try {
+      uint processId;
+      int result = manager.ActivateApplication(appUserModelId, null, 0, out processId);
+      if (result != 0) Marshal.ThrowExceptionForHR(result);
+      return processId;
+    } finally { Marshal.FinalReleaseComObject(manager); }
   }
-  $manager = [CodexWindowsFastPatch.IApplicationActivationManager][Activator]::CreateInstance(
-    [type]'CodexWindowsFastPatch.ApplicationActivationManager')
-  try {
-    $processId = [uint32]0
-    $result = $manager.ActivateApplication($AppUserModelId, $null, 0, [ref]$processId)
-    if ($result -ne 0) { throw ('Application activation failed for {0}: HRESULT 0x{1:X8}' -f $AppUserModelId, [uint32]$result) }
-    return $processId
-  } finally {
-    $null = [Runtime.InteropServices.Marshal]::FinalReleaseComObject($manager)
+}
+"@
+[Console]::Out.WriteLine([PackagedAppActivation]::Launch($args[0]))
+'@
+  $source = $source.Replace('$args[0]', "'$($AppUserModelId.Replace("'", "''"))'")
+  $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($source))
+  $output = & $powershellExe -NoProfile -ExecutionPolicy RemoteSigned -EncodedCommand $encoded 2>&1
+  if ($LASTEXITCODE -ne 0 -or @($output).Count -ne 1 -or [string]$output[0] -notmatch '^\d+$') {
+    throw "Packaged app activation failed for $AppUserModelId : $($output -join [Environment]::NewLine)"
   }
+  return [uint32]([string]$output[0])
 }
 
 function Wait-InstalledAppxDesktopProcess {
@@ -85,8 +96,15 @@ function Wait-InstalledAppxDesktopProcess {
     $process = Get-Process -Name $ProcessName -ErrorAction SilentlyContinue | Where-Object {
       $_.Path -and $_.Path.Equals($Executable, [StringComparison]::OrdinalIgnoreCase) -and
       $_.SessionId -eq (Get-Process -Id $PID).SessionId
-    } | Sort-Object -Property @{ Expression = { $_.MainWindowHandle -ne 0 }; Descending = $true }, StartTime -Descending | Select-Object -First 1
-    if ($process) { return $process }
+    } | Sort-Object -Property @{ Expression = { $_.MainWindowHandle -ne 0 }; Descending = $true }, Id | Select-Object -First 1
+    if ($process) {
+      try {
+        $process.Refresh()
+        if (-not $process.HasExited) { return $process }
+      } catch {
+        # A short-lived renderer can exit between enumeration and inspection.
+      }
+    }
     Start-Sleep -Milliseconds 500
   } while ((Get-Date) -lt $deadline)
   throw "Codex did not start from the installed package path: $Executable"

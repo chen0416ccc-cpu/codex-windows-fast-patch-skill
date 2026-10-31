@@ -48,20 +48,23 @@ $rejected = $false
 try { $null = Start-InstalledAppxPackage -Package $badEntryPoint } catch { $rejected = $_.Exception.Message -like '*not a supported full-trust Desktop entry*' }
 Assert $rejected 'a different activation contract fails before invoking COM'
 
-# Compile the pinned COM declaration without activating a real application.
+# Compile the exact activation source in the system PowerShell without activating an app.
 $declaration = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'lib\appx-launch.ps1'))
-$start = $declaration.IndexOf("    Add-Type -TypeDefinition @'", [StringComparison]::Ordinal)
-$end = $declaration.IndexOf("'@ -ErrorAction Stop", $start, [StringComparison]::Ordinal)
-Assert ($start -ge 0 -and $end -gt $start) 'bounded COM declaration is present'
-$typeSource = $declaration.Substring($start, $end - $start).Replace('    Add-Type -TypeDefinition @''', '').Replace("`r", '').TrimStart("`n")
-Add-Type -TypeDefinition $typeSource -ErrorAction Stop
-$interface = [type]'CodexWindowsFastPatch.IApplicationActivationManager'
-$implementation = [type]'CodexWindowsFastPatch.ApplicationActivationManager'
-Assert ($interface.IsInterface -and $interface.GUID -ceq [guid]'2e941141-7f97-4756-ba1d-9decde894a3d') 'COM interface has the Windows activation contract'
-Assert ($implementation.GUID -ceq [guid]'45BA127D-10A8-46EA-8AB7-56EA9078943C') 'COM class uses the pinned system activation manager'
-$method = $interface.GetMethod('ActivateApplication')
-Assert ($null -ne $method -and $method.ReturnType -ceq [int]) 'activation preserves the native HRESULT'
-Assert ($method.GetParameters()[3].ParameterType -ceq [uint32].MakeByRefType()) 'activation retains the native PID output'
+$typeMatch = [regex]::Match($declaration, '(?ms)Add-Type -TypeDefinition @"(.*?)"@')
+Assert $typeMatch.Success 'bounded COM declaration is present'
+$typeSource = $typeMatch.Groups[1].Value
+Assert ($typeSource.Contains('(IApplicationActivationManager)new ApplicationActivationManager()')) 'the activation wrapper performs the COM cast inside C#'
+Assert ($typeSource.Contains('public static uint Launch(string appUserModelId)')) 'the activation wrapper returns the native PID'
+$probe = '$ErrorActionPreference = ''Stop''' + [Environment]::NewLine +
+  '$code = @''' + [Environment]::NewLine + $typeSource + [Environment]::NewLine + '''@' + [Environment]::NewLine +
+  'Add-Type -TypeDefinition $code -ErrorAction Stop' + [Environment]::NewLine +
+  'if (-not [Environment]::Is64BitProcess) { exit 3 }' + [Environment]::NewLine +
+  '$method = [PackagedAppActivation].GetMethod(''Launch'')' + [Environment]::NewLine +
+  'if ($method.ReturnType -ne [uint32] -or -not $method.IsStatic) { exit 4 }' + [Environment]::NewLine +
+  '''activation-contract-ok'''
+$encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($probe))
+$contract = & (Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe') -NoProfile -EncodedCommand $encoded
+Assert ($LASTEXITCODE -eq 0 -and $contract -ceq 'activation-contract-ok') 'the real system PowerShell compiles the activation wrapper in its native bitness'
 
 $probes = [scriptblock]::Create(@'
 param([Parameter(ValueFromRemainingArguments = $true)][object[]]$Arguments)
@@ -78,7 +81,9 @@ if ($Id) { return [pscustomobject]@{ SessionId = 1 } }
 $items = @($script:processes | Where-Object Name -ceq $ProcessName | ForEach-Object {
   $path = $_.Path
   if ($script:denied) { $path = $null }
-  [pscustomobject]@{ Name = $_.Name; Path = $path; Id = $_.Id; SessionId = 1; StartTime = $_.StartTime; MainWindowHandle = $_.Window; Responding = $true }
+  $process = [pscustomobject]@{ Name = $_.Name; Path = $path; Id = $_.Id; SessionId = 1; StartTime = $_.StartTime; MainWindowHandle = $_.Window; Responding = $true; HasExited = $false }
+  $process | Add-Member -MemberType ScriptMethod -Name Refresh -Value { if ($this.Id -eq 999) { throw 'process exited' } }
+  $process
 })
 @($items)
 '@)
@@ -93,6 +98,12 @@ Assert ($process.Id -eq 11) 'visible matching-package process wins over a newer 
 $script:processes = @($script:processes[0])
 $process = Wait-InstalledAppxDesktopProcess -Executable $entry.Executable -ProcessName $entry.ProcessName
 Assert ($process.Id -eq 10) 'background-only package process also satisfies process launch validation'
+$exitedProbe = $script:processes[0].PSObject.Copy()
+$exitedProbe.Id = 999
+$script:processes = @($exitedProbe, $script:processes[0])
+$process = Wait-InstalledAppxDesktopProcess -Executable $entry.Executable -ProcessName $entry.ProcessName
+Assert ($process.Id -eq 10) 'a process that exits during inspection is retried instead of being accepted'
+$script:processes = @($script:processes[1])
 $script:denied = $true
 $rejected = $false
 try { $null = Wait-InstalledAppxDesktopProcess -Executable $entry.Executable -ProcessName $entry.ProcessName -TimeoutSeconds 1 } catch { $rejected = $_.Exception.Message -like '*did not start from the installed package path*' }
