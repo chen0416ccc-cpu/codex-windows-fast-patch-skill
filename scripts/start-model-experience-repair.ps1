@@ -12,6 +12,7 @@ $dataRoot = 'D:\CodexData\codex-windows-fast-patch'
 $runRoot = Join-Path $dataRoot 'model-experience-repair-runs'
 $logRoot = Join-Path $dataRoot 'model-experience-repair-logs'
 . (Join-Path $PSScriptRoot 'lib\post-update-readiness.ps1')
+. (Join-Path $PSScriptRoot 'lib\appx-launch.ps1')
 
 function Assert-LocalDirectory {
   param([string]$Path, [switch]$Create)
@@ -129,8 +130,7 @@ if ($bootstrapErrors.Count -gt 0) {
   throw "Generated elevated bootstrap failed PowerShell parsing: $($bootstrapErrors[0].Message)"
 }
 $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($bootstrap))
-$powershellExe = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
-if (-not (Test-Path -LiteralPath $powershellExe -PathType Leaf)) { throw "Windows PowerShell 5.1 was not found: $powershellExe" }
+$powershellExe = Get-AppxNativePowerShellPath
 $arguments = @('-NoProfile', '-ExecutionPolicy', 'RemoteSigned', '-EncodedCommand', $encodedCommand)
 
 Write-Host "Source package: $($package.PackageFullName)"

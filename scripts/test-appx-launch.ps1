@@ -1,5 +1,6 @@
 param(
-  [Parameter(Mandatory = $true)][string]$TemporaryRoot
+  [Parameter(Mandatory = $true)][string]$TemporaryRoot,
+  [switch]$SkipWow64Child
 )
 
 $ErrorActionPreference = 'Stop'
@@ -55,16 +56,53 @@ Assert $typeMatch.Success 'bounded COM declaration is present'
 $typeSource = $typeMatch.Groups[1].Value
 Assert ($typeSource.Contains('(IApplicationActivationManager)new ApplicationActivationManager()')) 'the activation wrapper performs the COM cast inside C#'
 Assert ($typeSource.Contains('public static uint Launch(string appUserModelId)')) 'the activation wrapper returns the native PID'
-$probe = '$ErrorActionPreference = ''Stop''' + [Environment]::NewLine +
+$probe = '$ErrorActionPreference = ''Stop''; $ProgressPreference = ''SilentlyContinue''' + [Environment]::NewLine +
   '$code = @''' + [Environment]::NewLine + $typeSource + [Environment]::NewLine + '''@' + [Environment]::NewLine +
   'Add-Type -TypeDefinition $code -ErrorAction Stop' + [Environment]::NewLine +
-  'if (-not [Environment]::Is64BitProcess) { exit 3 }' + [Environment]::NewLine +
+  'if ([Environment]::Is64BitProcess -ne [Environment]::Is64BitOperatingSystem) { exit 3 }' + [Environment]::NewLine +
   '$method = [PackagedAppActivation].GetMethod(''Launch'')' + [Environment]::NewLine +
   'if ($method.ReturnType -ne [uint32] -or -not $method.IsStatic) { exit 4 }' + [Environment]::NewLine +
   '''activation-contract-ok'''
 $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($probe))
-$contract = & (Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe') -NoProfile -EncodedCommand $encoded
+$nativeShell = Get-AppxNativePowerShellPath
+$expectedSystemDirectory = if ([Environment]::Is64BitOperatingSystem -and -not [Environment]::Is64BitProcess) { 'Sysnative' } else { 'System32' }
+Assert ($nativeShell -ieq (Join-Path $env:WINDIR "$expectedSystemDirectory\WindowsPowerShell\v1.0\powershell.exe")) 'native shell selection accounts for WOW64 redirection'
+$contract = & $nativeShell -NoProfile -EncodedCommand $encoded
 Assert ($LASTEXITCODE -eq 0 -and $contract -ceq 'activation-contract-ok') 'the real system PowerShell compiles the activation wrapper in its native bitness'
+
+# Replace only the actual app activation call; exercise the production child/output path.
+$activationAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'lib\appx-launch.ps1'), [ref]$null, [ref]$null)
+$activationFunction = $activationAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-InstalledAppxApplicationActivation' }, $true).Extent.Text
+$activationCall = '[Console]::Out.WriteLine([PackagedAppActivation]::Launch($args[0]))'
+Assert ($activationFunction.Contains($activationCall)) 'the real activation seam is present before non-interactive substitution'
+foreach ($case in @(
+  @{ Source = '[Console]::Out.WriteLine([uint32]53124)'; Expected = [uint32]53124 },
+  @{ Source = '[Console]::Out.WriteLine([uint32]4294967295)'; Expected = [uint32]::MaxValue },
+  @{ Source = 'exit 0'; Expected = $null },
+  @{ Source = '[Console]::Out.WriteLine(''not-a-pid'')'; Expected = $null },
+  @{ Source = '[Console]::Out.WriteLine(''0'')'; Expected = $null },
+  @{ Source = '[Console]::Out.WriteLine(''4294967296'')'; Expected = $null },
+  @{ Source = '[Console]::Out.WriteLine(''53124''); [Console]::Out.WriteLine(''53125'')'; Expected = $null },
+  @{ Source = '[Console]::Out.WriteLine(''53124''); exit 7'; Expected = $null }
+)) {
+  & {
+    . ([scriptblock]::Create($activationFunction.Replace($activationCall, $case.Source)))
+    $failure = $null
+    $actual = $null
+    try { $actual = Invoke-InstalledAppxApplicationActivation -AppUserModelId "Fixture.NoActivation!App'Quoted" } catch { $failure = $_.Exception.Message }
+    if ($null -eq $case.Expected) {
+      Assert ($failure -like 'Packaged app activation failed*') "invalid child output is rejected: $($case.Source)"
+    } else {
+      Assert ($null -eq $failure -and $actual -eq $case.Expected) "the complete uint32 PID survives child output: $($case.Expected)"
+    }
+  }
+}
+
+if (-not $SkipWow64Child -and [Environment]::Is64BitOperatingSystem -and [Environment]::Is64BitProcess) {
+  $wow64Shell = Join-Path $env:WINDIR 'SysWOW64\WindowsPowerShell\v1.0\powershell.exe'
+  $wow64Result = @(& $wow64Shell -NoProfile -File $PSCommandPath -TemporaryRoot (Join-Path $root 'wow64') -SkipWow64Child 2>&1)
+  Assert ($LASTEXITCODE -eq 0 -and ($wow64Result -join '\n') -match 'APPX_LAUNCH_TESTS_PASSED') 'a real 32-bit parent compiles and parses activation output through the native system shell'
+}
 
 $probes = [scriptblock]::Create(@'
 param([Parameter(ValueFromRemainingArguments = $true)][object[]]$Arguments)
@@ -103,13 +141,15 @@ $exitedProbe.Id = 999
 $script:processes = @($exitedProbe, $script:processes[0])
 $process = Wait-InstalledAppxDesktopProcess -Executable $entry.Executable -ProcessName $entry.ProcessName
 Assert ($process.Id -eq 10) 'a process that exits during inspection is retried instead of being accepted'
-$script:processes = @($script:processes[1])
+$script:processes = @($script:processes[0])
 $script:denied = $true
 $rejected = $false
 try { $null = Wait-InstalledAppxDesktopProcess -Executable $entry.Executable -ProcessName $entry.ProcessName -TimeoutSeconds 1 } catch { $rejected = $_.Exception.Message -like '*did not start from the installed package path*' }
 Assert $rejected 'unreadable process identity still fails closed'
 $script:denied = $false
 
+$launcherText = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'start-model-experience-repair.ps1'))
+Assert ($launcherText.Contains("lib\appx-launch.ps1") -and $launcherText.Contains('$powershellExe = Get-AppxNativePowerShellPath')) 'the elevated installer bootstrap also uses native system bitness'
 foreach ($file in @('repatch-model-experience-recoverable.ps1', 'patch_codex_fast_mode_windows_msix.ps1')) {
   $text = [IO.File]::ReadAllText((Join-Path $PSScriptRoot $file))
   Assert ($text.Contains("lib\appx-launch.ps1")) "$file uses the shared activation helper"

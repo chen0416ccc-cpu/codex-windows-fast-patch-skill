@@ -38,16 +38,24 @@ function Get-InstalledAppxApplicationEntry {
   }
 }
 
-function Invoke-InstalledAppxApplicationActivation {
-  param([Parameter(Mandatory = $true)][string]$AppUserModelId)
-  # Run the system activation call in the OS-bitness-matched PowerShell. A
-  # Store-installed pwsh can be 32-bit and fail COM activation with 0x8007000B.
-  $powershellExe = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+function Get-AppxNativePowerShellPath {
+  # System32 is redirected to SysWOW64 inside a 32-bit process on 64-bit Windows.
+  $systemDirectory = if ([Environment]::Is64BitOperatingSystem -and -not [Environment]::Is64BitProcess) {
+    'Sysnative'
+  } else { 'System32' }
+  $powershellExe = Join-Path $env:WINDIR "$systemDirectory\WindowsPowerShell\v1.0\powershell.exe"
   if (-not (Test-Path -LiteralPath $powershellExe -PathType Leaf)) {
     throw "Windows PowerShell is required for packaged app activation: $powershellExe"
   }
+  return $powershellExe
+}
+
+function Invoke-InstalledAppxApplicationActivation {
+  param([Parameter(Mandatory = $true)][string]$AppUserModelId)
+  $powershellExe = Get-AppxNativePowerShellPath
   $source = @'
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
@@ -78,11 +86,13 @@ public static class PackagedAppActivation {
 '@
   $source = $source.Replace('$args[0]', "'$($AppUserModelId.Replace("'", "''"))'")
   $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($source))
-  $output = & $powershellExe -NoProfile -ExecutionPolicy RemoteSigned -EncodedCommand $encoded 2>&1
-  if ($LASTEXITCODE -ne 0 -or @($output).Count -ne 1 -or [string]$output[0] -notmatch '^\d+$') {
+  $output = @(& $powershellExe -NoProfile -ExecutionPolicy RemoteSigned -EncodedCommand $encoded 2>&1)
+  $activatedProcessId = [uint32]0
+  if ($LASTEXITCODE -ne 0 -or $output.Count -ne 1 -or [string]$output[0] -notmatch '^\d+$' -or
+      -not [uint32]::TryParse([string]$output[0], [ref]$activatedProcessId) -or $activatedProcessId -eq 0) {
     throw "Packaged app activation failed for $AppUserModelId : $($output -join [Environment]::NewLine)"
   }
-  return [uint32]([string]$output[0])
+  return $activatedProcessId
 }
 
 function Wait-InstalledAppxDesktopProcess {
