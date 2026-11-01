@@ -29,6 +29,7 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib\windows-cua-runtime.ps1')
 . (Join-Path $PSScriptRoot 'lib\msix-safe-install.ps1')
+. (Join-Path $PSScriptRoot 'lib\appx-launch.ps1')
 $LogPrefix = '[codex-msix-patch-win]'
 $OutputRootWasExplicit = $PSBoundParameters.ContainsKey('OutputRoot')
 $WindowsSdkBuildToolsPackageId = 'microsoft.windows.sdk.buildtools'
@@ -3197,27 +3198,13 @@ function Install-PatchedPackage {
   $installed = Invoke-TransactionalMsixInstall -MsixPath $MsixPath -PackageName $PackageFamilyName
   Write-Log "installed package: $($installed.PackageFullName)"
   if ($Launch -and -not $NoLaunch) {
-    $application = @(Get-AppxPackageManifest -Package $installed).Package.Applications.Application | Select-Object -First 1
-    $appUserModelId = "$($installed.PackageFamilyName)!$($application.Id)"
-    $appExecutable = Join-Path $installed.InstallLocation ([string]$application.Executable).Replace('/', '\')
-    Write-Log "launching Codex package app: $appUserModelId"
-    Start-Process -FilePath 'explorer.exe' -ArgumentList "shell:AppsFolder\$appUserModelId"
-
-    $deadline = (Get-Date).AddSeconds(20)
-    $desktopProcess = $null
-    while (-not $desktopProcess -and (Get-Date) -lt $deadline) {
-      Start-Sleep -Milliseconds 500
-      $desktopProcess = Get-Process -Name ([System.IO.Path]::GetFileNameWithoutExtension($appExecutable)) -ErrorAction SilentlyContinue |
-        Where-Object { $_.Path -and $_.Path.Equals($appExecutable, [StringComparison]::OrdinalIgnoreCase) } |
-        Select-Object -First 1
-    }
-    if (-not $desktopProcess) {
-      Fail "Codex Desktop executable did not start: $appExecutable"
-    }
+    $entry = Get-InstalledAppxApplicationEntry -Package $installed
+    $appUserModelId = Start-InstalledAppxPackage -Package $installed
+    $desktopProcess = Wait-InstalledAppxDesktopProcess -Executable $entry.Executable -ProcessName $entry.ProcessName -TimeoutSeconds 20
 
     # A second activation makes an already-running Electron instance surface its window.
-    Start-Process -FilePath 'explorer.exe' -ArgumentList "shell:AppsFolder\$appUserModelId"
-    Write-Log "Codex Desktop package process started: $appExecutable pid=$($desktopProcess.Id)"
+    $null = Invoke-InstalledAppxApplicationActivation -AppUserModelId $appUserModelId
+    Write-Log "Codex Desktop package process started: $($entry.Executable) pid=$($desktopProcess.Id)"
   }
 }
 
