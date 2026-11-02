@@ -120,7 +120,7 @@ $items = @($script:processes | Where-Object Name -ceq $ProcessName | ForEach-Obj
   $path = $_.Path
   if ($script:denied) { $path = $null }
   $process = [pscustomobject]@{ Name = $_.Name; Path = $path; Id = $_.Id; SessionId = 1; StartTime = $_.StartTime; MainWindowHandle = $_.Window; Responding = $true; HasExited = $false }
-  $process | Add-Member -MemberType ScriptMethod -Name Refresh -Value { if ($this.Id -eq 999) { throw 'process exited' } }
+  $process | Add-Member -MemberType ScriptMethod -Name Refresh -Value { if ($this.Id -eq 999) { throw 'process exited' }; if ($this.Id -eq 998 -and $script:transientExited) { $this.HasExited = $true } }
   $process
 })
 @($items)
@@ -142,6 +142,23 @@ $script:processes = @($exitedProbe, $script:processes[0])
 $process = Wait-InstalledAppxDesktopProcess -Executable $entry.Executable -ProcessName $entry.ProcessName
 Assert ($process.Id -eq 10) 'a process that exits during inspection is retried instead of being accepted'
 $script:processes = @($script:processes[0])
+# A renderer can survive enumeration but exit during the startup grace period.
+$stableProbe = $script:processes[0].PSObject.Copy()
+$stableProbe.Id = 20
+$transientProbe = $stableProbe.PSObject.Copy()
+$transientProbe.Id = 998
+$transientProbe.Window = [intptr]42
+$script:processes = @($transientProbe, $stableProbe)
+$script:transientExited = $false
+function Start-Sleep {
+  param([int]$Seconds, [int]$Milliseconds)
+  $script:transientExited = $true
+  $script:processes = @($script:processes | Where-Object Id -ne 998)
+}
+try {
+  $process = Wait-InstalledAppxDesktopProcess -Executable $entry.Executable -ProcessName $entry.ProcessName -StableSeconds 4
+  Assert ($process.Id -eq 20) 'startup grace-period exit retries the replacement matching-package process'
+} finally { Remove-Item Function:\Start-Sleep }
 $script:denied = $true
 $rejected = $false
 try { $null = Wait-InstalledAppxDesktopProcess -Executable $entry.Executable -ProcessName $entry.ProcessName -TimeoutSeconds 1 } catch { $rejected = $_.Exception.Message -like '*did not start from the installed package path*' }

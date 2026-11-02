@@ -99,7 +99,8 @@ function Wait-InstalledAppxDesktopProcess {
   param(
     [Parameter(Mandatory = $true)][string]$Executable,
     [Parameter(Mandatory = $true)][string]$ProcessName,
-    [int]$TimeoutSeconds = 45
+    [int]$TimeoutSeconds = 45,
+    [int]$StableSeconds = 0
   )
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
   do {
@@ -110,6 +111,10 @@ function Wait-InstalledAppxDesktopProcess {
     if ($process) {
       try {
         $process.Refresh()
+        if ($StableSeconds -gt 0 -and -not $process.HasExited) {
+          Start-Sleep -Seconds $StableSeconds
+          $process.Refresh()
+        }
         if (-not $process.HasExited) { return $process }
       } catch {
         # A short-lived renderer can exit between enumeration and inspection.
