@@ -141,6 +141,11 @@ Do not claim a binary is fixed because it was rebuilt. Check markers in the actu
 
 ### Desktop 26.1027 Split Layout And Missing Settings Entry
 
+For the separately tested native-local API-main candidate, read
+[the version-pinned 26.1027 notes](remote-control-native-local-261027.md).
+It is not an automatic full-phone profile and real phone acceptance remains
+separate from compilation, fixture and settings-entry validation.
+
 The inspected 26.1027.3384.1 package uses `early-bootstrap-*.js` main chunks,
 a separate `remote-control-connections-visibility-*.js`, and native
 `0.166.0-alpha.5.1`. The complete legacy phone patch stops before any package
