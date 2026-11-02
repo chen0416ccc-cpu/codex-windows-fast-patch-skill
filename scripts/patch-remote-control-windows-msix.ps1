@@ -5,6 +5,7 @@ param(
   [switch]$KeepWorkDir,
   [switch]$ForceRebuild,
   [switch]$InstallPrerequisites,
+  [switch]$OnlySettingsEntry,
   [string]$BuildToolsProxy = $env:CODEX_WINDOWS_SDK_BUILDTOOLS_PROXY,
   [string]$ReplacementResourceCodexExe,
   [string]$OutputRoot = (Join-Path $env:TEMP 'codex-remote-control-msix-patch')
@@ -282,6 +283,10 @@ function Stop-CodexDesktopProcesses {
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $patcher = Join-Path $PSScriptRoot 'patch-remote-control-asar.cjs'
+if ($OnlySettingsEntry) {
+  if ($ReplacementResourceCodexExe) { Fail '-OnlySettingsEntry cannot replace the native executable' }
+  $patcher = Join-Path $PSScriptRoot 'patch-remote-control-settings-entry.cjs'
+}
 if (-not (Test-Path -LiteralPath $patcher -PathType Leaf)) {
   Fail "patcher not found: $patcher"
 }
@@ -356,6 +361,16 @@ try {
   }
 
   Write-Log "patching remote-control Electron bundles"
+  if ($OnlySettingsEntry) {
+    $patchResult = & node --experimental-vm-modules $patcher $asarDir
+    if ($LASTEXITCODE -ne 0) { Fail "remote-control settings entry patch failed with exit code $LASTEXITCODE" }
+    $patchResult | Write-Host
+    $entryInfo = $patchResult | ConvertFrom-Json
+    if ($entryInfo.settingsEntryOnly -ne $true -or @($entryInfo.files).Count -ne 1) {
+      Fail 'settings-only patch did not return its complete contract'
+    }
+    Write-Log 'settings entry patch validated; authentication, native executable and pairing remain unchanged'
+  } else {
   $patchResult = & node $patcher $asarDir
   if ($LASTEXITCODE -ne 0) {
     Fail "remote-control ASAR patcher failed with exit code $LASTEXITCODE"
@@ -477,6 +492,7 @@ try {
       Fail "mobile setup forced ChatGPT auth redirect still present: $($mobileItem.Path)"
     }
   }
+  }
 
   Write-Log "packing patched ASAR"
   & $npx --yes --cache $npxCache asar pack $asarDir $workAsar
@@ -513,7 +529,11 @@ try {
 
   if ($DryRun) {
     Write-Log "dry run complete; patched package root validated at: $workPackageRoot"
-    Write-Log "dry run markers: remote_control_desktop_fetch_override_used, remote_control_appserver_bh_isolated_auth_fallback, remote_control_mobile_setup_no_auth_redirect, remote_control_mobile_setup_authorize_before_enable, remote_control_mfa_info_403_nonblocking, remote_control_client_list_partial_failure_nonblocking, remote_control_settings_force_control_this_pc_visible, remote_control_settings_force_remote_control_section_visible"
+    if ($OnlySettingsEntry) {
+      Write-Log 'dry run markers: remote_control_settings_force_control_this_pc_visible, remote_control_settings_force_remote_control_section_visible; settings-only, not pairing acceptance'
+    } else {
+      Write-Log "dry run markers: remote_control_desktop_fetch_override_used, remote_control_appserver_bh_isolated_auth_fallback, remote_control_mobile_setup_no_auth_redirect, remote_control_mobile_setup_authorize_before_enable, remote_control_mfa_info_403_nonblocking, remote_control_client_list_partial_failure_nonblocking, remote_control_settings_force_control_this_pc_visible, remote_control_settings_force_remote_control_section_visible"
+    }
     $scriptSucceeded = $true
     return
   }
