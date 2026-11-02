@@ -685,10 +685,7 @@ function Start-AndValidateCodex {
   )
   $entry = Get-InstalledAppxApplicationEntry -Package $Package
   $appUserModelId = Start-InstalledAppxPackage -Package $Package
-  $process = Wait-InstalledAppxDesktopProcess -Executable $entry.Executable -ProcessName $entry.ProcessName
-  Start-Sleep -Seconds 4
-  $process.Refresh()
-  if ($process.HasExited) { throw 'Codex exited immediately after the package update.' }
+  $process = Wait-InstalledAppxDesktopProcess -Executable $entry.Executable -ProcessName $entry.ProcessName -StableSeconds 4
   Write-Log "Codex process start verified: pid=$($process.Id) version=$($Package.Version) aumid=$appUserModelId"
   if ([version]$Package.Version -eq $PatchedVersion) {
     $null = Test-ModelListFastTiers -CliPath $CliPath
