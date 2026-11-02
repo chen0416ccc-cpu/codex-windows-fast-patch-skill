@@ -90,6 +90,11 @@ For Desktop 26.1027's missing or inert phone Settings entry, the phone script's
 It preserves auth/access checks and React hooks. It does not port isolated OAuth
 or native connection support and is not QR/phone pairing acceptance. See
 [phone diagnostics](references/remote-control-debug-cases.md).
+The separately pinned [0.166 native isolated-remote repair](references/remote-control-native-local-261027.md)
+has user-confirmed phone acceptance for that exact deployed version pair,
+with system-proxy and cleanup boundaries documented. It does not enable the
+legacy full-phone workflow automatically or imply independently captured
+phone-message round-trip/model-request URL evidence.
 
 The repository includes a reusable entry point instead of a script copied from a repair chat:
 

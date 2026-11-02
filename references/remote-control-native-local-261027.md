@@ -1,6 +1,6 @@
-# Desktop 26.1027 Native-Local Candidate
+# Desktop 26.1027 Native-Local Repair
 
-This is a version-pinned candidate, not a generally enabled full-phone profile.
+This is a version-pinned repair, not a generally enabled full-phone profile.
 The settings-only repair remains separate. Do not use a prior 0.154 executable
 or force pairing/upgrade gates for this layout.
 
@@ -94,5 +94,70 @@ than restoring stale paths. Use ordinary UAC and an independent executor.
 Keep transaction checkpoints before relaunch so app interruption cannot erase
 the observed deployment state.
 
-Real installed-process connection, UI pairing and a phone message round trip
-remain pending. Do not label this candidate a completed phone repair yet.
+## System Proxy And Restart
+
+Native 0.166 already supports `features.respect_system_proxy = true`. When
+isolated auth is accepted but WebSocket connections fail with Windows
+`os error 10060`, inspect the current Desktop/native process environments and
+Windows proxy settings before rebuilding. The default WebSocket policy can
+inherit environment proxies without consulting the Windows system proxy.
+HTTP reachability alone does not establish a working WebSocket connection.
+
+If the Windows proxy is configured and a read-only native probe using that
+feature reaches the official remote API, back up the existing config on the
+user's requested work drive, add only that boolean to the existing features
+table, and validate TOML plus all other config semantics. Do not append a
+second features table. Confirm the actual native `features list` reports it
+enabled, then perform one authorized controlled restart, not another MSIX
+install. Explain that the option affects the whole native HTTP/proxy policy,
+including model traffic; it is not a remote-only proxy switch. Preserve the
+provider, endpoint, credentials, existing NO_PROXY and global environment.
+
+An isolated read-only probe must disable remote transport, never enroll or
+enable it merely to test HTTP, keep all temporary files on the requested
+drive, and remove its credential copy when it exits. Do not repeat browser
+OAuth if the existing isolated credential is still valid.
+
+Windows PowerShell 5.1 can remove nested quotes in `python -c` arguments. Use
+a saved script file for protected config checks and test the actual 5.1
+invocation before scheduling a restart. Save a deployment checkpoint before
+closing Desktop. If the helper exits without its final record, inspect the
+registered package, new process pair, payload hashes and protected state; do
+not keep waiting on a dead PID or repeat an observed successful deployment.
+
+The regenerated `node_repl.env.CODEX_CLI_PATH` can also change when using the
+optional non-system cache. Accept only the configured destination's exact
+hash child and the complete verified native executable hash, rather than
+ignoring arbitrary CLI paths. A verifier that only searches the old C: cache
+has a tooling limitation; never copy another executable to C: to hide it.
+
+## Point-In-Time Acceptance
+
+On 2026-11-02, Desktop `26.1027.3384.4` with native `0.166.0-alpha.5.1`
+was installed in place. Installed ASAR integrity and the packaged/running
+native hashes matched the validated candidates. The user explicitly
+confirmed the phone was connected and usable after the system-proxy feature
+and restart. Main provider/config semantics and isolated credential hashes
+were preserved, no main `auth.json` was created, and `plugin list --json`
+succeeded. This is real user acceptance of that exact version pair.
+
+Keep evidence layers separate: an official native read-only client-list
+request succeeded, but the repair run did not independently capture a fresh
+WebSocket Connected event for the final process, a phone-message round trip,
+or its model sampling request URL. Do not fabricate those checks from the
+user report or the local fixture. The legacy strict verifier's C:-only CLI
+lookup and the pre-existing independent CUA proxy check were not repaired.
+Unknown future versions still fail closed, and no automatic generic 0.166
+builder mapping is implied by this acceptance.
+
+## Cleanup
+
+After acceptance, remove task-created extraction/source/build/test/cache
+trees and duplicate candidates. Keep the current native cache and active
+isolated auth: deleting them breaks the installed repair. Normally retain
+explicit backups and recovery packages; if the user explicitly requests no
+repair artifacts, they may be removed after publication/merge and final
+protected-state checks. Verify exact absolute targets, reject reparse paths
+and live process references, and preserve pre-existing files and unrelated
+local skill overlays. Do not claim byte-for-byte pre-repair cleanliness:
+updated skill/program/config/auth and normal app state remain necessary.
