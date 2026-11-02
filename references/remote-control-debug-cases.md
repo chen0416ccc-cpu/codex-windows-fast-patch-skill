@@ -139,6 +139,29 @@ Do not claim a binary is fixed because it was rebuilt. Check markers in the actu
 
 ## Known Failure Modes
 
+### Desktop 26.1027 Split Layout And Missing Settings Entry
+
+The inspected 26.1027.3384.1 package uses `early-bootstrap-*.js` main chunks,
+a separate `remote-control-connections-visibility-*.js`, and native
+`0.166.0-alpha.5.1`. The complete legacy phone patch stops before any package
+deployment because it cannot identify its main bundle contract. Do not broaden
+that detector alone: backend auth now includes principal lifetime/routing and
+the remote API uses `/codex/remote/control/` in addition to older paths.
+
+`-OnlySettingsEntry` provides a separate, deliberately limited repair for the
+missing/inert settings tab. It matches the complete tab-normalizer arguments,
+changes the paired section/local-tab assignments, retains the section hook,
+parses the ES module before writing, and refuses mixed or duplicate state.
+It leaves native code, auth stores, account checks, API URLs and pairing intact.
+The original section hook and backend availability/access check remain elsewhere
+in the app; exposing this settings page is not evidence of access or a working
+connection. Exact bundle dry-run, package deployment, live entry and phone
+pairing are separate acceptance layers.
+
+Use the normal recoverable deployment boundaries for this mode. The source
+package's native executable must be unchanged. Keep auth/config/history intact;
+refresh an expired isolated remote credential only in the separate auth workflow.
+
 ### Settings Shows Only SSH
 
 Symptoms:

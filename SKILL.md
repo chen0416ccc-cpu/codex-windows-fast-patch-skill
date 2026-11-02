@@ -256,6 +256,20 @@ Any bundled script write to an existing `config.toml` first creates one timestam
 
 Before repairing phone remote control, read `references/remote-control-debug-cases.md`. Keep these boundaries explicit:
 
+For Desktop 26.1027's split webpack/rolldown layout, the older complete phone
+patch fails closed with `could not find main bundle with remote-control remote-control flow`.
+For the specific missing/inert Settings entry symptom, use
+`patch-remote-control-windows-msix.ps1 -OnlySettingsEntry -DryRun -OutputRoot <large-local-root>`
+first. This mode changes only the settings asset's local-tab and section visibility,
+preserves the original React hook call and all authentication/access checks,
+and rejects partial/duplicate patches or native replacement combinations.
+It does not port isolated OAuth, enable the native transport, or prove QR/phone
+pairing. Do not describe it as complete remote-control repair. Deployment still
+requires an independent executor, normal UAC and an original-content recovery
+package. Run `node scripts/test-remote-control-settings-entry.cjs <original-settings-asset>`
+and the ASAR integrity regression before installing. Unknown full-phone layouts
+remain unsupported; never replace 0.166 native code with a legacy 0.154 binary.
+
 - Remote-control pairing/control transport can legitimately call `https://chatgpt.com/backend-api/wham/remote/control/...`. Do not rewrite that transport to a third-party model API endpoint.
 - After phone pairing works, verify the actual model sampling request URL. If it goes to the wrong model API endpoint, treat that as a post-pairing configuration diagnosis, not as part of the remote-control pairing implementation.
 - Remote-control OAuth is isolated: use `.codex\remote-control-oauth.json` and `.codex\remote.json`; never use `.codex\auth.json` for the remote-control bearer injection path.

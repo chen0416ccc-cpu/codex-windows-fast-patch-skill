@@ -85,6 +85,12 @@ my third-party API configuration, existing login, and conversation history.
 
 ### Check and recover after an update
 
+For Desktop 26.1027's missing or inert phone Settings entry, the phone script's
+`-OnlySettingsEntry -DryRun` mode repairs only paired visibility/routing gates.
+It preserves auth/access checks and React hooks. It does not port isolated OAuth
+or native connection support and is not QR/phone pairing acceptance. See
+[phone diagnostics](references/remote-control-debug-cases.md).
+
 The repository includes a reusable entry point instead of a script copied from a repair chat:
 
 ```powershell
