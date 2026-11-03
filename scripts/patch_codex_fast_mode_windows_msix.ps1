@@ -2951,8 +2951,10 @@ function Invoke-PatchAppAsar {
       Write-Log 'asar project/archive patches already present'
       return $false
     }
-    Write-Log 'repacking app.asar'
-    Invoke-NpxAsar 'pack' $extractDir $newAsarPath
+    Write-Log 'repacking app.asar with original unpacked entries and shared extents'
+    $stateRepacker = Join-Path $PSScriptRoot 'repack-project-archive-asar.cjs'
+    $repackResult = Invoke-NodePatcher $nodePath $stateRepacker @($asarPath, $extractDir, $newAsarPath)
+    Write-Log "project/archive preserved layout: $repackResult"
     Copy-Item -LiteralPath $newAsarPath -Destination $asarPath -Force
     return $true
   }

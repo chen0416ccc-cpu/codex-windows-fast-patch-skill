@@ -34,14 +34,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$SkillRoot\scripts\patch_co
 
 This mode is opt-in and separate from ordinary full repairs. It skips unrelated Chrome registry and runtime repairs. Build and sign a higher-revision original-content recovery package before deployment, validate signatures and every payload block, and use the independent-installer workflow in [post-update verification](post-update-verification.md). Save a handoff, validate user/session/admin/ancestry/Job independence, request normal app exit and apply `Add-AppxPackage -Path` in place. After reopening Desktop, inspect the existing transaction before resuming.
 
+The targeted repacker reads the original ASAR header, replaces only its three pinned packed assets, and preserves unpacked native entries, links and shared data extents. This matters for previously patched packages whose extracted native bytes differ from the original header metadata: a plain `asar pack` can move native modules into the archive. Native files remain in the package's existing `app.asar.unpacked` directory. The repacker rejects source gaps, overlaps and trailing bytes, flushes a separate output and leaves the source archive untouched.
+
 ## Acceptance
 
 Run against original extracted assets from each supported source combination:
 
 ```powershell
 node "$SkillRoot\scripts\test-project-archive-state.cjs" '<original extracted ASAR>'
+node "$SkillRoot\scripts\test-project-archive-asar.cjs"
 ```
 
 The 34 checks execute the shipped state loader, assignment writer and archive-error render/memo code. They reproduce all three original defects and verify backup/temporary recovery, valid-empty-primary precedence, durable writes, Windows backend requests, unsupported-backend/non-Windows guards, cached error invalidation, retry for empty failures, source hashes, dry-run immutability, exact backups and idempotence.
+
+The 10 ASAR layout checks verify a modified file sharing an extent with an unchanged file, preserved native/link entries, an identical no-change rebuild, source immutability and rejection before output when a target or source layout is invalid. Compare the actual output header to the source and independently verify its packed extents before signing.
 
 After installation, verify the registered package, actual responsive Desktop process and installed payload against the signed package. Re-read active and archived memberships through app tools and SQLite after restart, check state/checkpoint consistency, and exercise a known assignment through the app interface to prove backend persistence. Keep archive row retrieval, execution of the installed render code, and actual visual observation as separate evidence. Function tests do not prove an independently observed settings screen. Record any unobserved visual acceptance explicitly.
