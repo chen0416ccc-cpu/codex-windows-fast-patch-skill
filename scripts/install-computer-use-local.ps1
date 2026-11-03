@@ -4351,6 +4351,22 @@ function Invoke-BrowserAccessibilityAssets {
 }
 
 function Get-CuaRuntimeSystemProxy {
+  $httpProxy = [Environment]::GetEnvironmentVariable('HTTP_PROXY', 'Process')
+  $httpsProxy = [Environment]::GetEnvironmentVariable('HTTPS_PROXY', 'Process')
+  if ($httpProxy -or $httpsProxy) {
+    if (-not $httpProxy -or -not $httpsProxy) { throw 'Inherited HTTP_PROXY and HTTPS_PROXY must both be configured.' }
+    foreach ($proxy in @($httpProxy, $httpsProxy)) {
+      $uri = $null
+      if ($proxy -notmatch '^http://(?:\[[0-9a-fA-F:.]+\]|[a-zA-Z0-9.-]+)(?::[0-9]+)?/?\z' -or
+          -not [Uri]::TryCreate($proxy, [UriKind]::Absolute, [ref]$uri) -or
+          $uri.Scheme -ne 'http' -or $uri.UserInfo -or $uri.AbsolutePath -ne '/' -or
+          $uri.Query -or $uri.Fragment -or $uri.Port -lt 1 -or $uri.Port -gt 65535) {
+        throw 'Inherited CUA proxies must be explicit HTTP URLs without credentials.'
+      }
+    }
+    # Complete explicit environment settings need no Windows proxy fallback.
+    return $null
+  }
   $settings = Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction Stop
   if ($settings.AutoConfigURL) {
     $connections = Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings\Connections' -ErrorAction SilentlyContinue
