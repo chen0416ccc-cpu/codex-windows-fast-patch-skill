@@ -27,6 +27,8 @@
 
 This community-maintained **Agent Skill** contains diagnostic workflows and repair scripts. It is not an official client or a universal one-click installer.
 
+The one-click repair includes CUA browser proxy recovery using the explicit Windows HTTP system proxy, with original-byte backups and reapplication after proxy changes. Restart Codex after a write and verify Chrome and the in-app browser separately. Run `scripts/install-computer-use-local.ps1 -OnlyRuntimeProxy` for only this repair; add `-StrictVerifyOnly` for read-only checks. PAC, authenticated and non-HTTP proxies are unsupported.
+
 > [!WARNING]
 > **Windows only. Some repairs include reinstalling Codex.** The app will close and the current conversation may be interrupted. After installation, reopen Codex, return to the original repair conversation, and send "continue" to resume. See the [reinstallation details](#which-repairs-reinstall-codex).
 
@@ -72,12 +74,43 @@ configuration and conversations, run background verification, and clean up tempo
 
 Verification defaults to background read-only checks. It does not automatically open Calculator or another test app, change native-window focus, or inject mouse/keyboard input. Runtime, plugin, and window-enumeration results are reported separately. Live native screenshot/input tests run only when explicitly requested or authorized, and untested operations are identified as such.
 
+External-browser extension verification accepts Chrome or Edge. For an Edge-only installation, the official diagnostic checks Edge's own profile root; installing the extension in Chrome or mapping one browser's user directory to another is unnecessary. Actual page access still requires separate verification.
+
 **Request phone remote control separately:**
 
 ```text
 Use codex-windows-fast-patch to repair phone remote control while keeping
 my third-party API configuration, existing login, and conversation history.
 ```
+
+### Check and recover after an update
+
+For Desktop 26.1027's missing or inert phone Settings entry, the phone script's
+`-OnlySettingsEntry -DryRun` mode repairs only paired visibility/routing gates.
+It preserves auth/access checks and React hooks. It does not port isolated OAuth
+or native connection support and is not QR/phone pairing acceptance. See
+[phone diagnostics](references/remote-control-debug-cases.md).
+The separately pinned [0.166 native isolated-remote repair](references/remote-control-native-local-261027.md)
+has user-confirmed phone acceptance for that exact deployed version pair,
+with system-proxy and cleanup boundaries documented. It does not enable the
+legacy full-phone workflow automatically or imply independently captured
+phone-message round-trip/model-request URL evidence.
+
+The repository includes a reusable entry point instead of a script copied from a repair chat:
+
+```powershell
+& "$SkillRoot\scripts\codex-after-update.ps1"
+& "$SkillRoot\scripts\codex-after-update.ps1" -CheckApp
+& "$SkillRoot\scripts\codex-after-update.ps1" -RepairPlugins -RepairApp
+```
+
+The first command checks the current package transaction, live model catalog and plugin/runtime contracts. A package without its own accepted checkpoint returns `app-check-needed`; passing plugin checks does not establish that app patches survived. `-CheckApp` also runs the full package dry run, checking locale, plugins, browser/Computer Use, Fast and Ultra paths, then removes its temporary package copy. Use `-CheckRoot 'D:\CodexChecks'` to select a temporary directory with enough free space.
+
+The third command explicitly repairs plugins and dispatches the recoverable full non-phone installer only when a compatible dry run establishes missing patches. Deployment requests normal UAC and restarts Desktop. A pending installed target resumes acceptance instead of redeploying; running or unknown installer state blocks another launch.
+
+Model visibility overrides default to the active provider's visible `model/list` entries plus its selected default, preserving the catalog's reasoning/service tiers. Supply `-CustomModels @('your-model-a','your-model-b')` to override this list; it never creates model or speed capabilities. The recoverable launcher also resolves live defaults and stops on probe failure instead of silently falling back to an old hard-coded list.
+
+The entry point emits a JSON status. `-ReportPath '<new-report-path>.json'` saves it without overwriting existing files. `-WhatIf` permits diagnostics, but does not repair plugins, dispatch an installer or save a report. Full bundle inspection uses temporary disk space and does not modify the installed application. No scheduled task, monitor or automatic restart is registered. Store updates can still replace patched files; this workflow detects and restores supported paths after an update, and rejects unknown layouts before installation. It cannot guarantee compatibility with arbitrary future releases. See [post-update verification](references/post-update-verification.md).
 
 ### Configure Tinghuashui (听话水)
 

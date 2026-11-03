@@ -199,6 +199,40 @@ try {
     Test-DesktopChromeExtensionVisible $chromeCacheRoot $runtimeInventory
   } '*Codex Desktop cannot see the Chrome extension*'
 
+  # Edge-only users must pass through Edge's own default root and official
+  # diagnostic, without reusing the stale Chrome overrides or changing profiles.
+  $edgeRoot = Join-Path $localAppData 'Microsoft\Edge\User Data'
+  $edgeProfile = Join-Path $edgeRoot 'Default'
+  $edgeExtension = Join-Path $edgeProfile "Extensions\$extensionId\1.26.1020.11845_0"
+  New-Item -ItemType Directory -Force -Path $edgeExtension | Out-Null
+  Set-Content -LiteralPath (Join-Path $edgeExtension 'manifest.json') -Value '{"name":"edge fixture"}' -Encoding ASCII
+  ConvertTo-JsonFile (Join-Path $edgeRoot 'Local State') @{
+    profile = @{ last_used = 'Default'; last_active_profiles = @('Default') }
+  }
+  ConvertTo-JsonFile (Join-Path $edgeProfile 'Preferences') $preferences
+  ConvertTo-JsonFile (Join-Path $edgeProfile 'Secure Preferences') $preferences
+  Test-DesktopChromeExtensionVisible $chromeCacheRoot $runtimeInventory
+  if ($env:CODEX_CHROME_USER_DATA_DIR -cne $realChromeRoot -or
+      $env:CODEX_CHROMIUM_USER_DATA_DIR -cne $realChromeRoot) {
+    throw 'Edge fallback did not restore the caller profile overrides'
+  }
+  if ((Get-Item -LiteralPath $edgeRoot).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+    throw 'Edge verification changed the Edge profile root'
+  }
+  ConvertTo-JsonFile (Join-Path $edgeProfile 'Preferences') $disabledPreferences
+  ConvertTo-JsonFile (Join-Path $edgeProfile 'Secure Preferences') $disabledPreferences
+  Assert-ThrowsLike {
+    Test-DesktopChromeExtensionVisible $chromeCacheRoot $runtimeInventory
+  } '*Edge verification also failed*'
+  # A registered extension with no installed files must still fail.
+  [IO.File]::Delete((Join-Path $edgeExtension 'manifest.json'))
+  [IO.Directory]::Delete($edgeExtension)
+  ConvertTo-JsonFile (Join-Path $edgeProfile 'Preferences') $preferences
+  ConvertTo-JsonFile (Join-Path $edgeProfile 'Secure Preferences') $preferences
+  Assert-ThrowsLike {
+    Test-DesktopChromeExtensionVisible $chromeCacheRoot $runtimeInventory
+  } '*Edge verification also failed*'
+
   # A real directory at the Desktop path belongs to the user; never replace it.
   [System.IO.Directory]::Delete($desktopRoot)
   New-Item -ItemType Directory -Force -Path $desktopRoot | Out-Null

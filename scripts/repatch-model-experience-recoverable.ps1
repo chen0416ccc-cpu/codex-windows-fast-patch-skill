@@ -17,6 +17,7 @@ $script:RepairLogRoot = 'D:\CodexData\codex-windows-fast-patch\model-experience-
 . (Join-Path $PSScriptRoot 'lib\msix-safe-install.ps1')
 . (Join-Path $PSScriptRoot 'lib\msix-payload.ps1')
 . (Join-Path $PSScriptRoot 'lib\repair-deployment-state.ps1')
+. (Join-Path $PSScriptRoot 'lib\appx-launch.ps1')
 $patcher = Join-Path $PSScriptRoot 'patch_codex_fast_mode_windows_msix.ps1'
 $script:TranscriptStarted = $false
 $repairTempParent = 'D:\CodexData\cwp-tmp'
@@ -516,13 +517,50 @@ function Get-CodexCli {
   return $cli.FullName
 }
 
+function Invoke-RepairPackagePreparation {
+  param(
+    [Parameter(Mandatory = $true)][string]$PatcherPath,
+    [Parameter(Mandatory = $true)][hashtable]$Parameters,
+    [Parameter(Mandatory = $true)][string]$LogRoot
+  )
+  $payload = @{ Path = $PatcherPath; Parameters = $Parameters } | ConvertTo-Json -Depth 6 -Compress
+  $payloadBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payload))
+  $bootstrap = @'
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$payload = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__PAYLOAD__')) | ConvertFrom-Json
+$parameters = @{}
+foreach ($property in $payload.Parameters.PSObject.Properties) { $parameters[$property.Name] = $property.Value }
+try {
+  & $payload.Path @parameters 6>&1 | ForEach-Object { [Console]::Out.WriteLine([string]$_) }
+  exit $LASTEXITCODE
+} catch {
+  [Console]::Error.WriteLine($_.Exception.Message)
+  exit 1
+}
+'@
+  $bootstrap = $bootstrap.Replace('__PAYLOAD__', $payloadBase64)
+  $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($bootstrap))
+  $stdoutPath = Join-Path $LogRoot 'package-preparation.stdout.log'
+  $stderrPath = Join-Path $LogRoot 'package-preparation.stderr.log'
+  $powershellExe = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  $process = Start-Process -FilePath $powershellExe -ArgumentList @(
+    '-NoProfile', '-OutputFormat', 'Text', '-ExecutionPolicy', 'RemoteSigned', '-EncodedCommand', $encoded
+  ) -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+  $lines = @()
+  foreach ($path in @($stdoutPath, $stderrPath)) {
+    if (Test-Path -LiteralPath $path) { $lines += @(Get-Content -LiteralPath $path) }
+  }
+  return [pscustomobject]@{ ExitCode = $process.ExitCode; Lines = $lines }
+}
+
 function Test-ModelListFastTiers {
   param([string]$CliPath)
   $node = Get-Command node.exe -ErrorAction Stop | Select-Object -First 1
   $probe = @'
 const { spawn } = require("child_process");
 const nl = String.fromCharCode(10);
-const child = spawn(process.argv[1], ["app-server", "--stdio"], { stdio: ["pipe", "pipe", "ignore"] });
+const child = spawn(process.argv[2], ["app-server", "--stdio"], { stdio: ["pipe", "pipe", "ignore"] });
 let buffer = "";
 let nextId = 1;
 const pending = new Map();
@@ -581,8 +619,20 @@ function request(method, params) {
 })();
 '@
   $errorPath = Join-Path $OutputRoot 'model-list.stderr.log'
-  $result = @(& $node.Source -e $probe $CliPath 2> $errorPath)
-  if ($LASTEXITCODE -ne 0) {
+  # Windows PowerShell 5.1 strips embedded double quotes from native -e args.
+  # A file preserves the exact JavaScript bytes and keeps CLI paths separate.
+  $probePath = Join-Path $OutputRoot ('model-list-probe-' + [guid]::NewGuid().ToString('N') + '.cjs')
+  [IO.File]::WriteAllText($probePath, $probe, [Text.UTF8Encoding]::new($false))
+  $previousErrorActionPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = 'Continue'
+    $result = @(& $node.Source $probePath $CliPath 2> $errorPath)
+    $probeExitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+    [IO.File]::Delete($probePath)
+  }
+  if ($probeExitCode -ne 0) {
     $detail = if (Test-Path -LiteralPath $errorPath) { Get-Content -LiteralPath $errorPath -Raw } else { 'no diagnostic output' }
     throw "app-server model/list verification failed: $detail"
   }
@@ -606,18 +656,23 @@ function Test-ComputerUseStrictVerification {
     throw "Computer Use strict verifier was not found: $strictScript"
   }
   $powershellExe = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
-  $stdoutPath = Join-Path $OutputRoot 'computer-use-strict.stdout.log'
-  $stderrPath = Join-Path $OutputRoot 'computer-use-strict.stderr.log'
-  $arguments = @('-NoProfile', '-ExecutionPolicy', 'RemoteSigned', '-File', $strictScript,
-    '-StrictVerifyOnly', '-VerifyAllBundledPluginsAvailable')
-  $process = Start-Process -FilePath $powershellExe -ArgumentList $arguments -WindowStyle Hidden -PassThru -Wait `
-    -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
-  foreach ($line in @(Get-Content -LiteralPath $stdoutPath -ErrorAction SilentlyContinue)) { Write-Log "strict CUA: $line" }
-  if (Test-Path -LiteralPath $stderrPath) {
-    foreach ($line in @(Get-Content -LiteralPath $stderrPath -ErrorAction SilentlyContinue)) { Write-Log "strict CUA stderr: $line" }
-  }
-  if ($process.ExitCode -ne 0) {
-    throw "Computer Use StrictVerifyOnly failed with exit code $($process.ExitCode)."
+  # A new package revision changes resourcesPath and the native-host identity.
+  # Refresh against the installed target before the separate read-only pass.
+  foreach ($pass in @('refresh', 'strict')) {
+    $stdoutPath = Join-Path $OutputRoot "computer-use-$pass.stdout.log"
+    $stderrPath = Join-Path $OutputRoot "computer-use-$pass.stderr.log"
+    $mode = if ($pass -eq 'refresh') { '-VerifyOnly' } else { '-StrictVerifyOnly' }
+    $arguments = @('-NoProfile', '-ExecutionPolicy', 'RemoteSigned', '-File', $strictScript,
+      $mode, '-VerifyAllBundledPluginsAvailable')
+    $process = Start-Process -FilePath $powershellExe -ArgumentList $arguments -WindowStyle Hidden -PassThru -Wait `
+      -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+    foreach ($line in @(Get-Content -LiteralPath $stdoutPath -ErrorAction SilentlyContinue)) { Write-Log "$pass CUA: $line" }
+    if (Test-Path -LiteralPath $stderrPath) {
+      foreach ($line in @(Get-Content -LiteralPath $stderrPath -ErrorAction SilentlyContinue)) { Write-Log "$pass CUA stderr: $line" }
+    }
+    if ($process.ExitCode -ne 0) {
+      throw "Computer Use $mode failed with exit code $($process.ExitCode)."
+    }
   }
   Write-Log 'Computer Use StrictVerifyOnly passed without native screenshot or input.'
 }
@@ -628,30 +683,20 @@ function Start-AndValidateCodex {
     [version]$PatchedVersion,
     [string]$CliPath
   )
-  $manifest = Get-AppxPackageManifest -Package $Package
-  $application = @($manifest.Package.Applications.Application) | Select-Object -First 1
-  if (-not $application) { throw 'The installed Codex package has no application entry.' }
-  $appUserModelId = "$($Package.PackageFamilyName)!$($application.Id)"
-  $executable = Join-Path $Package.InstallLocation ([string]$application.Executable).Replace('/', '\')
-  $processName = [IO.Path]::GetFileNameWithoutExtension($executable)
-  Start-Process -FilePath 'explorer.exe' -ArgumentList "shell:AppsFolder\$appUserModelId"
-  $deadline = (Get-Date).AddSeconds(45)
-  $process = $null
-  while (-not $process -and (Get-Date) -lt $deadline) {
-    Start-Sleep -Milliseconds 500
-    $process = Get-Process -Name $processName -ErrorAction SilentlyContinue |
-      Where-Object { $_.Path -and $_.Path.Equals($executable, [StringComparison]::OrdinalIgnoreCase) } |
-      Select-Object -First 1
-  }
-  if (-not $process) { throw "Codex did not start from the installed package path: $executable" }
-  Start-Sleep -Seconds 4
-  $process.Refresh()
-  if ($process.HasExited) { throw 'Codex exited immediately after the package update.' }
-  Write-Log "Codex process start verified: pid=$($process.Id) version=$($Package.Version)"
+  $entry = Get-InstalledAppxApplicationEntry -Package $Package
+  $appUserModelId = Start-InstalledAppxPackage -Package $Package
+  $process = Wait-InstalledAppxDesktopProcess -Executable $entry.Executable -ProcessName $entry.ProcessName -StableSeconds 4
+  Write-Log "Codex process start verified: pid=$($process.Id) version=$($Package.Version) aumid=$appUserModelId"
   if ([version]$Package.Version -eq $PatchedVersion) {
     $null = Test-ModelListFastTiers -CliPath $CliPath
     Test-ComputerUseStrictVerification
   }
+}
+
+function Initialize-CuaRuntimeProxy {
+  $localRepair = Join-Path $PSScriptRoot 'install-computer-use-local.ps1'
+  & $localRepair -OnlyRuntimeProxy
+  if ($LASTEXITCODE -ne 0) { throw 'CUA runtime proxy preparation failed before Desktop restart.' }
 }
 
 $resolvedOutputRoot = $null
@@ -740,8 +785,9 @@ try {
   if ($ResumePreparedBuild) {
     $patchText = $preparedPatchText
   } else {
-    $patchLog = @(& $patcher @patchParameters 2>&1)
-    $patchExit = $LASTEXITCODE
+    $preparation = Invoke-RepairPackagePreparation -PatcherPath $patcher -Parameters $patchParameters -LogRoot $resolvedOutputRoot
+    $patchLog = @($preparation.Lines)
+    $patchExit = $preparation.ExitCode
     foreach ($line in $patchLog) { Write-Log "patcher: $line" }
     if ($patchExit -ne 0) { throw "Full non-phone package preparation failed with exit code $patchExit" }
     $patchTranscriptText = Get-Content -LiteralPath $transcriptFullPath -Raw -ErrorAction Stop
@@ -830,6 +876,9 @@ try {
   $null = Test-MsixDeploymentPreflight -MsixPath $patchedMsix -PackageName 'OpenAI.Codex'
   $null = Test-MsixDeploymentPreflight -MsixPath $recoveryMsix -PackageName 'OpenAI.Codex'
   Write-Log 'both package deployment preflights passed before application shutdown'
+  # Repair the extracted source runtime before the transaction closes Desktop.
+  # Post-launch strict verification independently checks the selected runtime.
+  Initialize-CuaRuntimeProxy
 
   $cliPath = Get-CodexCli
   $script:RepairDeploymentState.recoveryPackageFullName = ([string]$package.PackageFullName).Replace("_$($package.Version)_", "_${recoveryVersion}_")

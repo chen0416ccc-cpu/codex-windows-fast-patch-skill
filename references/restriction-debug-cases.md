@@ -768,6 +768,91 @@ Run `scripts/test-service-tier-access-patterns.ps1 -TemporaryRoot <D-drive-test-
 
 Desktop `26.1016.6573.0` and `26.1016.8120.0` add `amazonBedrock` as a third recognized authentication mode in both complete service-tier access conditions. The request matcher accepts that optional third comparison only for the same auth local, and the UI matcher accepts either complete two- or three-mode condition followed by the assignment delimiter. Unknown extra conditions, mismatched locals, mixed targets and partial markers are rejected. The shared requirements converter, independent Fast/Ultrafast restrictions, cache arguments and React loading/memo behavior remain unchanged. Run the same two regression suites with the current unmodified asset before the full package dry run.
 
+## Post-update checks and browser split-config targeting
+
+For subsequent updates, use the repository's `scripts/codex-after-update.ps1`
+to distinguish an unverified replacement package from plugin version drift or
+pending acceptance. `-CheckApp` diagnoses the current complete non-phone bundle;
+repair switches are explicit. The launcher resolves models from active
+model/list rather than reverting to old hard-coded model names. See
+`references/post-update-verification.md` for the status contract.
+
+### Browser split-config patch hits a neighboring Computer Use hook
+
+On the installed `26.1023.6621.1` merged app-initial asset, the earlier V3
+in-app config regex matched Computer Use's preceding authMethod-shaped local
+declaration. A browser config marker existed there while the actual browser
+hook still read its original config; another patch run then changed the real
+browser hook. Marker presence and first-run `patched` were therefore insufficient
+to prove a complete, stable browser patch.
+
+The V3 match now binds `featureName:browser_use` or `browser_use_external` to
+its exact options local and corresponding config call. Scoped duplicates and
+mismatched locals are rejected; a historical marker in a neighboring function
+does not hide the missing browser target. Browser hook tests include that
+neighbor unchanged, both configs repaired in one pass, repeat-run stability,
+duplicates, mismatched locals and the exact installed asset. This is a source
+and static-asset improvement; it does not claim a new Desktop deployment.
+
+## Native Desktop 26.1023 hides Ultra after model/list
+
+On Store package `26.1023.6621.0`, the catalog and `model/list` can advertise
+`ultra`, `priority`, and `ultrafast` while Desktop hides those controls. Fast
+still needs the request/UI authentication repair. Native Ultra no longer uses
+the historical account-settings slider hook: the model query in `app-initial`
+and the host capability initialization separately consult gate `1186680773`.
+
+The native Ultra patch recognizes both complete call sites before writing. For
+custom providers only, it admits the catalog's Ultra capability while preserving
+the caller's include-Ultra value, enabled reasoning efforts, model capabilities,
+and the official provider gate. Both sites must be pristine or both patched;
+duplicates, unknown conditions, missing peers and partial markers are rejected.
+Run `scripts/test-native-ultra-reasoning.ps1 -TemporaryRoot <local-test-root>
+-CurrentAssetsDir <original-assets-directory>` and a full dry run. Successful
+fixture and syntax checks are separate from installed Desktop acceptance.
+
+The local `26.1023.6621.0 -> 26.1023.6621.1` deployment completed with
+`verified-complete`: exact-package Desktop window launch, installed ASAR
+integrity, both native Ultra markers, default `gpt-6.1-sol` model/list tiers
+`priority,ultrafast`, and a captured request containing `service_tier=priority`.
+All eight publishable bundled plugins passed strict version/runtime checks;
+fresh Desktop native enumeration returned four windows, and Chrome plus the
+in-app browser read public HTTPS page titles and meaningful AX content. The
+persisted locale was `zh-CN`. Mode/language menus were not directly operated or
+visually checked; native screenshot/input and upstream Ultrafast scheduling
+were not exercised. Successful-run build/recovery artifacts were removed after
+acceptance, with configuration backups and logs retained.
+
+## Recoverable preparation fails on a harmless npm warning
+
+Under Windows PowerShell 5.1, capturing a patcher with `2>&1` while
+`ErrorActionPreference=Stop` can convert `npm warn deprecated asar@3.2.0` into
+a terminating error before any deployment. The recoverable runner prepares the
+package in a hidden independent PowerShell process with separate stdout/stderr
+files and checks its actual exit code. `test-package-preparation-transport.ps1`
+verifies warning preservation, nonzero exit rejection, arrays, booleans and
+paths. Model-list probe transport and post-install runtime refresh reuse the
+reviewed upstream PR #112 behavior; that PR's unrelated Edge changes are not
+required for this local Chrome setup.
+
+## Store update leaves old reserved marketplace and installed plugin versions
+
+The stable mirror can match a new package while Desktop's actual
+`.tmp/bundled-marketplaces/openai-bundled` descriptors and CLI installed version
+records still refer to the preceding build. On `26.1023.6621.0` this mixed
+`26.1023.50603` and `26.1023.51421`, left unified Computer Use referencing a
+removed runtime, and caused full plugin verification to fail.
+
+The local repair synchronizes only already published, publishable reserved
+mirror entries from the installed package, with backups. It then upgrades only
+already installed stale plugin records. A disabled plugin remains disabled,
+including when registration fails; unrelated TOML keys are preserved and
+optional plugins are not installed. Require `test-bundled-plugin-upgrade-repair.ps1`,
+`test-bundled-plugin-version-drift.ps1`, and a post-restart
+`-StrictVerifyOnly -VerifyAllBundledPluginsAvailable` pass. The mirror inventory,
+CLI records, runtime initialization, and actual Desktop browser/native readiness
+are distinct acceptance checks.
+
 ## Model Picker Shows Only One Fast Level (Missing Ultrafast Tier)
 
 Symptoms:
@@ -864,6 +949,16 @@ Use `lib/msix-safe-install.ps1`: build a higher package revision, validate deplo
 
 Keep original program bytes in a signed higher-revision recovery MSIX until actual launch and runtime acceptance pass. The normal three patcher entrypoints perform guarded in-place deployment but do not automatically build a recovery MSIX or run a startup-recovery transaction. An external executor may call `Invoke-RecoverableMsixInstall` with a separately prepared recovery package and a real `ValidateInstalledPackage` callback. If startup validation fails after a successful update, that helper deploys the prepared recovery package once, in place. Keep logs for both update and recovery; never claim success from `Add-AppxPackage` or signing alone. `scripts/test-msix-safe-install.ps1` covers the no-uninstall contract, manifest/version preservation, non-admin rejection, identity/signature gates, same/other-version Desktop ancestry, deployment failure, and simulated startup recovery. These fixture tests are not live installation proof.
 
+## Elevated Explorer Activation Returns Without Starting Desktop
+
+On Desktop `26.1027.3384.0`, the recoverable installer prepared a valid `.1` patched package and a `.2` original-content recovery package, but both post-install launch checks timed out. Both callbacks used `Start-Process explorer.exe shell:AppsFolder\<AUMID>` from the elevated external PowerShell. The same registered `.2` package subsequently started normally through its ordinary user-session AUMID, so a signed package or a failed Explorer launch alone does not prove ASAR or application failure.
+
+Use `lib/appx-launch.ps1` for the manifest-bound launch. It resolves the Desktop application's AUMID and executable, then invokes the system `IApplicationActivationManager` COM API through a static C# wrapper in the bitness-matched Windows PowerShell. Perform the COM cast in C#, not with a PowerShell cast of the ComImport class; an interface method declared extern on the class can also fail to load in Windows PowerShell 5.1. This does not bypass UAC, deployment preflight, ancestry, package integrity, or the recovery package. The recoverable runner retains exact-package process and model/runtime acceptance; the process probe prefers a visible matching-package window, rechecks liveness after enumeration, and also accepts a valid background-only launch. A process with an unreadable or different path never satisfies acceptance. Before the second repair attempt, the shared helper passed real activation and visible-process checks in both ordinary and elevated session-1 probes against the same `.4` original-content package; this is launch-helper evidence, not deployment acceptance.
+
+The shared native PowerShell resolver uses `Sysnative` from a 32-bit process on 64-bit Windows, because `System32` would be redirected to 32-bit `SysWOW64`. The outer elevated installer bootstrap uses the same resolver. Collect child output as an array and validate a complete nonzero `uint32` PID; indexing a scalar single-line string truncates it to its first character.
+
+Run `scripts/test-appx-launch.ps1 -TemporaryRoot <local-test-root>` under Windows PowerShell 5.1 and PowerShell 7. It checks manifest/AUMID binding, ambiguous and non-full-trust entries, the pinned COM declaration, complete PID and malformed-output handling, matching-process selection, background-only startup, and unreadable-path rejection. A 64-bit test run also launches the fixture through a real 32-bit PowerShell parent without activating an app. These tests cover launch detection and transport, not an actual package deployment. The complete non-phone patcher and recoverable runner both use this helper so future updates do not restore the elevated Explorer path.
+
 ## MSIX Signature Reports Unknown Format When TEMP Does Not Exist
 
 An external executor that changes `TEMP` and `TMP` must create the selected directory before setting those variables or checking an MSIX signature. On Windows PowerShell 5.1 with Desktop `26.1002.7124.0`, the same signed update and recovery packages returned `Valid` under the normal temporary directory, then `UnknownError` with a trust-provider unsupported-format message when the executor pointed both variables at a missing D-drive directory. Creating that exact directory restored `Valid` for both packages without changing their bytes, signer, publisher, or certificate trust.
@@ -924,7 +1019,17 @@ The Power slider moved into `app-primary` and no longer carries `harborEnabled` 
 
 Run `test-computer-use-surface-patterns.ps1` and `test-native-layout-discovery.ps1 -TemporaryRoot <local-test-root> -CurrentExtractDir <extracted-asar>`. The latter reads the current asset set and checks the native slider remains byte-identical. These checks and a full DryRun establish compatibility of the selected bundle; installed-package and runtime acceptance remain separate.
 
+## Desktop 26.1027 Splits the Main Bundle and Yoda-Minifies the Gates
+
+On the exact Store package `26.1027.3384.0`, `.vite\build` no longer ships `main-*.js`; the Electron main code lives in `early-bootstrap.js` plus numbered `early-bootstrap-<n>-<hash>.js` chunks. The minifier reverses string comparisons and double-quotes literals. Windows CUA is still native (`h=u&&t.computerUse&&c.enabled&&("win32"===o.platform||"darwin"===o.platform&&null!=c.paths.serviceAppPath)`), the plugin exposure guard becomes `if(!r.installed||null==n||i&&"darwin"!==e.platform)return null;`, and the shared readiness predicate uses `null!=`, `(0,ns.JFB)(e,"mcpToolExposure")` and `"AVAILABLE"===s.plugin.availability`. Discovery and the embedded surface patcher accept both quoting styles and still report `already-open-native-windows` without rewriting the asset. A Yoda-shaped bundle without the native Windows branch fails closed instead of being patched. `NODE_REPL_TRUSTED_CODE_PATHS` and `CODEX_WINDOWS_REGISTERED_CORE` are double-quoted for the same reason.
+
+This build also retires the `sites` bundled plugin: the package marketplace ships eight descriptors and only the uninstall helper remains, in the reversed form `null!=t&&"object"==typeof t&&...Object.hasOwn(t,"sites@openai-bundled")`. The native Windows copy fallback survives but loads through a lazy chunk (`r.e(523).then(r.bind(r,9496))`) with no `windows-file-copy-` filename, so detection must also accept `"win32"!==X().platform)return void await Y().cp(...)`.
+
+The fixture suite adds a recognized native case, a refused Darwin-only Yoda variant, and idempotent repeats. On `26.1027.3384.0` the full DryRun reports `already-open-native-windows` and `patched` for every remaining gate.
+
 ## CUA Requests Time Out After Proxy Variables Are Removed
+
+On Desktop `26.1023.6621.1`, the root and current CUA/Node REPL hosts had complete environment reads with no standard proxy variables despite an enabled explicit Windows proxy. Adding a proxy fallback to the extracted `@oai/cua-repl/bin/cua-repl.mjs` before launch and restarting Desktop restored Chrome and in-app-browser tab creation and GitHub AX reading. The local installer now manages that fallback automatically, and the recoverable installer runs it before shutdown. Use `install-computer-use-local.ps1 -OnlyRuntimeProxy` for a targeted repair and add `-StrictVerifyOnly` for read-only verification. It discovers the current explicit HTTP proxy rather than embedding this host's address, preserves supplied environment values and `--import` preload files, and rejects unknown entry shapes before writing. Originals are stored under `.codex/backups/cua-runtime-proxy`. Reapply after runtime extraction/update; reconnect or restart after a changed entry and validate both browser surfaces. A CONNECT/static pass alone is insufficient. PAC and authenticated/non-HTTP proxies remain unsupported.
 
 On Desktop `26.915.4065.0`, native app enumeration can work and Chrome can connect while tab creation or listing fails with `nodeRepl.fetch request failed`. Compare the actual `cua_repl` child process environment with its app-server parent. Checking `codex-computer-use-swift.exe` alone does not test the process that performs the request.
 

@@ -1,0 +1,602 @@
+diff --git a/codex-rs/app-server-transport/src/connection_auth.rs b/codex-rs/app-server-transport/src/connection_auth.rs
+index afa7b4f..1ac812e 100644
+--- a/codex-rs/app-server-transport/src/connection_auth.rs
++++ b/codex-rs/app-server-transport/src/connection_auth.rs
+@@ -3,13 +3,133 @@
+ 
+ use codex_login::AuthChangeState;
+ use codex_login::AuthManager;
++use codex_protocol::config_types::ForcedLoginMethod;
++use sha2::Digest;
++use sha2::Sha256;
+ use std::io;
++use std::path::PathBuf;
++use std::sync::Arc;
++use std::sync::atomic::AtomicBool;
++use std::sync::atomic::Ordering;
++use std::time::Duration;
+ use tokio::sync::watch;
+ 
+ #[derive(Clone, Debug)]
+ pub struct ConnectionAuth {
+     changes: watch::Receiver<AuthChangeState>,
+     owner_generation: u64,
++    file_owner: Option<Arc<FileOwner>>,
++}
++
++#[cfg(all(test, windows))]
++mod file_owner_tests {
++    use super::*;
++
++    #[tokio::test]
++    async fn changed_or_removed_remote_file_invalidates_queued_work() {
++        let temp = tempfile::tempdir().expect("temp directory");
++        let path = temp.path().join("remote.json");
++        std::fs::write(&path, b"first").expect("write fixture");
++        let manager =
++            AuthManager::from_auth_for_testing(codex_login::CodexAuth::from_api_key("test"));
++        let owner = ConnectionAuth::capture(&manager).with_file_owner(
++            path.clone(),
++            Some(b"first"),
++            None,
++            manager.clone(),
++        );
++        assert!(owner.is_current());
++        std::fs::write(&path, b"second").expect("replace fixture");
++        assert!(!owner.is_current());
++        assert!(owner.ensure_current().is_err());
++        tokio::time::timeout(Duration::from_secs(1), owner.invalidated())
++            .await
++            .expect("invalidation must wake");
++        std::fs::remove_file(&path).expect("remove fixture");
++        assert!(!owner.is_current());
++        std::fs::write(&path, b"first").expect("restore fixture");
++        assert!(!owner.is_current(), "a retired owner must never revive");
++    }
++
++    #[tokio::test]
++    async fn new_remote_file_invalidates_signed_out_snapshot() {
++        let temp = tempfile::tempdir().expect("temp directory");
++        let path = temp.path().join("remote.json");
++        let manager =
++            AuthManager::from_auth_for_testing(codex_login::CodexAuth::from_api_key("test"));
++        let owner = ConnectionAuth::capture(&manager).with_file_owner(
++            path.clone(),
++            None,
++            None,
++            manager.clone(),
++        );
++        assert!(owner.is_current());
++        std::fs::write(&path, b"new-login").expect("write fixture");
++        assert!(!owner.is_current());
++    }
++
++    #[test]
++    fn expired_file_owner_is_not_current() {
++        let manager =
++            AuthManager::from_auth_for_testing(codex_login::CodexAuth::from_api_key("test"));
++        let owner = ConnectionAuth::capture(&manager).with_file_owner(
++            PathBuf::from("nonexistent-remote-fixture"),
++            None,
++            Some(0),
++            manager.clone(),
++        );
++        assert!(!owner.is_current());
++    }
++
++    #[test]
++    fn workspace_policy_change_retires_existing_remote_owner() {
++        let temp = tempfile::tempdir().expect("temp directory");
++        let path = temp.path().join("remote.json");
++        let manager =
++            AuthManager::from_auth_for_testing(codex_login::CodexAuth::from_api_key("test"));
++        let owner =
++            ConnectionAuth::capture(&manager).with_file_owner(path, None, None, manager.clone());
++        assert!(owner.is_current());
++        manager.set_forced_chatgpt_workspace_id(Some(vec!["managed-workspace".to_owned()]));
++        assert!(!owner.is_current());
++        manager.set_forced_chatgpt_workspace_id(None);
++        assert!(!owner.is_current());
++    }
++}
++
++#[derive(Debug)]
++struct FileOwner {
++    path: PathBuf,
++    digest: Option<[u8; 32]>,
++    expires_at: Option<i64>,
++    manager: Arc<AuthManager>,
++    revoked: AtomicBool,
++}
++
++impl FileOwner {
++    fn is_current(&self) -> bool {
++        if self.revoked.load(Ordering::Acquire) {
++            return false;
++        }
++        if !allows_isolated_remote_auth(&self.manager) {
++            self.revoked.store(true, Ordering::Release);
++            return false;
++        }
++        if self
++            .expires_at
++            .is_some_and(|expires| expires <= time::OffsetDateTime::now_utc().unix_timestamp())
++        {
++            self.revoked.store(true, Ordering::Release);
++            return false;
++        }
++        let digest = std::fs::read(&self.path)
++            .ok()
++            .map(|bytes| <[u8; 32]>::from(Sha256::digest(bytes)));
++        if digest != self.digest {
++            self.revoked.store(true, Ordering::Release);
++        }
++        !self.revoked.load(Ordering::Acquire)
++    }
+ }
+ 
+ impl ConnectionAuth {
+@@ -34,18 +154,62 @@ impl ConnectionAuth {
+         Self {
+             changes,
+             owner_generation,
++            file_owner: None,
+         }
+     }
+ 
++    pub(crate) fn with_file_owner(
++        mut self,
++        path: PathBuf,
++        contents: Option<&[u8]>,
++        expires_at: Option<i64>,
++        manager: Arc<AuthManager>,
++    ) -> Self {
++        self.file_owner = Some(Arc::new(FileOwner {
++            path,
++            digest: contents.map(|bytes| Sha256::digest(bytes).into()),
++            expires_at,
++            manager,
++            revoked: AtomicBool::new(false),
++        }));
++        self
++    }
++
+     pub fn is_current(&self) -> bool {
+-        self.changes.borrow().owner_generation == self.owner_generation
++        let current = self.changes.borrow().owner_generation == self.owner_generation;
++        current
+             && self.changes.has_changed().is_ok()
++            && self
++                .file_owner
++                .as_ref()
++                .is_none_or(|owner| owner.is_current())
+     }
+ 
+     pub(crate) async fn invalidated(&self) {
+         let mut changes = self.changes.clone();
+-        let _ = changes
+-            .wait_for(|state| state.owner_generation != self.owner_generation)
+-            .await;
++        tokio::select! {
++            _ = changes.wait_for(|state| state.owner_generation != self.owner_generation) => {}
++            _ = async {
++                match &self.file_owner {
++                    Some(owner) => {
++                        while owner.is_current() {
++                            tokio::time::sleep(Duration::from_millis(250)).await;
++                        }
++                    }
++                    None => std::future::pending::<()>().await,
++                }
++            } => {}
++        }
+     }
+ }
++
++pub(crate) fn allows_isolated_remote_auth(manager: &AuthManager) -> bool {
++    cfg!(windows)
++        && manager.is_login_method_allowed(ForcedLoginMethod::Chatgpt)
++        && manager.effective_chatgpt_workspaces().is_none()
++        && !manager.has_external_auth()
++        && !manager.is_workload_identity_selected()
++        && manager
++            .auth_cached()
++            .is_none_or(|auth| auth.is_api_key_auth())
++}
+diff --git a/codex-rs/app-server-transport/src/transport/remote_control/auth.rs b/codex-rs/app-server-transport/src/transport/remote_control/auth.rs
+index a776638..c119256 100644
+--- a/codex-rs/app-server-transport/src/transport/remote_control/auth.rs
++++ b/codex-rs/app-server-transport/src/transport/remote_control/auth.rs
+@@ -18,8 +18,11 @@ pub(super) struct RemoteControlAuth {
+     manager: Arc<AuthManager>,
+     pub(super) owner: crate::ConnectionAuth,
+     pub(super) network_policy: codex_http_client::NetworkPolicy,
++    isolated: Option<Arc<isolated::IsolatedRemoteAuth>>,
+ }
+ 
++mod isolated;
++
+ pub(super) struct RemoteControlRecovery {
+     auth: RemoteControlAuth,
+     recovery: UnauthorizedRecovery,
+@@ -28,16 +31,39 @@ pub(super) struct RemoteControlRecovery {
+ impl RemoteControlAuth {
+     pub(super) fn capture(manager: Arc<AuthManager>) -> (Self, bool) {
+         loop {
+-            let owner = crate::ConnectionAuth::capture(&manager);
++            let mut owner = crate::ConnectionAuth::capture(&manager);
+             let authenticated = manager
+                 .auth_cached()
+                 .is_some_and(|auth| auth.uses_codex_backend() && auth.get_account_id().is_some());
++            let mut isolated = None;
++            if isolated_auth_allowed(&manager) {
++                let path = manager.runtime_config().codex_home.join("remote.json");
++                let bytes = std::fs::read(&path).ok();
++                if let Some(bytes) = bytes.as_deref() {
++                    match isolated::parse(bytes) {
++                        Ok(auth) => isolated = Some(Arc::new(auth)),
++                        Err(error) => warn!(
++                            marker = "remote_control_isolated_auth_rejected",
++                            %error,
++                            "isolated remote credential is not usable"
++                        ),
++                    }
++                }
++                owner = owner.with_file_owner(
++                    path,
++                    bytes.as_deref(),
++                    isolated.as_ref().map(|auth| auth.expires_at),
++                    manager.clone(),
++                );
++            }
+             if owner.is_current() {
++                let authenticated = authenticated || isolated.is_some();
+                 return (
+                     Self {
+                         network_policy: manager.application_network_policy(),
+                         manager,
+                         owner,
++                        isolated,
+                     },
+                     authenticated,
+                 );
+@@ -46,6 +72,12 @@ impl RemoteControlAuth {
+     }
+ 
+     pub(super) fn ensure_current(&self) -> io::Result<()> {
++        if self.isolated.is_some() && !isolated_auth_allowed(&self.manager) {
++            return Err(io::Error::new(
++                ErrorKind::PermissionDenied,
++                "isolated remote authentication is denied by current login policy",
++            ));
++        }
+         self.owner.ensure_current()
+     }
+ 
+@@ -61,6 +93,10 @@ impl RemoteControlAuth {
+     }
+ }
+ 
++fn isolated_auth_allowed(manager: &AuthManager) -> bool {
++    crate::connection_auth::allows_isolated_remote_auth(manager)
++}
++
+ pub(super) use codex_http_client::CHATGPT_ACCOUNT_ID_HEADER as REMOTE_CONTROL_ACCOUNT_ID_HEADER;
+ 
+ pub(super) struct RemoteControlConnectionAuth {
+@@ -92,6 +128,21 @@ pub(super) async fn load_remote_control_auth(
+     auth: &RemoteControlAuth,
+ ) -> io::Result<RemoteControlConnectionAuth> {
+     auth.ensure_current()?;
++    if let Some(isolated) = &auth.isolated {
++        // Preserve the application's account-bound routing and revocable policy.
++        let http_client_factory = auth.manager.http_client_factory();
++        auth.ensure_current()?;
++        info!(
++            marker = "remote_control_app_server_isolated_oauth_used",
++            source = "remote.json",
++            "remote_control_native_remote_json_first"
++        );
++        return Ok(RemoteControlConnectionAuth {
++            http_client_factory,
++            auth_provider: isolated.auth_provider.clone(),
++            account_id: isolated.account_id.clone(),
++        });
++    }
+     let credentials = load_auth_manager(&auth.manager).await?;
+     auth.ensure_current()?;
+     Ok(credentials)
+@@ -183,6 +234,10 @@ pub(super) async fn recover_remote_control_auth(
+     if recovery.auth.ensure_current().is_err() {
+         return false;
+     }
++    if recovery.auth.isolated.is_some() {
++        // Never refresh or reload the main login to recover an isolated credential.
++        return false;
++    }
+     let auth_recovery = &mut recovery.recovery;
+     if !auth_recovery.has_next() {
+         return false;
+diff --git a/codex-rs/app-server-transport/src/transport/remote_control/auth/isolated.rs b/codex-rs/app-server-transport/src/transport/remote_control/auth/isolated.rs
+new file mode 100644
+index 0000000..9a3fa68
+--- /dev/null
++++ b/codex-rs/app-server-transport/src/transport/remote_control/auth/isolated.rs
+@@ -0,0 +1,277 @@
++//! Read-only credentials for remote transport, never a replacement main login.
++
++use base64::Engine;
++use codex_api::SharedAuthProvider;
++use codex_model_provider::BearerAuthProvider;
++use serde_json::Value;
++use std::io;
++use std::sync::Arc;
++
++pub(super) struct IsolatedRemoteAuth {
++    pub(super) auth_provider: SharedAuthProvider,
++    pub(super) account_id: String,
++    pub(super) expires_at: i64,
++}
++
++fn denied(reason: &'static str) -> io::Error {
++    io::Error::new(io::ErrorKind::PermissionDenied, reason)
++}
++
++pub(super) fn parse(bytes: &[u8]) -> io::Result<IsolatedRemoteAuth> {
++    if bytes.len() > 1024 * 1024 {
++        return Err(denied("isolated remote credential exceeds size limit"));
++    }
++    let remote: Value = serde_json::from_slice(bytes)
++        .map_err(|_| denied("isolated remote credential is not valid JSON"))?;
++    if remote
++        .get("disabled")
++        .is_some_and(|v| v != &Value::Bool(false))
++        || remote.get("type").and_then(Value::as_str) != Some("codex")
++    {
++        return Err(denied(
++            "isolated remote credential is disabled or has an unsupported type",
++        ));
++    }
++    let token = remote
++        .get("access_token")
++        .and_then(Value::as_str)
++        .filter(|token| !token.is_empty())
++        .ok_or_else(|| denied("isolated remote access token is missing"))?;
++    let parts: Vec<_> = token.split('.').collect();
++    if parts.len() != 3 || parts.iter().any(|part| part.is_empty()) {
++        return Err(denied("isolated remote access token is not a JWT"));
++    }
++    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
++        .decode(parts[1])
++        .map_err(|_| denied("isolated remote JWT payload is malformed"))?;
++    let claims: Value = serde_json::from_slice(&payload)
++        .map_err(|_| denied("isolated remote JWT claims are malformed"))?;
++    if claims.get("iss").and_then(Value::as_str) != Some("https://auth.openai.com") {
++        return Err(denied("isolated remote JWT issuer is not supported"));
++    }
++    let audience_ok = match claims.get("aud") {
++        Some(Value::String(aud)) => aud == "https://api.openai.com/v1",
++        Some(Value::Array(aud)) => aud
++            .iter()
++            .any(|v| v.as_str() == Some("https://api.openai.com/v1")),
++        _ => false,
++    };
++    if !audience_ok {
++        return Err(denied("isolated remote JWT audience is not supported"));
++    }
++    let expires_at = claims
++        .get("exp")
++        .and_then(Value::as_i64)
++        .filter(|exp| *exp > time::OffsetDateTime::now_utc().unix_timestamp())
++        .ok_or_else(|| denied("isolated remote JWT is expired or has no expiry"))?;
++    let scopes = claims.get("scp").or_else(|| claims.get("scope"));
++    let has_scope = |required: &str| match scopes {
++        Some(Value::Array(values)) => values.iter().any(|v| v.as_str() == Some(required)),
++        Some(Value::String(values)) => values.split_ascii_whitespace().any(|v| v == required),
++        _ => false,
++    };
++    if !has_scope("api.connectors.read") || !has_scope("api.connectors.invoke") {
++        return Err(denied(
++            "isolated remote JWT lacks connection scopes; enroll-only tokens are not read credentials",
++        ));
++    }
++    let account_id = claims
++        .get("https://api.openai.com/auth")
++        .and_then(|auth| {
++            auth.get("chatgpt_account_id")
++                .or_else(|| auth.get("account_id"))
++        })
++        .and_then(Value::as_str)
++        .filter(|id| !id.is_empty())
++        .ok_or_else(|| denied("isolated remote JWT has no account id"))?;
++    if remote
++        .get("account_id")
++        .is_some_and(|value| value.as_str() != Some(account_id))
++    {
++        return Err(denied("isolated remote account does not match JWT account"));
++    }
++    // These checks are admission checks, not signature verification; the official backend
++    // verifies the bearer. No token or refresh secret is logged or persisted here.
++    axum::http::HeaderValue::from_str(&format!("Bearer {token}"))
++        .map_err(|_| denied("isolated remote bearer is not a valid HTTP header"))?;
++    axum::http::HeaderValue::from_str(account_id)
++        .map_err(|_| denied("isolated remote account is not a valid HTTP header"))?;
++    Ok(IsolatedRemoteAuth {
++        auth_provider: Arc::new(BearerAuthProvider {
++            token: Some(token.to_owned()),
++            account_id: Some(account_id.to_owned()),
++            is_fedramp_account: false,
++        }),
++        account_id: account_id.to_owned(),
++        expires_at,
++    })
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use serde_json::json;
++
++    pub(super) fn credential(claim_change: impl FnOnce(&mut Value)) -> Value {
++        let mut claims = json!({
++            "iss": "https://auth.openai.com",
++            "aud": ["https://api.openai.com/v1"],
++            "exp": time::OffsetDateTime::now_utc().unix_timestamp() + 3600,
++            "scp": ["api.connectors.read", "api.connectors.invoke"],
++            "https://api.openai.com/auth": {"chatgpt_account_id": "account-a"}
++        });
++        claim_change(&mut claims);
++        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(claims.to_string());
++        json!({"type":"codex", "disabled":false, "account_id":"account-a",
++            "expired":"2099-01-01T00:00:00Z", "access_token":format!("e30.{payload}.c2ln")})
++    }
++
++    #[test]
++    fn valid_remote_uses_jwt_expiry_not_truthy_date_string() {
++        let auth = parse(credential(|_| {}).to_string().as_bytes()).expect("valid credential");
++        assert_eq!(auth.account_id, "account-a");
++    }
++
++    #[test]
++    fn rejects_invalid_issuer_audience_expiry_and_scopes() {
++        for (key, value) in [
++            ("iss", json!("https://example.invalid")),
++            ("aud", json!(["wrong-audience"])),
++            ("exp", json!(0)),
++            ("exp", Value::Null),
++            ("scp", json!(["codex.remote_control.enroll"])),
++        ] {
++            let value = credential(|claims| claims[key] = value);
++            assert!(parse(value.to_string().as_bytes()).is_err(), "{key}");
++        }
++    }
++
++    #[test]
++    fn rejects_disabled_mismatched_and_missing_tokens() {
++        for (key, value) in [
++            ("disabled", json!(true)),
++            ("disabled", json!("false")),
++            ("account_id", json!("another-account")),
++            ("type", json!("api_key")),
++            ("access_token", Value::Null),
++            ("access_token", json!("malformed")),
++        ] {
++            let mut remote = credential(|_| {});
++            remote[key] = value;
++            assert!(parse(remote.to_string().as_bytes()).is_err(), "{key}");
++        }
++    }
++
++    #[cfg(windows)]
++    #[tokio::test]
++    async fn isolated_capture_keeps_main_auth_and_is_invalidated_on_file_change() {
++        let temp = tempfile::tempdir().expect("temp directory");
++        let path = temp.path().join("remote.json");
++        std::fs::write(&path, credential(|_| {}).to_string()).expect("write remote fixture");
++        let manager = codex_login::AuthManager::from_auth_for_testing_with_home(
++            codex_login::CodexAuth::from_api_key("unchanged-main-api-key"),
++            temp.path().to_path_buf(),
++        );
++        let (auth, authenticated) = super::super::RemoteControlAuth::capture(manager.clone());
++        assert!(authenticated);
++        assert!(auth.isolated.is_some());
++        assert!(manager.auth_cached().expect("main auth").is_api_key_auth());
++        assert!(!temp.path().join("auth.json").exists());
++        assert_eq!(auth.network_policy, manager.application_network_policy());
++        let connection = super::super::load_remote_control_auth(&auth)
++            .await
++            .expect("load remote auth");
++        assert_eq!(connection.account_id, "account-a");
++        let mut recovery = auth.unauthorized_recovery();
++        let mut changes = manager.auth_change_receiver();
++        assert!(!super::super::recover_remote_control_auth(&mut recovery, &mut changes).await);
++        assert!(
++            manager
++                .auth_cached()
++                .expect("main auth after recovery")
++                .is_api_key_auth()
++        );
++        std::fs::write(&path, b"{}").expect("replace fixture");
++        assert!(auth.ensure_current().is_err());
++        let (_, authenticated) = super::super::RemoteControlAuth::capture(manager);
++        assert!(!authenticated);
++    }
++
++    #[cfg(windows)]
++    #[test]
++    fn workspace_restriction_rejects_isolated_fallback() {
++        let temp = tempfile::tempdir().expect("temp directory");
++        std::fs::write(
++            temp.path().join("remote.json"),
++            credential(|_| {}).to_string(),
++        )
++        .expect("write remote fixture");
++        let manager = codex_login::AuthManager::from_auth_for_testing_with_home(
++            codex_login::CodexAuth::from_api_key("main-api-key"),
++            temp.path().to_path_buf(),
++        );
++        manager.set_forced_chatgpt_workspace_id(Some(vec!["managed-workspace".to_owned()]));
++        let (auth, authenticated) = super::super::RemoteControlAuth::capture(manager);
++        assert!(!authenticated);
++        assert!(auth.isolated.is_none());
++    }
++
++    #[cfg(windows)]
++    #[tokio::test]
++    async fn isolated_connection_preserves_network_denial_and_revocation() {
++        use codex_http_client::DestinationPolicy;
++        use codex_http_client::HttpClientFactory;
++        use codex_http_client::NetworkPolicyController;
++        use codex_http_client::OutboundProxyPolicy;
++        let temp = tempfile::tempdir().expect("temp directory");
++        std::fs::write(
++            temp.path().join("remote.json"),
++            credential(|_| {}).to_string(),
++        )
++        .expect("write remote fixture");
++        let controller = NetworkPolicyController::default();
++        let policy = controller.policy();
++        assert!(controller.publish(
++            policy.revision(),
++            DestinationPolicy::Restricted {
++                allowed_hosts: ["chatgpt.com".to_owned()].into_iter().collect(),
++            }
++        ));
++        let manager = Arc::new(
++            codex_login::AuthManager::new(
++                temp.path().to_path_buf(),
++                false,
++                codex_login::AuthCredentialsStoreMode::Ephemeral,
++                None,
++                None,
++                codex_login::AuthKeyringBackendKind::default(),
++                codex_login::AuthRouteConfig::from_http_client_factory(
++                    HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault)
++                        .with_network_policy(policy.clone()),
++                ),
++            )
++            .await,
++        );
++        let (auth, authenticated) = super::super::RemoteControlAuth::capture(manager);
++        assert!(authenticated);
++        let connection = super::super::load_remote_control_auth(&auth)
++            .await
++            .expect("load auth");
++        let network = connection.http_client_factory.network_policy();
++        assert!(
++            network
++                .acquire(&"https://denied.example.invalid/".parse().expect("URL"))
++                .is_err()
++        );
++        let permit = network
++            .acquire(&"https://chatgpt.com/".parse().expect("URL"))
++            .expect("allowed host");
++        policy.invalidate();
++        assert!(permit.check().is_err());
++        assert!(
++            network
++                .acquire(&"https://chatgpt.com/".parse().expect("URL"))
++                .is_err()
++        );
++    }
++}

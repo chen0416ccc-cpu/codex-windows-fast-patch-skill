@@ -29,6 +29,7 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib\windows-cua-runtime.ps1')
 . (Join-Path $PSScriptRoot 'lib\msix-safe-install.ps1')
+. (Join-Path $PSScriptRoot 'lib\appx-launch.ps1')
 $LogPrefix = '[codex-msix-patch-win]'
 $OutputRootWasExplicit = $PSBoundParameters.ContainsKey('OutputRoot')
 $WindowsSdkBuildToolsPackageId = 'microsoft.windows.sdk.buildtools'
@@ -717,6 +718,14 @@ function Find-UltraSliderTarget {
       return $candidate
     }
   }
+  $nativeCandidates = @((Invoke-RgList $RgPath '1186680773' $AssetsDir) | Where-Object {
+    $nativeText = Get-Content -Raw -LiteralPath $_
+    $nativeText.Contains('includeUltraReasoningEffort:') -and
+      $nativeText.Contains('isCustomModelProvider:') -and
+      $nativeText.Contains('hasModelSupportingUltraReasoningEffort:')
+  })
+  if ($nativeCandidates.Count -gt 1) { Fail 'ambiguous native Ultra reasoning targets' }
+  if ($nativeCandidates.Count -eq 1) { return $nativeCandidates[0] }
   return $null
 }
 
@@ -1053,6 +1062,61 @@ if (!file || file === '__none__') {
 }
 
 const text = fs.readFileSync(file, 'utf8');
+// Native 26.1023 no longer uses the account-settings Ultra slider hook.
+// Keep the official gate for normal providers; custom providers use only the
+// reasoning efforts advertised by their catalog and enabled by user settings.
+if (text.includes('hasModelSupportingUltraReasoningEffort:') && text.includes('1186680773')) {
+  const path = require('node:path');
+  const { spawnSync } = require('node:child_process');
+  const queryMarker = 'CODEX_NATIVE_ULTRA_QUERY_V1';
+  const hostMarker = 'CODEX_NATIVE_ULTRA_HOST_V1';
+  const fail = reason => { process.stderr.write(reason + '\n'); process.exit(2); };
+  const id = '([$A-Za-z_][$\\w]*)';
+  const headRe = new RegExp('\\(\\{additionalAvailableModels:' + id + ',authMethod:' + id + ',enabledReasoningEfforts:' + id + ',hasConfiguredModelCatalog:' + id + ',hostId:' + id + ',includeUltraReasoningEffort:' + id + ',isCustomModelProvider:' + id + ',limit:' + id + ',modelCatalogPath:' + id + ',modelProvider:' + id + ',teamCatalog:' + id + '\\},\\{get:' + id + ',queryClient:' + id + ',scope:' + id + '\\}\\)=>\\{', 'g');
+  const heads = [...text.matchAll(headRe)];
+  if (heads.length !== 1) fail('native-ultra-query-head-ambiguous');
+  const head = heads[0], include = head[6], custom = head[7], get = head[12];
+  const escape = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const tailIndex = text.indexOf(';return{queryKey:', head.index + head[0].length);
+  if (tailIndex < 0 || tailIndex - head.index > 2400) fail('native-ultra-query-body-unknown');
+  const body = text.slice(head.index + head[0].length, tailIndex);
+  const gate = escape(get) + '\\(' + id + ',`1186680773`\\)';
+  const originalRe = new RegExp(',' + id + '=' + escape(include) + '&&' + gate + '$');
+  const patchedRe = new RegExp(',' + id + '=' + escape(include) + '&&\\(' + escape(custom) + '\\|\\|' + gate + '\\)/\\*' + queryMarker + '\\*/$');
+  const original = body.match(originalRe), patched = body.match(patchedRe);
+  const queryDone = patched != null && text.split(queryMarker).length === 2;
+  if (!original && !queryDone) fail('native-ultra-query-gate-unknown');
+  if (original && text.includes(queryMarker)) fail('native-ultra-query-partial-marker');
+  const bootstrapFiles = fs.readdirSync(path.dirname(file)).filter(name => /^initialize-app-host-services-.*\.js$/.test(name));
+  if (bootstrapFiles.length !== 1) fail('native-ultra-bootstrap-ambiguous');
+  const hostFile = path.join(path.dirname(file), bootstrapFiles[0]);
+  const host = fs.readFileSync(hostFile, 'utf8');
+  const hosts = [...host.matchAll(/includeUltraReasoningEffort:(.{1,220}?),isAuthLoading:/g)].filter(match => match[1].includes('1186680773'));
+  if (hosts.length !== 1) fail('native-ultra-bootstrap-gate-ambiguous');
+  const hostMatch = hosts[0];
+  const hostTail = host.slice(hostMatch.index + hostMatch[0].length, hostMatch.index + hostMatch[0].length + 650);
+  const customMatch = hostTail.match(/isCustomModelProvider:([$A-Za-z_][$\w]*)\(([$A-Za-z_][$\w]*)\),workspaceDependenciesEnabled:/);
+  if (!customMatch) fail('native-ultra-bootstrap-provider-unknown');
+  const customCall = customMatch[1] + '(' + customMatch[2] + ')';
+  const hostOriginal = new RegExp('^' + id + '\\(' + id + ',`1186680773`\\)$');
+  const hostPatched = new RegExp('^' + escape(customCall) + '\\|\\|' + id + '\\(' + id + ',`1186680773`\\)/\\*' + hostMarker + '\\*/$');
+  const hostDone = hostPatched.test(hostMatch[1]) && host.split(hostMarker).length === 2;
+  if (!hostOriginal.test(hostMatch[1]) && !hostDone) fail('native-ultra-bootstrap-gate-unknown');
+  if (host.includes(hostMarker) && !hostDone) fail('native-ultra-bootstrap-partial-marker');
+  if (queryDone !== hostDone) fail('native-ultra-mixed-patch-state');
+  if (queryDone) { process.stdout.write('already-patched'); process.exit(0); }
+  const nextBody = body.replace(originalRe, ',' + original[1] + '=' + include + '&&(' + custom + '||' + get + '(' + original[2] + ',`1186680773`))/*' + queryMarker + '*/');
+  const nextQuery = text.slice(0, head.index + head[0].length) + nextBody + text.slice(tailIndex);
+  const nextHost = host.slice(0, hostMatch.index) + hostMatch[0].replace(hostMatch[1], customCall + '||' + hostMatch[1] + '/*' + hostMarker + '*/') + host.slice(hostMatch.index + hostMatch[0].length);
+  for (const source of [nextQuery, nextHost]) {
+    const check = spawnSync(process.execPath, ['--check', '--input-type=module'], { input: source, encoding: 'utf8', maxBuffer: 1024 * 1024 });
+    if (check.status !== 0) fail('native-ultra-output-syntax-invalid');
+  }
+  fs.writeFileSync(file, nextQuery);
+  fs.writeFileSync(hostFile, nextHost);
+  process.stdout.write('patched');
+  process.exit(0);
+}
 if (text.includes(marker) && text.includes(migrationMarker) && text.includes('ultraEffortLocalFallback')) {
   process.stdout.write('already-patched');
   process.exit(0);
@@ -1500,18 +1564,29 @@ function patchFeatureHook(file) {
   // WSL read, and the derived availability vars no longer sit in one let chain.
   // Match the two split declarations by their stable neighbor expressions and
   // force the WSL availability result separately.
-  const inAppConfigV3OriginalRe = /let ([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\)(,[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\),([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\?\.authMethod\?\?null,([A-Za-z_$][\w$]*);)/;
-  const externalConfigV3OriginalRe = /let ([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\)(,[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\),([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\|\|[A-Za-z_$][\w$]*===`chrome-extension`,)/;
+  // Bind split config reads to the exact options local carrying the browser
+  // feature. A global authMethod-shaped match can hit computer_use first in
+  // app-initial and require another run before the real browser hook changes.
+  const v3Id = '[A-Za-z_$][\\w$]*';
+  const v3Prefix = feature => '(?<prefix>(?<options>' + v3Id + ')=\\{enabled:' + v3Id + ',featureName:`' + feature + '`,hostId:' + v3Id + '\\}[^;]{0,160};let )(?<config>' + v3Id + ')=';
+  const inAppV3Tail = '(?<tail>,(?<auth>' + v3Id + ')=' + v3Id + '\\(' + v3Id + '\\),' + v3Id + '=\\k<auth>\\?\\.authMethod\\?\\?null,' + v3Id + ';)';
+  const externalV3Tail = '(?<tail>,' + v3Id + '=' + v3Id + '\\(' + v3Id + '\\),' + v3Id + '=' + v3Id + '\\|\\|' + v3Id + '===`chrome-extension`,)';
+  const inAppConfigV3OriginalRe = new RegExp(v3Prefix('browser_use') + v3Id + '\\(\\k<options>\\)' + inAppV3Tail);
+  const externalConfigV3OriginalRe = new RegExp(v3Prefix('browser_use_external') + v3Id + '\\(\\k<options>\\)' + externalV3Tail);
+  const inAppConfigV3PatchedRe = new RegExp(v3Prefix('browser_use') + '\\{enabled:!0,isLoading:!1\\}/\\*CODEX_BROWSER_IN_APP_CONFIG_V3\\*/' + inAppV3Tail);
+  const externalConfigV3PatchedRe = new RegExp(v3Prefix('browser_use_external') + '\\{enabled:!0,isLoading:!1\\}/\\*CODEX_BROWSER_EXTERNAL_CONFIG_V3\\*/' + externalV3Tail);
+  for (const pair of [[inAppConfigV3OriginalRe, inAppConfigV3PatchedRe], [externalConfigV3OriginalRe, externalConfigV3PatchedRe]]) {
+    if (pair.reduce((count, re) => count + [...before.matchAll(new RegExp(re.source, 'g'))].length, 0) > 1) {
+      process.stderr.write('browser-use-split-config-ambiguous\n'); process.exit(2);
+    }
+  }
   const wslResultV3Re = /([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*===!0\|\|[A-Za-z_$][\w$]*\.kind===`wsl`/g;
-  const v3ConfigPatched = before.includes('/*CODEX_BROWSER_IN_APP_CONFIG_V3*/') &&
-                          before.includes('/*CODEX_BROWSER_EXTERNAL_CONFIG_V3*/');
-  const v3ConfigOriginal = inAppConfigV3OriginalRe.test(before) &&
-                           externalConfigV3OriginalRe.test(before);
+  const v3ConfigPatched = inAppConfigV3PatchedRe.test(before) && externalConfigV3PatchedRe.test(before);
   if (hasCurrentCompiledShape && (
       !(currentInAppPairOriginalRe.test(before) || currentInAppPairPatchedRe.test(before)) ||
-      !((currentInAppConfigOriginalRe.test(before) || currentInAppConfigPatchedRe.test(before)) || v3ConfigOriginal || v3ConfigPatched) ||
+      !((currentInAppConfigOriginalRe.test(before) || currentInAppConfigPatchedRe.test(before)) || inAppConfigV3OriginalRe.test(before) || inAppConfigV3PatchedRe.test(before)) ||
       !(currentExternalGateOriginalRe.test(before) || currentExternalGatePatchedRe.test(before)) ||
-      !((currentExternalConfigOriginalRe.test(before) || currentExternalConfigPatchedRe.test(before)) || v3ConfigOriginal || v3ConfigPatched))) {
+      !((currentExternalConfigOriginalRe.test(before) || currentExternalConfigPatchedRe.test(before)) || externalConfigV3OriginalRe.test(before) || externalConfigV3PatchedRe.test(before)))) {
     process.stderr.write('browser-use-current-feature-hook-incomplete\n');
     process.exit(2);
   }
@@ -1536,11 +1611,11 @@ function patchFeatureHook(file) {
     );
     after = after.replace(
       inAppConfigV3OriginalRe,
-      'let $1={enabled:!0,isLoading:!1}/*CODEX_BROWSER_IN_APP_CONFIG_V3*/$2'
+      '$<prefix>$<config>={enabled:!0,isLoading:!1}/*CODEX_BROWSER_IN_APP_CONFIG_V3*/$<tail>'
     );
     after = after.replace(
       externalConfigV3OriginalRe,
-      'let $1={enabled:!0,isLoading:!1}/*CODEX_BROWSER_EXTERNAL_CONFIG_V3*/$2'
+      '$<prefix>$<config>={enabled:!0,isLoading:!1}/*CODEX_BROWSER_EXTERNAL_CONFIG_V3*/$<tail>'
     );
     after = after.replace(
       wslResultV3Re,
@@ -1789,7 +1864,10 @@ const hasNativeWindowsCopyFallback =
   (after.includes('copyDirectoryAllowDecryptedDestinationOnEncryptionFailure') &&
    after.includes('windows-file-copy-')) ||
   /platform!==`win32`\)\{await [A-Za-z_$][\w$]*\.default\.cp\([^)]*\{recursive:!0,verbatimSymlinks:!0\}\);return\}/.test(after) ||
-  /require\(`\.\/windows-file-copy-[A-Za-z0-9_-]+\.js`\)/.test(after);
+  /require\(`\.\/windows-file-copy-[A-Za-z0-9_-]+\.js`\)/.test(after) ||
+  // Desktop 26.1027 keeps the native fallback but loads it as a lazy chunk and
+  // minifies the guard with Yoda comparisons and double-quoted literals.
+  /"win32"!==[A-Za-z_$][\w$]*\(\)\.platform\)return void await [A-Za-z_$][\w$]*\(\)\.cp\([^)]*\{recursive:!0,verbatimSymlinks:!0\}\)/.test(after);
 
 if (!after.includes(copyPatchedMarker) && !hasNativeWindowsCopyFallback) {
   const originalRe = /async function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{if\(([A-Za-z_$][\w$]*)\.default\.platform===`darwin`\)\{await ([A-Za-z_$][\w$]*)\(`ditto`,\[`--noqtn`,\2,\3\]\);return\}await ([A-Za-z_$][\w$]*)\.default\.cp\(\2,\3,\{recursive:!0,verbatimSymlinks:!0\}\)\}/;
@@ -1819,7 +1897,10 @@ if (!after.includes(copyPatchedMarker) && !hasNativeWindowsCopyFallback) {
 if (!after.includes(sitesPatchedMarker)) {
   const sitesAvailabilityRe = /isAvailable:\(\{features:([A-Za-z_$][\w$]*)\}\)=>\1\.sites/;
   const sitesRetirementRe = /async function [A-Za-z_$][\w$]*\(([A-Za-z_$][\w$]*)\)\{let\{plugins:([A-Za-z_$][\w$]*)\}=await \1\.getUserSavedConfiguration\(\);typeof \2==`object`&&\2&&!Array\.isArray\(\2\)&&Object\.hasOwn\(\2,`sites@openai-bundled`\)&&await \1\.uninstallPlugin\(\{pluginId:`sites@openai-bundled`\}\)\}/g;
-  const sitesRetired = [...after.matchAll(sitesRetirementRe)].length === 1 &&
+  // Desktop 26.1027 retires the same plugin with reversed comparisons and double quotes.
+  const yodaSitesRetirementRe = /async function [A-Za-z_$][\w$]*\(([A-Za-z_$][\w$]*)\)\{let\{plugins:([A-Za-z_$][\w$]*)\}=await \1\.getUserSavedConfiguration\(\);null!=\2&&"object"==typeof \2&&!Array\.isArray\(\2\)&&Object\.hasOwn\(\2,"sites@openai-bundled"\)&&await \1\.uninstallPlugin\(\{pluginId:"sites@openai-bundled"\}\)\}/g;
+  const sitesRetired = ([...after.matchAll(sitesRetirementRe)].length +
+    [...after.matchAll(yodaSitesRetirementRe)].length) === 1 &&
     !/\.\.\.[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\.sites\b/.test(after);
   if (sitesAvailabilityRe.test(after)) {
     after = after.replace(sitesAvailabilityRe, `isAvailable:()=>!0/*${sitesPatchedMarker}*/`);
@@ -1887,7 +1968,8 @@ if (text.includes(marker)) {
   process.exit(0);
 }
 
-const keyMatch = text.match(/([A-Za-z_$][\w$]*)=`NODE_REPL_TRUSTED_CODE_PATHS`/);
+// Desktop 26.1027 emits the key constant with double quotes instead.
+const keyMatch = text.match(/([A-Za-z_$][\w$]*)=(?:`NODE_REPL_TRUSTED_CODE_PATHS`|"NODE_REPL_TRUSTED_CODE_PATHS")/);
 if (!keyMatch) {
   process.stderr.write('node-repl-trusted-paths-key-not-found\n');
   process.exit(2);
@@ -1936,17 +2018,24 @@ const patchedPluginGateRe = new RegExp(`if\\(!(${id})\\.installed\\|\\|(${id})==
 const originalSurfaceGateRe = new RegExp(`(${id})=(${id})&&(${id})\\.platform===\`darwin\`&&(${id})\\.computerUse&&(${id})\\.enabled&&\\5\\.paths\\.serviceAppPath!=null`, 'g');
 // Desktop 26.1021 ships a native Windows surface with its own plugin guard.
 const nativeWindowsSurfaceGateRe = new RegExp(`(${id})=(${id})&&(${id})\\.computerUse&&(${id})\\.enabled&&\\((${id})\\.platform===\`win32\`\\|\\|\\5\\.platform===\`darwin\`&&\\4\\.paths\\.serviceAppPath!=null\\)`, 'g');
+// Desktop 26.1027 keeps the same meaning from a minifier that reverses string
+// comparisons and double-quotes literals; Windows is native there, so this
+// layout is only ever recognized, never rewritten.
+const yodaPluginGateRe = new RegExp(`if\\(!(${id})\\.installed\\|\\|null==(${id})\\|\\|(${id})&&"darwin"!==(${id})\\.platform\\)return null;`, 'g');
+const yodaNativeSurfaceGateRe = new RegExp(`(${id})=(${id})&&(${id})\\.computerUse&&(${id})\\.enabled&&\\("win32"===(${id})\\.platform\\|\\|"darwin"===\\5\\.platform&&null!=\\4\\.paths\\.serviceAppPath\\)`, 'g');
 const modernPatchedSurfaceGateRe = new RegExp(`(${id})=(${id})&&(${id})\\.computerUse&&\\((${id})\\.platform===\`darwin\`&&(${id})\\.enabled&&\\5\\.paths\\.serviceAppPath!=null\\|\\|\\4\\.platform===\`win32\`\\)`, 'g');
 const legacyPatchedSurfaceGateRe = new RegExp(`(${id})=(${id})&&\\((${id})\\.platform===\`darwin\`&&(${id})\\.computerUse&&(${id})\\.enabled&&\\5\\.paths\\.serviceAppPath!=null\\|\\|\\3\\.platform===\`win32\`&&\\4\\.computerUse&&\\4\\.computerUseNodeRepl\\)`, 'g');
 const unversionedPatchedSurfaceGateRe = new RegExp(`(${id})=(${id})&&\\((${id})\\.platform===\`darwin\`&&(${id})\\.computerUse&&(${id})\\.enabled&&\\5\\.paths\\.serviceAppPath!=null\\|\\|\\3\\.platform===\`win32\`&&\\4\\.computerUse\\)`, 'g');
 // Desktop 26.917 removes computerUseNodeRepl. Its shared readiness result f
 // already requires the enabled CUA plugin, both Node paths and mcpToolExposure.
 const modernReadinessRe = /return t\.browserUseTinysky&&!o&&a\.nodePath!=null&&a\.nodeReplPath!=null&&[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\(e,`mcpToolExposure`\)&&s\?\.plugin\.installed===!0&&s\.plugin\.enabled&&s\.plugin\.availability===`AVAILABLE`/g;
+const yodaReadinessRe = /return [A-Za-z_$][\w$]*\.browserUseTinysky&&![A-Za-z_$][\w$]*&&null!=[A-Za-z_$][\w$]*\.nodePath&&null!=[A-Za-z_$][\w$]*\.nodeReplPath&&\(0,[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\)\([A-Za-z_$][\w$]*,"mcpToolExposure"\)&&[A-Za-z_$][\w$]*\?\.plugin\.installed===!0&&[A-Za-z_$][\w$]*\.plugin\.enabled&&"AVAILABLE"===[A-Za-z_$][\w$]*\.plugin\.availability/g;
 const patchedSurfaceGateRes = [modernPatchedSurfaceGateRe, legacyPatchedSurfaceGateRe, unversionedPatchedSurfaceGateRe];
 // Do not infer the host layout from a dependency inserted by a previous patch.
 const layoutText = patchedSurfaceGateRes.reduce((source, re) => source.replace(re, ''), text);
 const legacyLayout = layoutText.includes('computerUseNodeRepl');
-const modernLayout = !legacyLayout && [...layoutText.matchAll(modernReadinessRe)].length === 1;
+const modernLayout = !legacyLayout &&
+  ([...layoutText.matchAll(modernReadinessRe)].length + [...layoutText.matchAll(yodaReadinessRe)].length) === 1;
 
 function buildPluginGate(p, i, a, e) {
   return `if(!${p}.installed||${i}==null||${a}&&(${e}.platform!==\`darwin\`&&${e}.platform!==\`win32\`))return null;/*${marker}*/`;
@@ -1974,13 +2063,13 @@ function countRe(re, source = text) {
   return (source.match(re) || []).length;
 }
 
-const pluginCount = countRe(originalPluginGateRe);
+const pluginCount = countRe(originalPluginGateRe) + countRe(yodaPluginGateRe);
 const surfaceCount = countRe(originalSurfaceGateRe);
 const markerCount = count(marker);
 const patchedPluginCount = countRe(patchedPluginGateRe);
 const patchedSurfaceCounts = patchedSurfaceGateRes.map(re => countRe(re));
 const patchedSurfaceCount = patchedSurfaceCounts.reduce((total, value) => total + value, 0);
-const nativeSurfaceCount = countRe(nativeWindowsSurfaceGateRe);
+const nativeSurfaceCount = countRe(nativeWindowsSurfaceGateRe) + countRe(yodaNativeSurfaceGateRe);
 if (nativeSurfaceCount) {
   if (nativeSurfaceCount === 1 && modernLayout && pluginCount === 1 &&
       surfaceCount === 0 && markerCount === 0 && patchedPluginCount === 0 && patchedSurfaceCount === 0) {
@@ -2575,13 +2664,17 @@ function Find-ComputerUseSurfaceTarget {
   $candidates = @(foreach ($candidate in (Get-ChildItem -LiteralPath $viteBuildDir -Filter '*.js' -File)) {
     $text = [IO.File]::ReadAllText($candidate.FullName)
     $modernReadinessPattern = 'return t\.browserUseTinysky&&!o&&a\.nodePath!=null&&a\.nodeReplPath!=null&&[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\(e,`mcpToolExposure`\)&&s\?\.plugin\.installed===!0&&s\.plugin\.enabled&&s\.plugin\.availability===`AVAILABLE`'
+    # Desktop 26.1027 minifies the same predicate with reversed comparisons and
+    # double-quoted string literals.
+    $yodaReadinessPattern = 'return [A-Za-z_$][\w$]*\.browserUseTinysky&&![A-Za-z_$][\w$]*&&null!=[A-Za-z_$][\w$]*\.nodePath&&null!=[A-Za-z_$][\w$]*\.nodeReplPath&&\(0,[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\)\([A-Za-z_$][\w$]*,"mcpToolExposure"\)&&[A-Za-z_$][\w$]*\?\.plugin\.installed===!0&&[A-Za-z_$][\w$]*\.plugin\.enabled&&"AVAILABLE"===[A-Za-z_$][\w$]*\.plugin\.availability'
     if ($text.Contains('CODEX_CUA_WINDOWS_SURFACE_V1') -or
         ($text.Contains('CUA_REPL_ENABLED_SURFACES') -and
          $text.Contains('cuaReplSurfaces') -and
          ($text.Contains('computerUseNodeRepl') -or
-          [regex]::Matches($text, $modernReadinessPattern).Count -eq 1) -and
-         $text.Contains('serviceAppPath!=null') -and
-         $text.Contains('platform===`darwin`'))) {
+          [regex]::Matches($text, $modernReadinessPattern).Count -eq 1 -or
+          [regex]::Matches($text, $yodaReadinessPattern).Count -eq 1) -and
+         $text.Contains('paths.serviceAppPath') -and
+         ($text.Contains('platform===`darwin`') -or $text.Contains('"darwin"===')))) {
       $candidate.FullName
     }
   })
@@ -3105,27 +3198,13 @@ function Install-PatchedPackage {
   $installed = Invoke-TransactionalMsixInstall -MsixPath $MsixPath -PackageName $PackageFamilyName
   Write-Log "installed package: $($installed.PackageFullName)"
   if ($Launch -and -not $NoLaunch) {
-    $application = @(Get-AppxPackageManifest -Package $installed).Package.Applications.Application | Select-Object -First 1
-    $appUserModelId = "$($installed.PackageFamilyName)!$($application.Id)"
-    $appExecutable = Join-Path $installed.InstallLocation ([string]$application.Executable).Replace('/', '\')
-    Write-Log "launching Codex package app: $appUserModelId"
-    Start-Process -FilePath 'explorer.exe' -ArgumentList "shell:AppsFolder\$appUserModelId"
-
-    $deadline = (Get-Date).AddSeconds(20)
-    $desktopProcess = $null
-    while (-not $desktopProcess -and (Get-Date) -lt $deadline) {
-      Start-Sleep -Milliseconds 500
-      $desktopProcess = Get-Process -Name ([System.IO.Path]::GetFileNameWithoutExtension($appExecutable)) -ErrorAction SilentlyContinue |
-        Where-Object { $_.Path -and $_.Path.Equals($appExecutable, [StringComparison]::OrdinalIgnoreCase) } |
-        Select-Object -First 1
-    }
-    if (-not $desktopProcess) {
-      Fail "Codex Desktop executable did not start: $appExecutable"
-    }
+    $entry = Get-InstalledAppxApplicationEntry -Package $installed
+    $appUserModelId = Start-InstalledAppxPackage -Package $installed
+    $desktopProcess = Wait-InstalledAppxDesktopProcess -Executable $entry.Executable -ProcessName $entry.ProcessName -TimeoutSeconds 20
 
     # A second activation makes an already-running Electron instance surface its window.
-    Start-Process -FilePath 'explorer.exe' -ArgumentList "shell:AppsFolder\$appUserModelId"
-    Write-Log "Codex Desktop package process started: $appExecutable pid=$($desktopProcess.Id)"
+    $null = Invoke-InstalledAppxApplicationActivation -AppUserModelId $appUserModelId
+    Write-Log "Codex Desktop package process started: $($entry.Executable) pid=$($desktopProcess.Id)"
   }
 }
 

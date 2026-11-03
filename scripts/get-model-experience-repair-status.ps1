@@ -16,7 +16,7 @@ try {
   if (-not $installer.StartTime) { $probeFailed = $true }
 } catch {
   # An access error is not evidence of an exited installer.
-  if ($_.FullyQualifiedErrorId -notlike 'NoProcessFoundForGivenId*') { $probeFailed = $true }
+  if (-not (Test-RepairProcessNotFoundError -ErrorRecord $_)) { $probeFailed = $true }
 }
 $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $result = Get-RepairDeploymentAssessment -State $state -CurrentPackage $package -InstallerProcess $installer -CurrentUserSid $sid -InstallerProbeFailed:$probeFailed
