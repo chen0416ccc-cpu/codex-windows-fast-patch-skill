@@ -41,7 +41,7 @@
 | **浏览器不可用** | 内置浏览器、Chrome 控制、自定义供应商下特定的登录依赖错误 |
 | **电脑操控异常** | Computer Use / Any App、跨调用窗口操作、部分 Win10 截图故障 |
 | **手机远控失效** | 入口、二维码、配对和版本过期问题，保留第三方 API 主使用方式 |
-| **会话异常** | 新建对话 `inputSchema` 报错、切换供应商后历史消失、恢复后目录缺失 |
+| **会话异常** | 新建对话 `inputSchema` 报错、切换供应商后历史消失、恢复后目录缺失、重启后项目归属丢失、已有归档列表仍显示加载失败 |
 | **配置管理** | 配置、技能和市场的备份恢复 |
 | **配置听话水** | 配置 skill 内置的系统提示词文件及 `model_instructions_file` |
 
@@ -105,6 +105,10 @@ Claude Code 可将目标改为 `$env:USERPROFILE\.claude\skills\codex-windows-fa
 保留我的第三方 API 配置、原有登录和会话记录。
 ```
 
+### 项目归属与归档加载
+
+对于已核验的 `26.1027.6604` 文件组合，`-OnlyProjectArchiveState` 只修复全局状态备份恢复、Windows 本地项目关联持久保存，以及归档列表已有内容时残留的错误提示。先运行 `scripts/patch_codex_fast_mode_windows_msix.ps1 -OnlyProjectArchiveState -DryRun`。此模式需要重新打包并原地更新；它不随普通全量修复自动启用，未知文件哈希会停止。已有归属恢复须先核对数据库、全局状态及备份，按证据修复，不从工作目录批量猜测归属。步骤及验收见[项目与归档状态修复](references/project-archive-state.md)。
+
 ### 配置听话水
 
 “听话水”就是本 skill 内置的系统提示词。把下面这句话发送给智能体：
@@ -145,6 +149,7 @@ git -C $SkillRoot pull --ff-only
 | Fast Mode、Power/Ultra、客户端过滤导致的模型不显示 | 修改客户端后重新安装 |
 | 语言重置、Goal / 插件 / 浏览器 / Any App 的客户端入口异常 | 修改客户端后重新安装 |
 | 手机远控的入口、配对或版本问题，新建对话 `inputSchema` 报错 | 需要修改客户端或原生程序时重新安装 |
+| 重启后项目归属丢失、归档列表已显示仍提示加载失败 | 核对并恢复归属数据，修补受支持客户端后原地更新 |
 | Chrome / Computer Use 的缓存、运行时路径、市场配置，以及已支持的 Chrome 登录依赖错误 | 通常只修本地环境，不重装 |
 | 模型目录补全、历史会话可见性、缺失工作目录、备份与听话水配置、配对后的 API 地址 | 通常只改配置或数据，不重装 |
 
@@ -170,6 +175,7 @@ ASAR 解包和打包优先复用 npm 缓存中可运行的本地工具，不依�
 | --- | --- |
 | 完整执行流程、参数和备份操作 | [SKILL.md](SKILL.md)，供智能体与维护者按需查阅 |
 | 模型、浏览器、插件或安装故障 | [常见问题排查](references/restriction-debug-cases.md) |
+| 重启后项目归属与归档错误提示 | [项目与归档状态修复](references/project-archive-state.md) |
 | dots 新入口缺失、账号与云端访问条件 | [dots 只读诊断](references/dots-diagnostics.md)，不包含云端资格解锁 |
 | 手机远控的授权、配对和 API 问题 | [手机远控排查](references/remote-control-debug-cases.md) |
 | Win10 截图的适用版本与验证范围 | [Win10 截图兼容说明](references/win10-computer-use-screenshot-backend.md) |

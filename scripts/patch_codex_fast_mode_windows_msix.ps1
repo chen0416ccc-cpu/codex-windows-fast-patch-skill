@@ -18,6 +18,7 @@ param(
   [switch]$OnlyBundledMarketplaceCopy,
   [switch]$OnlyComputerUseSurface,
   [switch]$OnlyNodeReplProxyEnv,
+  [switch]$OnlyProjectArchiveState,
   [switch]$OnlyComputerUseSurfaceAndProxyEnv,
   [switch]$PatchWindows10ScreenshotHelper,
   [switch]$PatchWindowsStoreUpdateFallback,
@@ -49,6 +50,12 @@ function Fail {
 }
 
 function Assert-ComputerUseSurfaceOptions {
+  if ($OnlyProjectArchiveState -and
+      ($OnlyComputerUseSurface -or $OnlyNodeReplProxyEnv -or $OnlyBundledMarketplaceCopy -or $OnlyModelExperience -or
+       $OnlyComputerUseSurfaceAndProxyEnv -or $AddLocalPluginMarketplace -or $VerifyFastModeRequest -or
+       $PatchWindows10ScreenshotHelper -or $PatchWindowsStoreUpdateFallback)) {
+    Fail '-OnlyProjectArchiveState cannot be combined with other targeted modes or unrelated repairs'
+  }
   if ($OnlyComputerUseSurfaceAndProxyEnv -and
       ($OnlyComputerUseSurface -or $OnlyNodeReplProxyEnv -or $OnlyBundledMarketplaceCopy -or $OnlyModelExperience -or
        $AddLocalPluginMarketplace -or $VerifyFastModeRequest -or $PatchWindows10ScreenshotHelper -or $PatchWindowsStoreUpdateFallback)) {
@@ -2923,6 +2930,33 @@ function Invoke-PatchAppAsar {
     return $true
   }
 
+  if ($OnlyProjectArchiveState) {
+    $statePatcher = Join-Path $PSScriptRoot 'patch-project-archive-state.cjs'
+    $stateBackupRoot = Join-Path $WorkDir 'project-archive-originals'
+    $stateResults = Invoke-NodePatcher $nodePath $statePatcher @($extractDir, $stateBackupRoot)
+    Write-Log "project/archive state patch result: $stateResults"
+    foreach ($stateAsset in @(
+      '.vite\build\early-bootstrap-133-27035703de164763.js',
+      '.vite\build\early-bootstrap-499-8b3807f1185eeae8.js',
+      'webview\assets\app-primary-93b5541c5ac8.js'
+    )) {
+      & $nodePath --check (Join-Path $extractDir $stateAsset)
+      if ($LASTEXITCODE -ne 0) { Fail "project/archive patched source syntax failed: $stateAsset" }
+    }
+    if ($DryRun) {
+      Write-Log 'dry run: project/archive patch validated; installed package unchanged'
+      return $false
+    }
+    if (@(($stateResults | ConvertFrom-Json) | Where-Object status -eq 'patched').Count -eq 0) {
+      Write-Log 'asar project/archive patches already present'
+      return $false
+    }
+    Write-Log 'repacking app.asar'
+    Invoke-NpxAsar 'pack' $extractDir $newAsarPath
+    Copy-Item -LiteralPath $newAsarPath -Destination $asarPath -Force
+    return $true
+  }
+
   if ($OnlyBundledMarketplaceCopy) {
     $viteBuildDir = Join-Path $extractDir '.vite\build'
     if (-not (Test-Path -LiteralPath $viteBuildDir -PathType Container)) {
@@ -3723,11 +3757,11 @@ try {
   Copy-PackageLayout $sourcePackageRoot $workPackageRoot
   Remove-OldPackageArtifacts $workPackageRoot
 
-  $chromeRegistryParsing = Patch-ChromePluginWindowsRegistryParsing $workApp
+  $chromeRegistryParsing = if ($OnlyProjectArchiveState) { 'skipped-targeted-project-archive-state' } else { Patch-ChromePluginWindowsRegistryParsing $workApp }
   Write-Log "Chrome localized registry parsing patch result: $chromeRegistryParsing"
 
   # Validate the runtime inside the package copy before it can enter an MSIX.
-  if (-not ($OnlyBundledMarketplaceCopy -or $OnlyComputerUseSurface -or $OnlyNodeReplProxyEnv -or $OnlyComputerUseSurfaceAndProxyEnv -or $OnlyModelExperience)) {
+  if (-not ($OnlyBundledMarketplaceCopy -or $OnlyComputerUseSurface -or $OnlyNodeReplProxyEnv -or $OnlyComputerUseSurfaceAndProxyEnv -or $OnlyModelExperience -or $OnlyProjectArchiveState)) {
     $stagedNodeModules = Join-Path $workApp 'resources\cua_node\bin\node_modules'
     $entryInstructions = Repair-WindowsCuaEntryInstructions -NodeModulesRoot $stagedNodeModules
     Write-Log "Windows CUA entry instructions patch result: $entryInstructions"
