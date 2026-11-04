@@ -3260,11 +3260,20 @@ function Test-FileContainsAsciiText {
 function Get-ChromeBrowserClientTrustMode {
   param(
     [string]$AppAsarPath,
-    [string]$BrowserClientSha256
+    [string]$BrowserClientSha256,
+    [string]$BrowserClientPath
   )
 
   if (Test-FileContainsAsciiText $AppAsarPath $BrowserClientSha256) {
     return 'asar-sha256'
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($BrowserClientPath) -and
+      (Test-FileContainsAsciiText $AppAsarPath 'NODE_REPL_TRUSTED_SERVICES') -and
+      (Test-FileContainsAsciiText $AppAsarPath 'browserServicePath') -and
+      (Test-FileContainsAsciiText $BrowserClientPath 'Browser use requires a trusted Node REPL browser service') -and
+      (Test-FileContainsAsciiText $BrowserClientPath 'setupBrowserRuntime')) {
+    return 'node-repl-service'
   }
 
   $nativeHostMarkers = @(
@@ -3297,7 +3306,7 @@ function Get-InstalledChromeBrowserClientTrust {
   $sha256 = (Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash.ToLowerInvariant()
   $resourcesRoot = Split-Path -Parent (Split-Path -Parent $InstalledMarketplaceRoot)
   $appAsarPath = Join-Path $resourcesRoot 'app.asar'
-  $trustMode = Get-ChromeBrowserClientTrustMode $appAsarPath $sha256
+  $trustMode = Get-ChromeBrowserClientTrustMode $appAsarPath $sha256 $sourcePath
   Write-Log "installed Chrome browser client contract: mode=$trustMode sha256=$sha256"
 
   return [pscustomobject]@{
@@ -3565,6 +3574,36 @@ if errors:
   }
 }
 
+function Get-NodeReplConfiguredTrustedRoots {
+  param([string]$ConfigPath)
+
+  $python = Get-Command python -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($python) {
+    $probe = @'
+import json, pathlib, sys, tomllib
+config = tomllib.loads(pathlib.Path(sys.argv[1]).read_text(encoding='utf-8'))
+value = config.get('mcp_servers', {}).get('node_repl', {}).get('env', {}).get('NODE_REPL_TRUSTED_CODE_PATHS')
+if not isinstance(value, str):
+    sys.exit('config.toml is missing mcp_servers.node_repl.env.NODE_REPL_TRUSTED_CODE_PATHS')
+print(json.dumps([part for part in value.split(';') if part.strip()]))
+'@
+    $output = @(& $python.Source -c $probe $ConfigPath)
+    if ($LASTEXITCODE -ne 0) { throw 'Could not read Node REPL trusted paths from TOML' }
+    $values = ($output -join [Environment]::NewLine) | ConvertFrom-Json
+    foreach ($value in $values) { $value }
+    return
+  }
+
+  # Preserve the existing literal-path fallback when Python is unavailable.
+  $configContent = [System.IO.File]::ReadAllText($ConfigPath, [System.Text.UTF8Encoding]::new($false))
+  $configMatch = [regex]::Match($configContent, '(?m)^\s*NODE_REPL_TRUSTED_CODE_PATHS\s*=\s*[''"](?<value>[^''"]*)[''"]\s*$')
+  if (-not $configMatch.Success) {
+    throw 'config.toml is missing mcp_servers.node_repl.env.NODE_REPL_TRUSTED_CODE_PATHS'
+  }
+  $configRoots = @($configMatch.Groups['value'].Value -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+  return $configRoots
+}
+
 function Test-NodeReplTrustedPathRepair {
   param(
     [string]$ConfigPath,
@@ -3578,12 +3617,7 @@ function Test-NodeReplTrustedPathRepair {
     return
   }
 
-  $configContent = [System.IO.File]::ReadAllText($ConfigPath, [System.Text.UTF8Encoding]::new($false))
-  $configMatch = [regex]::Match($configContent, '(?m)^\s*NODE_REPL_TRUSTED_CODE_PATHS\s*=\s*[''"](?<value>[^''"]*)[''"]\s*$')
-  if (-not $configMatch.Success) {
-    throw 'config.toml is missing mcp_servers.node_repl.env.NODE_REPL_TRUSTED_CODE_PATHS'
-  }
-  $configRoots = @($configMatch.Groups['value'].Value -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+  $configRoots = @(Get-NodeReplConfiguredTrustedRoots $ConfigPath)
   $userRoots = @(([Environment]::GetEnvironmentVariable('NODE_REPL_TRUSTED_CODE_PATHS', 'User')) -split ';' |
     Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 

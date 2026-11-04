@@ -27,6 +27,8 @@
 
 这是社区维护的 **Agent Skill**，提供诊断流程与修复脚本，不是官方客户端，也不是适用于所有版本的一键安装器。
 
+已适配 `26.1029.7803` 新布局，包含模型、Fast、Ultra、项目归属与归档错误修复，以及 Sky `0.7.13` / `0.7.17` 的 Windows 10 截图补丁。安装后仍须核验实际运行版本、插件状态和所请求的截图验收；更新遗留的 MCP 路径按备份与运行时核对结果处理。
+
 > [!WARNING]
 > **仅支持 Windows。部分修复包含重新安装 Codex 的步骤。** 期间应用会关闭，当前对话可能中断；安装完成后重新打开 Codex，回到原修复对话发送“继续”即可接着处理。具体见[重装说明](#哪些修复会重新安装-codex)。
 
@@ -107,7 +109,7 @@ Claude Code 可将目标改为 `$env:USERPROFILE\.claude\skills\codex-windows-fa
 
 ### 项目归属与归档加载
 
-对于已核验的 `26.1027.6604` 文件组合，`-OnlyProjectArchiveState` 只修复全局状态备份恢复、Windows 本地项目关联持久保存，以及归档列表已有内容时残留的错误提示。先运行 `scripts/patch_codex_fast_mode_windows_msix.ps1 -OnlyProjectArchiveState -DryRun`。此模式需要重新打包并原地更新；它不随普通全量修复自动启用，未知文件哈希会停止。已有归属恢复须先核对数据库、全局状态及备份，按证据修复，不从工作目录批量猜测归属。步骤及验收见[项目与归档状态修复](references/project-archive-state.md)。
+对于已核验的 `26.1027.6604` 和 `26.1029.7803` 文件组合，`-OnlyProjectArchiveState` 只修复全局状态备份恢复、Windows 本地项目关联持久保存，以及归档列表已有内容时残留的错误提示。先运行 `scripts/patch_codex_fast_mode_windows_msix.ps1 -OnlyProjectArchiveState -DryRun`。此模式需要重新打包并原地更新；新版 `26.1029.7803` 全量修复也包含这些代码修复，未知文件哈希会停止。已有归属恢复须先核对数据库、全局状态及备份，按证据修复，不从工作目录批量猜测归属。步骤及验收见[项目与归档状态修复](references/project-archive-state.md)。
 
 ### 配置听话水
 

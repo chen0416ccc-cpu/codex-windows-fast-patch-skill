@@ -42,6 +42,40 @@ const profiles = [
   },
 ];
 
+profiles.push(
+  { ...profiles[0], file: 'early-bootstrap-133-485dbc70b8296756.js', sha256: ['8cf2f389549308e8913c1472c576d6cb7b6d8ba6a9524cdd0fd49960a9224699'] },
+  {
+    kind: 'project-membership',
+    file: 'early-bootstrap-632-62c641245a52ef0e.js',
+    sha256: ['c16675e64dae86bdb09f7720f038a8c2f2beacf0e85bbadd369f407d38662aa4'],
+    edits: [['M.setThreadAssignmentsEnabled(tl().localProjectTaskMembership)', 'M.setThreadAssignmentsEnabled(tl().localProjectTaskMembership||process.platform==="win32"/*codex_windows_local_project_membership_persistence*/)']],
+  },
+  {
+    kind: 'archive-errors',
+    file: 'async/678916.1a2b7b8d2a.js',
+    sha256: ['2b052845ef91d58cdf5a508c18ff2f362b295b568c05d55ea1766f110334aa26'],
+    edits: [
+      ['function eU(e){let t,a,s,l,o,d,c,u,g,m,p,A,_,P,M,D,F,T,B,q,Q,K,W,R,z,X,Y=(0,i.c)(132)', 'function eU(e){let t,a,s,l,o,d,c,u,g,m,p,A,_,P,M,D,F,T,B,q,Q,K,W,R,z,X,Y=(0,i.c)(133)'],
+      ['isLocalArchiveError:S&&eC,', 'isLocalArchiveError:S&&(ey?.length??0)===0&&eC/*codex_archive_local_error_scope_v2*/,'],
+      ['isDurableArchiveError:S&&null!=q[1]&&(', 'isDurableArchiveError:S&&null!=q[1]&&(q[1].data?.length??0)===0&&('],
+      ['chatGptArchiveError:Y&&ec?eh:null,', 'chatGptArchiveError:Y&&ec&&(J?.length??0)===0?eh:null/*codex_archive_cloud_error_scope_v2*/,'],
+      ['Y[115]!==tr?(K=(null!=eA||tr||ti)&&!eC?', 'Y[115]!==tr||Y[132]!==ee.length?(K=ee.length===0&&(null!=eA||tr||ti)&&!eC?'],
+      ['Y[115]=tr,Y[116]=K):K=Y[116]', 'Y[115]=tr,Y[116]=K,Y[132]=ee.length):K=Y[116]'],
+    ],
+  },
+);
+
+function relativePath(profile) {
+  return (profile.kind === 'archive-errors' ? 'webview/assets/' : '.vite/build/') + profile.file;
+}
+
+function selectProfiles(hasFile) {
+  const layouts = [profiles.slice(0, 3), profiles.slice(3, 6)];
+  const matches = layouts.filter(layout => layout.every(profile => hasFile(relativePath(profile))));
+  if (matches.length !== 1) throw new Error(`Expected one complete project/archive layout, found ${matches.length}`);
+  return matches[0];
+}
+
 function sha256(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
 }
@@ -59,14 +93,19 @@ function transform(source, profile) {
   try {
     const original = [...profile.edits].reverse().reduce((s, [before, after]) => replaceOnce(s, after, before), source);
     if (profile.sha256.includes(sha256(original))) return { source, status: 'already-patched' };
+    if (profile.file === 'early-bootstrap-632-62c641245a52ef0e.js') {
+      const restored = replaceOnce(original,
+        'isAvailable:()=>!0/*codex_windows_deep_research_bundled_plugin_available*/',
+        'isAvailable:({features:e})=>e.deepResearch');
+      if (profile.sha256.includes(sha256(restored))) return { source, status: 'already-patched' };
+    }
   } catch {}
   throw new Error(`Unsupported or partial ${profile.kind} source: ${sha256(source)}`);
 }
 
 function patchFiles(asarRoot, backupRoot, checkOnly = false) {
-  const targets = profiles.map(profile => {
-    const directory = profile.kind === 'archive-errors' ? 'webview/assets' : '.vite/build';
-    const target = path.join(asarRoot, directory, profile.file);
+  const targets = selectProfiles(rel => fs.existsSync(path.join(asarRoot, rel))).map(profile => {
+    const target = path.join(asarRoot, relativePath(profile));
     const source = fs.readFileSync(target, 'utf8');
     return { target, original: source, profile, ...transform(source, profile) };
   });
@@ -75,6 +114,7 @@ function patchFiles(asarRoot, backupRoot, checkOnly = false) {
     for (const target of targets) {
       if (target.status === 'already-patched') continue;
       const backup = path.join(backupRoot, target.profile.file);
+      fs.mkdirSync(path.dirname(backup), { recursive: true });
       if (fs.existsSync(backup)) {
         if (sha256(fs.readFileSync(backup)) !== sha256(target.original)) throw new Error('Existing backup does not match original');
       } else {
@@ -91,10 +131,14 @@ function patchFiles(asarRoot, backupRoot, checkOnly = false) {
   return targets.map(({ profile, source, status }) => ({ kind: profile.kind, status, sha256: sha256(source) }));
 }
 
-module.exports = { profiles, transform, patchFiles };
+module.exports = { profiles, selectProfiles, relativePath, transform, patchFiles };
 
 if (require.main === module) {
   const [asarRoot, backupRoot, flag] = process.argv.slice(2);
+  if (asarRoot && backupRoot === '--paths' && !flag) {
+    selectProfiles(rel => fs.existsSync(path.join(asarRoot, rel))).forEach(profile => console.log(relativePath(profile)));
+    process.exit(0);
+  }
   if (!asarRoot || !backupRoot || (flag && flag !== '--check')) throw new Error('Usage: patch-project-archive-state.cjs <extracted-asar> <backup-root> [--check]');
   console.log(JSON.stringify(patchFiles(asarRoot, backupRoot, flag === '--check')));
 }

@@ -175,6 +175,12 @@ For Windows 10 screenshot issues investigated from a Windows 11 host, follow `re
 
 ## Default Workflow
 
+For the shipped `26.1029.7803.0` layout, the full patch uses `desktop-261029-profiles.json` with complete asset hashes. It covers all 26 changed files, including 11 Ultra and 9 Fast UI copies, the actual model/list identifiers, project-state recovery, Windows membership persistence, the merged archive error and its memo dependency, and the backend Deep Research availability gate. The package's native Power slider, Goal command, plugin install flow, CUA transport and decrypted-directory copy remain pinned witnesses. Native copy availability does not establish that every bundled plugin survives backend reconciliation; run the separate strict plugin check after installation and preserve the user's enabled choices.
+
+The Windows 10 helper profiles for Sky `0.7.13` and `0.7.17` pin complete original/patched hashes and the callback wrapper's unwind metadata. Confirm the extracted per-user helper matches the current package before live acceptance. When screenshot/input acceptance is explicitly requested, Raise the exact returned target, inspect fresh image content with current accessibility state, test both static and changing frames, reverse test input, and retain the capture timings and resource limits. Do not substitute window enumeration or executed rendering snippets for that acceptance. Keep `ValidatedDesktopVersion` unset until the exact helper and Desktop combination has passed.
+
+After an update, inspect custom MCP commands for removed runtime directories as well as the Desktop-generated node_repl configuration. Back up the config and migrate only known stale commands to the package-matching runtime; preserve their arguments, environments and user choices. Verify initialize/tools/list against the actual commands, and separately audit the precise runtime paths, trusted paths, plugin state, marketplace timestamp and regenerated native pipe. The local installer also recognizes the packaged trusted Node REPL browser-service contract and decodes trusted-path TOML values before comparing physical roots. A successful handshake does not establish business-backend availability or proxy routing.
+
 1. If the task may modify `config.toml`, skills, marketplaces, or MCP server settings, create a state snapshot first:
 
 ```powershell

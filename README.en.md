@@ -27,6 +27,8 @@
 
 This community-maintained **Agent Skill** contains diagnostic workflows and repair scripts. It is not an official client or a universal one-click installer.
 
+The `26.1029.7803` layout is supported for models, Fast, Ultra, project membership and archive errors, with Windows 10 screenshot profiles for Sky `0.7.13` / `0.7.17`. After installation, verify the actual runtime, plugin state and any requested screenshot acceptance. Repair stale custom MCP paths only after backing up configuration and matching the current packaged runtime.
+
 The one-click repair includes CUA browser proxy recovery using the explicit Windows HTTP system proxy, with original-byte backups and reapplication after proxy changes. Restart Codex after a write and verify Chrome and the in-app browser separately. Run `scripts/install-computer-use-local.ps1 -OnlyRuntimeProxy` for only this repair; add `-StrictVerifyOnly` for read-only checks. PAC, authenticated and non-HTTP proxies are unsupported.
 
 > [!WARNING]
@@ -114,7 +116,7 @@ The entry point emits a JSON status. `-ReportPath '<new-report-path>.json'` save
 
 ### Project assignments and archive loading
 
-For the verified `26.1027.6604` file combinations, `-OnlyProjectArchiveState` repairs global-state backup recovery, Windows local-project assignment persistence, and stale errors beside populated archive lists. Start with `scripts/patch_codex_fast_mode_windows_msix.ps1 -OnlyProjectArchiveState -DryRun`. This opt-in mode repackages the client for an in-place update; ordinary full repairs do not enable it, and unknown source hashes stop the operation. Recover existing assignments only after comparing the database, global state and backups; a matching working directory alone is insufficient. See [project and archive state repair](references/project-archive-state.md) for deployment and acceptance.
+For the verified `26.1027.6604` and `26.1029.7803` file combinations, `-OnlyProjectArchiveState` repairs global-state backup recovery, Windows local-project assignment persistence, and stale errors beside populated archive lists. Start with `scripts/patch_codex_fast_mode_windows_msix.ps1 -OnlyProjectArchiveState -DryRun`. This opt-in mode repackages the client for an in-place update; the pinned `26.1029.7803` full repair also includes these code fixes, and unknown source hashes stop the operation. Recover existing assignments only after comparing the database, global state and backups; a matching working directory alone is insufficient. See [project and archive state repair](references/project-archive-state.md) for deployment and acceptance.
 
 ### Configure Tinghuashui (听话水)
 

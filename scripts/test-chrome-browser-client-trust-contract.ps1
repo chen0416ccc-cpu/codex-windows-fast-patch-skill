@@ -57,6 +57,23 @@ try {
   )
   Assert-Equal (Get-ChromeBrowserClientTrustMode $nativeAsar $sha256) 'native-host-paths' 'native-host path contract was not detected'
 
+  $serviceAsar = Join-Path $fixture 'service.asar'
+  $serviceClient = Join-Path $fixture 'browser-client.mjs'
+  [IO.File]::WriteAllText($serviceAsar, 'NODE_REPL_TRUSTED_SERVICES browserServicePath', [Text.Encoding]::ASCII)
+  [IO.File]::WriteAllText($serviceClient, 'Browser use requires a trusted Node REPL browser service setupBrowserRuntime', [Text.Encoding]::ASCII)
+  Assert-Equal (Get-ChromeBrowserClientTrustMode $serviceAsar $sha256 $serviceClient) 'node-repl-service' 'trusted service contract was not detected'
+  foreach ($pair in @(
+    @('browserServicePath', 'Browser use requires a trusted Node REPL browser service setupBrowserRuntime'),
+    @('NODE_REPL_TRUSTED_SERVICES browserServicePath', 'setupBrowserRuntime'),
+    @('NODE_REPL_TRUSTED_SERVICES browserServicePath', 'Browser use requires a trusted Node REPL browser service')
+  )) {
+    [IO.File]::WriteAllText($serviceAsar, $pair[0], [Text.Encoding]::ASCII)
+    [IO.File]::WriteAllText($serviceClient, $pair[1], [Text.Encoding]::ASCII)
+    $rejected = $false
+    try { $null = Get-ChromeBrowserClientTrustMode $serviceAsar $sha256 $serviceClient } catch { $rejected = $true }
+    Assert-Equal $rejected $true 'partial trusted service contract was not rejected'
+  }
+
   foreach ($content in @(
     'browserClientPath browserServicePath codex-host-chunked-message-v1',
     'unknown browser runtime contract'

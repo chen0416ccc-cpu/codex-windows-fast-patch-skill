@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const assert = require('node:assert/strict');
-const { profiles, transform } = require('./patch-project-archive-state.cjs');
+const { selectProfiles, relativePath, transform } = require('./patch-project-archive-state.cjs');
 
 function readExact(fd, size, offset) {
   const bytes = Buffer.alloc(size);
@@ -137,8 +137,8 @@ function repack(original, patchedRoot, output) {
   const changes = new Map();
   try {
     const { files, dataStart } = readHeader(fd);
-    for (const profile of profiles) {
-      const rel = (profile.kind === 'archive-errors' ? 'webview/assets/' : '.vite/build/') + profile.file;
+    for (const profile of selectProfiles(rel => files.has(rel))) {
+      const rel = relativePath(profile);
       const entry = files.get(rel);
       assert(entry && !entry.unpacked && entry.size <= 24 * 1024 * 1024, 'Missing or invalid pinned asset');
       const source = readExact(fd, entry.size, dataStart + Number(entry.offset)).toString('utf8');
@@ -151,9 +151,44 @@ function repack(original, patchedRoot, output) {
   return rebuildAsar(original, changes, output);
 }
 
-module.exports = { rebuildAsar, readHeader, repack };
+function repackAll(original, patchedRoot, output) {
+  const fd = fs.openSync(original, 'r');
+  const changes = new Map();
+  try {
+    const { files, dataStart } = readHeader(fd);
+    const extracted = new Set();
+    function walk(root, prefix = '') {
+      for (const item of fs.readdirSync(root, { withFileTypes: true })) {
+        const rel = prefix + item.name;
+        if (item.isDirectory()) walk(path.join(root, item.name), rel + '/');
+        else extracted.add(rel);
+      }
+    }
+    walk(patchedRoot);
+    assert(extracted.size === files.size && [...files.keys()].every(rel => extracted.has(rel)), 'Extracted file set differs from original ASAR');
+    for (const [rel, entry] of files) {
+      if (entry.link !== undefined) {
+        assert(fs.realpathSync(path.join(patchedRoot, rel)) === fs.realpathSync(path.join(patchedRoot, entry.link)), 'Extracted link differs');
+        continue;
+      }
+      if (entry.unpacked) {
+        const source = fs.readFileSync(path.join(original + '.unpacked', rel));
+        const bytes = fs.readFileSync(path.join(patchedRoot, rel));
+        // Vendor signing can append a certificate after the recorded ASAR size.
+        assert(source.equals(bytes), `Unpacked file differs: ${rel}`);
+        continue;
+      }
+      const source = readExact(fd, entry.size, dataStart + Number(entry.offset));
+      const bytes = fs.readFileSync(path.join(patchedRoot, rel));
+      if (!source.equals(bytes)) changes.set(rel, bytes);
+    }
+  } finally { fs.closeSync(fd); }
+  return rebuildAsar(original, changes, output);
+}
+
+module.exports = { rebuildAsar, readHeader, repack, repackAll };
 if (require.main === module) {
-  const [original, patchedRoot, output] = process.argv.slice(2);
-  assert(original && patchedRoot && output, 'Usage: repack-project-archive-asar.cjs <original.asar> <patched-root> <output.asar>');
-  console.log(JSON.stringify(repack(original, patchedRoot, output)));
+  const [original, patchedRoot, output, flag] = process.argv.slice(2);
+  assert(original && patchedRoot && output && (!flag || flag === '--all'), 'Usage: repack-project-archive-asar.cjs <original.asar> <patched-root> <output.asar> [--all]');
+  console.log(JSON.stringify((flag === '--all' ? repackAll : repack)(original, patchedRoot, output)));
 }

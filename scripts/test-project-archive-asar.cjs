@@ -5,7 +5,7 @@ const path = require('node:path');
 const os = require('node:os');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const { rebuildAsar, readHeader } = require('./repack-project-archive-asar.cjs');
+const { rebuildAsar, readHeader, repackAll } = require('./repack-project-archive-asar.cjs');
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-asar-layout-'));
 const original = path.join(root, 'original.asar');
@@ -68,6 +68,27 @@ try {
   assert(!fs.existsSync(absent)); checks++;
   assert.throws(() => rebuildAsar(original, new Map(), original), /differ/);
   assert(fs.readFileSync(original).equals(before)); checks++;
+  const extract = path.join(root, 'extract');
+  fs.mkdirSync(extract);
+  fs.mkdirSync(original + '.unpacked');
+  fs.writeFileSync(path.join(original + '.unpacked', 'native'), 'bin-certificate');
+  for (const [name, text] of [['first', 'updated'], ['second', 'same'], ['other', 'other'], ['native', 'bin-certificate']]) {
+    fs.writeFileSync(path.join(extract, name), text);
+  }
+  fs.symlinkSync(path.join(extract, 'first'), path.join(extract, 'alias'), 'file');
+  const all = path.join(root, 'all.asar');
+  repackAll(original, extract, all);
+  assert.deepEqual(inspect(all).files.get('native'), {size: 3, unpacked: true});
+  assert(entryBytes(all, inspect(all), 'first').equals(changed)); checks++;
+  fs.writeFileSync(path.join(extract, 'native'), 'bad');
+  assert.throws(() => repackAll(original, extract, absent), /Unpacked file differs/);
+  assert(!fs.existsSync(absent)); checks++;
+  fs.writeFileSync(path.join(extract, 'native'), 'bin-certificate');
+  fs.writeFileSync(path.join(extract, 'extra'), 'unexpected');
+  assert.throws(() => repackAll(original, extract, absent), /file set differs/); checks++;
+  fs.unlinkSync(path.join(extract, 'extra'));
+  fs.unlinkSync(path.join(extract, 'other'));
+  assert.throws(() => repackAll(original, extract, absent), /file set differs/); checks++;
   fs.appendFileSync(original, 'trailing');
   assert.throws(() => rebuildAsar(original, new Map(), absent), /trailing bytes/);
   assert(!fs.existsSync(absent)); checks++;

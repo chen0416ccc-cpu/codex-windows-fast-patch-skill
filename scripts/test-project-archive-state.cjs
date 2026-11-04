@@ -7,11 +7,12 @@ const path = require('node:path');
 const vm = require('node:vm');
 const crypto = require('node:crypto');
 const timers = require('node:timers/promises');
-const { profiles, transform, patchFiles } = require('./patch-project-archive-state.cjs');
+const { selectProfiles, relativePath, transform, patchFiles } = require('./patch-project-archive-state.cjs');
 
 const sourceRoot = process.argv[2];
 assert(sourceRoot, 'Pass the original extracted ASAR directory');
-const sources = profiles.map(p => fs.readFileSync(path.join(sourceRoot, p.kind === 'archive-errors' ? 'webview/assets' : '.vite/build', p.file), 'utf8'));
+const profiles = selectProfiles(rel => fs.existsSync(path.join(sourceRoot, rel)));
+const sources = profiles.map(p => fs.readFileSync(path.join(sourceRoot, relativePath(p)), 'utf8'));
 const patched = sources.map((source, i) => transform(source, profiles[i]).source);
 const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-state-test-'));
 let checks = 0;
@@ -67,6 +68,7 @@ function archiveSnippet(source) {
 }
 
 function archiveCases(source, expectBroken) {
+  if (source.includes('function eP(e){')) return modernArchiveCases(source, expectBroken);
   const context = {
     e: [], Ee: true, ae: true, se: false, K() {}, oe() {}, Be: false, Ne: [],
     a: { formatMessage: () => 'Retry' }, GG: { retry: {} }, Cg: 'row', $: 'label',
@@ -95,18 +97,69 @@ function archiveCases(source, expectBroken) {
   }
 }
 
+function modernArchiveCases(source, expectBroken) {
+  const parentStart = source.indexOf('(0,r.jsx)(eU,{');
+  const parentEnd = source.indexOf('},`${y}:', parentStart);
+  assert(parentStart > 0 && parentEnd > parentStart);
+  const parent = source.slice(parentStart + '(0,r.jsx)(eU,'.length, parentEnd + 1);
+  const context = {
+    e_: [1, 2, 3, 4, 5, 6], j: null, eI: [], y: 'local', S: true, ex: false, eC: false,
+    ey: [1, 2, 3, 4, 5, 6], q: [{}, {data: [], isError: true}], U: 'disconnected',
+    d() {}, c() {}, ew: false, eP: false, K: false, Y: true, ei: false, el: {fI: 'local'},
+    ef: false, z: false, en: false, Q: [], Z: false, J: undefined, ec: true,
+    eh: Error('An unrelated account source failed'), h() {}, v() {},
+  };
+  const start = source.indexOf('Y[109]');
+  const end = source.indexOf(',Y[117]', start);
+  assert(start > 0 && end > start);
+  const snippet = '{' + source.slice(start, end) + ';globalThis.row=K;}';
+  const row = {
+    Y: [], eC: false, eI() {}, ej() {}, ef() {}, ee: context.e_,
+    r: {jsx: (type, props) => ({type, props})}, en: {t: 'row'}, ei: {ic: 'label'},
+    k: {A: 'text'}, E: {$: 'button'}, N: {p: {retry: {}}},
+  };
+  function render() {
+    const props = vm.runInNewContext('(' + parent + ')', context);
+    row.eA = props.chatGptArchiveError;
+    row.tr = props.isLocalArchiveError;
+    row.ti = props.isDurableArchiveError;
+    row.ee = context.e_;
+    vm.runInNewContext(snippet, row);
+    return row.row;
+  }
+  assert.equal(Boolean(render()), expectBroken, 'Loaded local rows with an empty failed durable/account source'); checks++;
+  if (expectBroken) return;
+  context.e_ = []; context.ey = []; context.eC = true;
+  let result = render();
+  assert(result, 'Empty failures retain retry'); checks++;
+  let called = [];
+  row.ef = () => called.push('local'); row.ej = () => called.push('durable'); row.eI = () => called.push('account');
+  result = render(); result.props.children.props.control.props.onClick();
+  assert.deepEqual(called, ['local', 'durable', 'account']); checks++;
+  context.e_ = [1];
+  assert.equal(render(), null, 'Rows invalidate the same memo even when all error props stay true'); checks++;
+  context.e_ = [];
+  assert(render(), 'Removing all rows restores the failed empty state'); checks++;
+  context.eC = false; context.q[1].isError = false; context.U = 'connected'; context.ec = false;
+  assert.equal(render(), null, 'Empty success remains error free'); checks++;
+  context.eC = true; context.q[1].data = [1]; context.ey = [1];
+  const props = vm.runInNewContext('(' + parent + ')', context);
+  assert.equal(props.isLocalArchiveError, false);
+  assert.equal(props.isDurableArchiveError, false); checks++;
+}
+
 async function membershipCases(source, expectBroken) {
-  const anchor = source.match(/E\.setThreadAssignmentsEnabled\(tl\(\)\.localProjectTaskMembership[^)]*\)/)[0];
+  const anchor = source.match(/[EM]\.setThreadAssignmentsEnabled\(tl\(\)\.localProjectTaskMembership[^)]*\)/)[0];
   const gate = {};
   const E = { setThreadAssignmentsEnabled: value => { gate.enabled = value; } };
-  const context = { E, tl: () => ({ localProjectTaskMembership: false }), process: { platform: 'win32' } };
+  const context = { E, M: E, tl: () => ({ localProjectTaskMembership: false }), process: { platform: 'win32' } };
   vm.runInNewContext(anchor, context);
   assert.equal(gate.enabled, !expectBroken); checks++;
   const start = source.indexOf('async write(e,t,r,n,i,s,a){');
   const end = source.indexOf('async syncAssignment(', start);
   assert(start > 0 && end > start);
   const method = vm.runInNewContext('({' + source.slice(start, end) + '}).write', {
-    efo: async (map, id, fn) => fn(), ec: { Q2Y: { THREAD_PROJECT_ASSIGNMENTS: 'assignments' }, RWz: () => false },
+    efo: async (map, id, fn) => fn(), efq: async (map, id, fn) => fn(), ec: { Q2Y: { THREAD_PROJECT_ASSIGNMENTS: 'assignments' }, RWz: () => false },
   });
   const sent = [];
   let writes = 0;
@@ -143,9 +196,15 @@ async function membershipCases(source, expectBroken) {
       assert.equal(transform(patched[i], profiles[i]).status, 'already-patched'); checks++;
       assert.throws(() => transform(sources[i] + 'changed', profiles[i]), /Unsupported/); checks++;
     }
+    if (profiles[1].file === 'early-bootstrap-632-62c641245a52ef0e.js') {
+      const full = patched[1].replace('isAvailable:({features:e})=>e.deepResearch',
+        'isAvailable:()=>!0/*codex_windows_deep_research_bundled_plugin_available*/');
+      assert.equal(transform(full, profiles[1]).status, 'already-patched');
+      assert.throws(() => transform(full + 'changed', profiles[1]), /Unsupported/); checks += 2;
+    }
     const filesRoot = path.join(fixtureRoot, 'asar');
     const backupRoot = path.join(fixtureRoot, 'backups');
-    const targets = profiles.map(p => path.join(filesRoot, p.kind === 'archive-errors' ? 'webview/assets' : '.vite/build', p.file));
+    const targets = profiles.map(p => path.join(filesRoot, relativePath(p)));
     function resetFiles() {
       targets.forEach((target, i) => {
         fs.mkdirSync(path.dirname(target), { recursive: true });
