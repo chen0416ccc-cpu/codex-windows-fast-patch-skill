@@ -5,6 +5,7 @@ param(
   [switch]$VerifyOnly,
   [switch]$StrictVerifyOnly,
   [switch]$OnlyRuntimeProxy,
+  [switch]$OnlyExecutorRuntime,
   [switch]$VerifyAllBundledPluginsAvailable,
   [switch]$SkipUserEnvironment
 )
@@ -2193,7 +2194,144 @@ function Get-CurrentCodexAppServerRuntimeInventory {
     ReferenceNodePath = $packageNode
     ReferenceNodeReplPath = $packageNodeRepl
     PackageResourcesRoot = $PackageResourcesRoot
+    LocalCodexRoot = $LocalCodexRoot
   }
+}
+
+function Get-CodexNodeReplCliPin {
+  param([string]$ConfigPath)
+  if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) { return $null }
+  $content = [IO.File]::ReadAllText($ConfigPath)
+  Test-CodexTomlContent $content
+  $table = [regex]::Match($content, '(?ms)^\[mcp_servers\.node_repl\.env\][ \t]*\r?\n(?<body>(?:(?!^\[).)*)')
+  if (-not $table.Success) { return $null }
+  $assignment = [regex]::Match($table.Groups['body'].Value, '(?m)^[ \t]*CODEX_CLI_PATH[ \t]*=[ \t]*(?<value>[^\r\n]*)')
+  if (-not $assignment.Success) { return $null }
+  $value = [regex]::Match($assignment.Groups['value'].Value, '^\s*(?<string>''[^''\r\n]*''|"(?:\\.|[^"\\\r\n])*")\s*(?:#.*)?$')
+  if (-not $value.Success) { throw 'Unsupported node_repl CODEX_CLI_PATH representation; configuration left unchanged.' }
+  $quoted = $value.Groups['string'].Value
+  if ($quoted.StartsWith("'")) { return $quoted.Substring(1, $quoted.Length - 2) }
+  try { return [string]($quoted | ConvertFrom-Json -ErrorAction Stop) }
+  catch { throw 'Unsupported node_repl CODEX_CLI_PATH escape; configuration left unchanged.' }
+}
+
+function Test-ManagedCodexCliPin {
+  param([string]$Path, [string]$LocalCodexRoot)
+  if ([string]::IsNullOrWhiteSpace($Path) -or -not [IO.Path]::IsPathRooted($Path)) { return $false }
+  $full = [IO.Path]::GetFullPath($Path)
+  $directory = Split-Path -Parent $full
+  $binRoot = [IO.Path]::GetFullPath((Join-Path $LocalCodexRoot 'bin')).TrimEnd('\')
+  if ((Split-Path -Leaf $full) -ine 'codex.exe' -or
+      (Split-Path -Parent $directory) -ine $binRoot -or
+      (Split-Path -Leaf $directory) -notmatch '^[0-9a-fA-F]{16}$') { return $false }
+  # Cache pins can be retired, but existing junctions/custom runtimes are not ours.
+  foreach ($itemPath in @($binRoot, $directory, $full)) {
+    if ((Test-Path -LiteralPath $itemPath) -and
+        ((Get-Item -LiteralPath $itemPath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { return $false }
+  }
+  return $true
+}
+
+function Send-CodexExecutorEnvironmentChange {
+  if (-not ('CodexEnvBroadcast' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class CodexEnvBroadcast {
+  [DllImport("user32.dll", SetLastError=true, CharSet=CharSet.Auto)]
+  public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint flags, uint timeout, out UIntPtr result);
+}
+'@
+  }
+  $result = [UIntPtr]::Zero
+  $null = [CodexEnvBroadcast]::SendMessageTimeout([IntPtr]0xffff, 0x001A, [UIntPtr]::Zero, 'Environment', 0x0002, 5000, [ref]$result)
+}
+
+function Repair-CodexExecutorRuntime {
+  param(
+    [object]$RuntimeInventory,
+    [string]$CodexHomeRoot = $CodexHome,
+    [switch]$VerifyOnly,
+    [switch]$SkipEnvironment
+  )
+
+  $localRoot = $RuntimeInventory.LocalCodexRoot
+  if (-not $localRoot) { $localRoot = Join-Path $env:LOCALAPPDATA 'OpenAI\Codex' }
+  $currentCli = [IO.Path]::GetFullPath($RuntimeInventory.CodexCliPath)
+  if (-not (Test-ManagedCodexCliPin $currentCli $localRoot) -or
+      -not (Test-FilesMatchByContent $currentCli $RuntimeInventory.ReferenceCodexCliPath)) {
+    throw 'Executor repair requires an ordinary user-local CLI matching the installed package.'
+  }
+  $configPath = Join-Path $CodexHomeRoot 'config.toml'
+  $configPin = Get-CodexNodeReplCliPin $configPath
+  $userPin = [Environment]::GetEnvironmentVariable('CODEX_CLI_PATH', 'User')
+  $changes = @()
+  foreach ($pin in @([pscustomobject]@{ Scope = 'node_repl'; Path = $configPin },
+      [pscustomobject]@{ Scope = 'User'; Path = $userPin })) {
+    if ($pin.Scope -eq 'User' -and $SkipEnvironment) { continue }
+    if ([string]::IsNullOrWhiteSpace($pin.Path) -or $pin.Path -ieq $currentCli) { continue }
+    if (-not (Test-ManagedCodexCliPin $pin.Path $localRoot)) {
+      throw "Non-current custom CODEX_CLI_PATH ($($pin.Scope)); left unchanged: $($pin.Path)"
+    }
+    if ($VerifyOnly) { throw "Stale CODEX_CLI_PATH ($($pin.Scope)); restart would select the retired CLI: $($pin.Path)" }
+    $changes += $pin
+  }
+
+  $missing = @()
+  foreach ($name in @('codex-code-mode-host.exe', 'codex-command-runner.exe', 'codex-windows-sandbox-setup.exe')) {
+    $reference = Join-Path $RuntimeInventory.PackageResourcesRoot $name
+    if (-not (Test-Path -LiteralPath $reference -PathType Leaf)) { continue }
+    foreach ($cliPath in @($RuntimeInventory.AllowedCodexCliPaths)) {
+      if (-not (Test-ManagedCodexCliPin $cliPath $localRoot) -or
+          -not (Test-FilesMatchByContent $cliPath $RuntimeInventory.ReferenceCodexCliPath)) {
+        throw "Executor companion target is not a verified user-local runtime: $cliPath"
+      }
+      $target = Join-Path (Split-Path -Parent $cliPath) $name
+      if (Test-Path -LiteralPath $target) {
+        if ((Get-Item -LiteralPath $target -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+          throw "Executor companion is a reparse point; left unchanged: $target"
+        }
+        if (-not (Test-FilesMatchByContent $target $reference)) {
+          throw "Executor companion differs from its package; left unchanged: $target"
+        }
+      } elseif ($VerifyOnly) {
+        throw "Missing package-matched executor companion: $target"
+      } else { $missing += [pscustomobject]@{ Source = $reference; Target = $target } }
+    }
+  }
+  if ($VerifyOnly) {
+    Write-Log 'executor runtime and persisted CLI pins verified'
+    $processPin = [Environment]::GetEnvironmentVariable('CODEX_CLI_PATH', 'Process')
+    $restart = -not [string]::IsNullOrWhiteSpace($processPin) -and $processPin -ine $currentCli
+    return [pscustomobject]@{ State = 'verified'; CliPath = $currentCli; RestartRequired = $restart; BackupPath = $null }
+  }
+
+  $backupPath = $null
+  if ($changes.Count -gt 0) {
+    Backup-ConfigBeforeOverwrite $configPath 'executor-runtime'
+    $backupRoot = Join-Path $CodexHomeRoot 'backups\executor-runtime'
+    New-Item -ItemType Directory -Force -Path $backupRoot | Out-Null
+    $backupPath = Join-Path $backupRoot ((Get-Date -Format 'yyyyMMdd-HHmmss-fff') + '.json')
+    ConvertTo-JsonFile $backupPath ([ordered]@{ UserCliPath = $userPin; NodeReplCliPath = $configPin;
+      ConfigBackupPath = $script:ConfigBackupBeforeOverwrite[[IO.Path]::GetFullPath($configPath)]; CurrentCliPath = $currentCli })
+  }
+  foreach ($file in $missing) {
+    Copy-Item -LiteralPath $file.Source -Destination $file.Target
+    if (-not (Test-FilesMatchByContent $file.Target $file.Source)) { throw "Executor companion copy verification failed: $($file.Target)" }
+  }
+  foreach ($pin in $changes) {
+    if ($pin.Scope -eq 'node_repl') {
+      Set-TomlTableKey $configPath '[mcp_servers.node_repl.env]' 'CODEX_CLI_PATH' $currentCli 'executor-runtime'
+    } else {
+      [Environment]::SetEnvironmentVariable('CODEX_CLI_PATH', $currentCli, 'User')
+      Send-CodexExecutorEnvironmentChange
+    }
+  }
+  $null = Repair-CodexExecutorRuntime $RuntimeInventory $CodexHomeRoot -VerifyOnly -SkipEnvironment:$SkipEnvironment
+  $processPin = [Environment]::GetEnvironmentVariable('CODEX_CLI_PATH', 'Process')
+  $restart = $changes.Count -gt 0 -or (-not [string]::IsNullOrWhiteSpace($processPin) -and $processPin -ine $currentCli)
+  if ($restart) { Write-Log 'Restart Codex Desktop with the verified CLI; existing app-server processes and retired runtimes were preserved.' }
+  return [pscustomobject]@{ State = 'repaired'; CliPath = $currentCli; RestartRequired = $restart; BackupPath = $backupPath }
 }
 
 function Resolve-ExistingFileProviderPath {
@@ -4292,6 +4430,8 @@ function Invoke-CuaRuntimeProxyRepair {
 
 function Install-ComputerUse {
   $codexHomeResolved = Resolve-OrCreateDirectory $CodexHome
+  $runtimeInventory = Get-CurrentCodexAppServerRuntimeInventory
+  Repair-CodexExecutorRuntime $runtimeInventory $codexHomeResolved -SkipEnvironment:$SkipUserEnvironment | Out-Host
   $marketplaceRoot = Get-StableBundledMarketplaceRoot $codexHomeResolved
   $pluginSourceRoot = Join-Path $marketplaceRoot 'plugins\computer-use'
   $cacheRoot = Join-Path $codexHomeResolved 'plugins\cache\openai-bundled\computer-use'
@@ -4329,7 +4469,6 @@ function Install-ComputerUse {
     Write-Log "refreshed existing optional plugin cache: $sitesCacheRoot"
   }
 
-  $runtimeInventory = Get-CurrentCodexAppServerRuntimeInventory
   Invoke-CuaRuntimeProxyRepair $runtimeInventory $codexHomeResolved
   $entryInstructions = Repair-WindowsCuaEntryInstructions `
     -NodeModulesRoot (Join-Path (Split-Path -Parent $runtimeInventory.NodePath) 'node_modules') `
@@ -4377,6 +4516,7 @@ function Test-ComputerUse {
   $installedChromeVersion = Get-PluginVersion $installedChromeRoot
   $installedChromeCacheRoot = Join-Path $codexHomeResolved "plugins\cache\openai-bundled\chrome\$installedChromeVersion"
   $runtimeInventory = Get-CurrentCodexAppServerRuntimeInventory
+  $null = Repair-CodexExecutorRuntime $runtimeInventory $codexHomeResolved -VerifyOnly -SkipEnvironment:$SkipUserEnvironment
   Invoke-CuaRuntimeProxyRepair $runtimeInventory $codexHomeResolved -VerifyOnly
   $headerMarketplaceRoot = Get-StableBundledMarketplaceRoot $codexHomeResolved
   Invoke-BrowserAccessibilityAssets $codexHomeResolved $headerMarketplaceRoot $installedMarketplaceRoot $runtimeInventory -VerifyOnly
@@ -4569,6 +4709,12 @@ function Test-ComputerUse {
   Test-HelperTransport $helperTransportPath
   Test-ComputerUseNodeReplContextPatch $helperTransportPath
   Write-Log 'verification ok'
+}
+
+if ($OnlyExecutorRuntime) {
+  $runtimeInventory = Get-CurrentCodexAppServerRuntimeInventory
+  Repair-CodexExecutorRuntime $runtimeInventory $CodexHome -VerifyOnly:$StrictVerifyOnly -SkipEnvironment:$SkipUserEnvironment | Out-Host
+  exit 0
 }
 
 if ($OnlyRuntimeProxy) {

@@ -66,6 +66,8 @@ Do not proceed with a config write if the backup of an existing config fails. Th
 
 ## Workflow Selection
 
+For `failed to spawn code-mode host` or an older CLI selected after Desktop restart, read [executor runtime repair](references/executor-runtime-repair.md). Use the targeted local repair and verify actual post-restart tool execution before declaring recovery.
+
 For recurring update regressions, prefer the repository's
 `scripts/codex-after-update.ps1`: default mode checks the exact package's repair
 transaction, live models and strict plugin/runtime contracts; `-CheckApp` runs a

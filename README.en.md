@@ -36,6 +36,8 @@ The one-click repair includes CUA browser proxy recovery using the explicit Wind
 
 ## What it repairs
 
+For `failed to spawn code-mode host`, run `scripts/install-computer-use-local.ps1 -OnlyExecutorRuntime`; add `-StrictVerifyOnly` for read-only checks. It verifies complete file hashes against the current package, restores missing companions, and backs up and migrates `CODEX_CLI_PATH` pins to retired cache directories. Restart Codex after repair, then verify the actual app-server path and a real tool call.
+
 | Problem | Coverage |
 | --- | --- |
 | **Missing models or speed controls** | Fast Mode, hidden existing model entries, the Power slider, and the Ultra toggle |
