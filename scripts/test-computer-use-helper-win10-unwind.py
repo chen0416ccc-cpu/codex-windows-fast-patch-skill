@@ -6,6 +6,7 @@ calls are stubbed only in this private mapping; the input file is never changed.
 
 import argparse
 import ctypes as c
+import hashlib
 import json
 import os
 import struct
@@ -16,11 +17,24 @@ def require(condition, message):
         raise AssertionError(message)
 
 
+PROFILES = {
+    '02469cd31abf82544a9ef21139c8302266ca4caef13d864d49c81c637d0ae326': (0x17e000, 0x84f0, 0x42489),
+    '40b6ed3f0534ef1bf9d9f79adf13365ecd75df5dde387d8a1f0287ed72338fe8': (0x17e000, 0x84f0, 0x42489),
+    '7c4dc7060a6081506c1614ea0831523ef1d68201cf34e6bd7de7fb787d63dfa2': (0x17e000, 0x84f0, 0x42489),
+    '8dcc49cb8ce2d341112681f7b96d09bf129f711a74c3c7aad747d3403032ced0': (0x17e000, 0x84f0, 0x42489),
+    'c1b08268538e704acfb4afe6a8fe91d26b8d7dc9e0fd8d30e92a792964f6a151': (0x17c000, 0x849c, 0x4247a),
+}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("helper")
     args = parser.parse_args()
     require(os.name == "nt" and c.sizeof(c.c_void_p) == 8, "Windows x64 is required")
+    with open(args.helper, 'rb') as stream:
+        helper_hash = hashlib.file_digest(stream, 'sha256').hexdigest()
+    require(helper_hash in PROFILES, 'Unsupported complete patched helper hash')
+    wrapper, expected_exception_size, original_callback = PROFILES[helper_hash]
     kernel = c.WinDLL("kernel32", use_last_error=True)
     ntdll = c.WinDLL("ntdll")
     kernel.LoadLibraryExW.argtypes = [c.c_wchar_p, c.c_void_p, c.c_uint]
@@ -103,18 +117,18 @@ def main():
     try:
         pe = c.c_uint32.from_address(image + 0x3c).value
         exception_rva, exception_size = struct.unpack("<II", c.string_at(image + pe + 24 + 112 + 24, 8))
-        require(exception_size == 0x84f0, "unexpected exception directory size")
+        require(exception_size == expected_exception_size, "unexpected exception directory size")
         table = c.string_at(image + exception_rva, exception_size)
         entries = list(struct.iter_unpack("<III", table))
         require(all(a[1] <= b[0] for a, b in zip(entries, entries[1:])), "unsorted/overlapping functions")
-        require(entries[-2:] == [(0x17e000, 0x17e072, 0x17e0c0),
-                                  (0x17e080, 0x17e0b2, 0x17e0c8)], "wrong wrapper ranges")
-        lookup(0x42489)
+        require(entries[-2:] == [(wrapper, wrapper + 0x72, wrapper + 0xc0),
+                                (wrapper + 0x80, wrapper + 0xb2, wrapper + 0xc8)], "wrong wrapper ranges")
+        lookup(original_callback)
         boundaries = [
-            (0x17e000, 0x30, [0, 1, 5, 8, 12, 18, 20, 23, 26, 28, 30, 37, 40,
+            (wrapper, 0x30, [0, 1, 5, 8, 12, 18, 20, 23, 26, 28, 30, 37, 40,
                               49, 58, 64, 67, 69, 72, 78, 80, 84, 85, 86, 90, 94,
                               97, 100, 103, 108, 112, 113], [80, 108]),
-            (0x17e080, 0x20, [0, 1, 5, 8, 13, 19, 22, 27, 33, 36, 39, 42, 44, 48, 49], [44]),
+            (wrapper + 0x80, 0x20, [0, 1, 5, 8, 13, 19, 22, 27, 33, 36, 39, 42, 44, 48, 49], [44]),
         ]
         saved_rbx = 0x1122334455667788
         caller_rip = 0x1234567812345678
@@ -151,13 +165,23 @@ def main():
 
         vtable[1] = stub("addref", 1)
         vtable[2] = stub("release", 1)
-        write_mapping(0x176fd8, struct.pack("<Q", stub("close", 1)))
-        write_mapping(0x176f30, struct.pack("<Q", stub("initialize", 0)))
-        write_mapping(0x176f38, struct.pack("<Q", stub("uninitialize", 0)))
+        callback_code = c.string_at(image + wrapper, 0x72)
+        worker_code = c.string_at(image + wrapper + 0x80, 0x32)
+
+        def import_slots(code, start):
+            offsets = [i for i in range(len(code) - 5) if code[i:i + 2] == b'\xff\x15']
+            require(len(offsets) == 2, 'Unexpected pinned wrapper import calls')
+            return [start + i + 6 + struct.unpack_from('<i', code, i + 2)[0] for i in offsets]
+
+        create_slot, close_slot = import_slots(callback_code, wrapper)
+        initialize_slot, uninitialize_slot = import_slots(worker_code, wrapper + 0x80)
+        write_mapping(close_slot, struct.pack("<Q", stub("close", 1)))
+        write_mapping(initialize_slot, struct.pack("<Q", stub("initialize", 0)))
+        write_mapping(uninitialize_slot, struct.pack("<Q", stub("uninitialize", 0)))
         original = stub("original", 0)
-        write_mapping(0x42489, b"\x48\xb8" + struct.pack("<Q", original) + b"\xff\xe0")
-        callback = c.WINFUNCTYPE(c.c_uint32, c.c_void_p)(image + 0x17e000)
-        worker = c.WINFUNCTYPE(c.c_uint32, c.c_void_p)(image + 0x17e080)
+        write_mapping(original_callback, b"\x48\xb8" + struct.pack("<Q", original) + b"\xff\xe0")
+        callback = c.WINFUNCTYPE(c.c_uint32, c.c_void_p)(image + wrapper)
+        worker = c.WINFUNCTYPE(c.c_uint32, c.c_void_p)(image + wrapper + 0x80)
         call_cases = []
         for name, target, create_result, expected_result, expected_calls in [
             ("success", callback, 1, 0, {"addref", "create", "close"}),
@@ -165,7 +189,7 @@ def main():
             ("busy", callback, 1, 0, set()),
             ("worker", worker, 1, 0, {"initialize", "original", "uninitialize", "release"}),
         ]:
-            write_mapping(0x177018, struct.pack("<Q", stub("create", create_result)))
+            write_mapping(create_slot, struct.pack("<Q", stub("create", create_result)))
             for snapshot in snapshots.values():
                 c.memset(c.addressof(snapshot), 0, len(snapshot))
             c.memset(c.addressof(state), 0, len(state))
@@ -193,7 +217,7 @@ def main():
                     require(read64(stack + 32) == 0 and read64(stack + 40) == 0,
                             "CreateThread stack arguments are not zero")
             call_cases.append({"case": name, "liveFramesUnwound": len(called)})
-        print(json.dumps({"result": "PASS", "functionEntries": len(entries),
+        print(json.dumps({"result": "PASS", "helperSha256": helper_hash, "functionEntries": len(entries),
                           "instructionBoundaries": synthetic_count, "callCases": call_cases}))
     finally:
         kernel.FreeLibrary(image)

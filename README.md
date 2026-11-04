@@ -27,10 +27,16 @@
 
 这是社区维护的 **Agent Skill**，提供诊断流程与修复脚本，不是官方客户端，也不是适用于所有版本的一键安装器。
 
+已适配 `26.1029.7803` 新布局，包含模型、Fast、Ultra、项目归属与归档错误修复，以及 Sky `0.7.13` / `0.7.17` 的 Windows 10 截图补丁。安装后仍须核验实际运行版本、插件状态和所请求的截图验收；更新遗留的 MCP 路径按备份与运行时核对结果处理。
+
 > [!WARNING]
 > **仅支持 Windows。部分修复包含重新安装 Codex 的步骤。** 期间应用会关闭，当前对话可能中断；安装完成后重新打开 Codex，回到原修复对话发送“继续”即可接着处理。具体见[重装说明](#哪些修复会重新安装-codex)。
 
 ## 能修复什么
+
+刚退出后立即重开却没有窗口时，`26.1029.7803` 的退出期间重开修复会保留启动请求，待旧进程退出后恢复一个窗口。已完成单次、连续三次重开请求及用户任务栏关闭路径验收。诊断与部署见[退出后重开修复](references/windows-reopen-repair.md)。
+
+工具报 `failed to spawn code-mode host` 时，可运行 `scripts/install-computer-use-local.ps1 -OnlyExecutorRuntime`，加 `-StrictVerifyOnly` 只检查。它核对当前包的完整文件哈希、恢复缺失的配套程序，并备份后迁移固定旧缓存目录的 `CODEX_CLI_PATH`。修复后重启 Codex，核对实际 app-server 路径和真实工具调用。
 
 一键修复已包含 CUA 浏览器代理恢复：从 Windows 显式 HTTP 系统代理生成受管理的本地 runtime 补丁，保留原件备份；代理改变后可重新应用。修改后需重启 Codex，并分别验证 Chrome 与内置浏览器。仅修复此项可运行 `scripts/install-computer-use-local.ps1 -OnlyRuntimeProxy`；加 `-StrictVerifyOnly` 只检查。暂不支持 PAC、带认证或非 HTTP 代理。
 
@@ -41,7 +47,7 @@
 | **浏览器不可用** | 内置浏览器、Chrome 控制、自定义供应商下特定的登录依赖错误 |
 | **电脑操控异常** | Computer Use / Any App、跨调用窗口操作、部分 Win10 截图故障 |
 | **手机远控失效** | 入口、二维码、配对和版本过期问题，保留第三方 API 主使用方式 |
-| **会话异常** | 新建对话 `inputSchema` 报错、切换供应商后历史消失、恢复后目录缺失 |
+| **会话异常** | 新建对话 `inputSchema` 报错、切换供应商后历史消失、恢复后目录缺失、重启后项目归属丢失、已有归档列表仍显示加载失败 |
 | **配置管理** | 配置、技能和市场的备份恢复 |
 | **配置听话水** | 配置 skill 内置的系统提示词文件及 `model_instructions_file` |
 
@@ -105,6 +111,10 @@ Claude Code 可将目标改为 `$env:USERPROFILE\.claude\skills\codex-windows-fa
 保留我的第三方 API 配置、原有登录和会话记录。
 ```
 
+### 项目归属与归档加载
+
+对于已核验的 `26.1027.6604` 和 `26.1029.7803` 文件组合，`-OnlyProjectArchiveState` 只修复全局状态备份恢复、Windows 本地项目关联持久保存，以及归档列表已有内容时残留的错误提示。先运行 `scripts/patch_codex_fast_mode_windows_msix.ps1 -OnlyProjectArchiveState -DryRun`。此模式需要重新打包并原地更新；新版 `26.1029.7803` 全量修复也包含这些代码修复，未知文件哈希会停止。已有归属恢复须先核对数据库、全局状态及备份，按证据修复，不从工作目录批量猜测归属。步骤及验收见[项目与归档状态修复](references/project-archive-state.md)。
+
 ### 配置听话水
 
 “听话水”就是本 skill 内置的系统提示词。把下面这句话发送给智能体：
@@ -145,6 +155,7 @@ git -C $SkillRoot pull --ff-only
 | Fast Mode、Power/Ultra、客户端过滤导致的模型不显示 | 修改客户端后重新安装 |
 | 语言重置、Goal / 插件 / 浏览器 / Any App 的客户端入口异常 | 修改客户端后重新安装 |
 | 手机远控的入口、配对或版本问题，新建对话 `inputSchema` 报错 | 需要修改客户端或原生程序时重新安装 |
+| 重启后项目归属丢失、归档列表已显示仍提示加载失败 | 核对并恢复归属数据，修补受支持客户端后原地更新 |
 | Chrome / Computer Use 的缓存、运行时路径、市场配置，以及已支持的 Chrome 登录依赖错误 | 通常只修本地环境，不重装 |
 | 模型目录补全、历史会话可见性、缺失工作目录、备份与听话水配置、配对后的 API 地址 | 通常只改配置或数据，不重装 |
 
@@ -170,6 +181,7 @@ ASAR 解包和打包优先复用 npm 缓存中可运行的本地工具，不依�
 | --- | --- |
 | 完整执行流程、参数和备份操作 | [SKILL.md](SKILL.md)，供智能体与维护者按需查阅 |
 | 模型、浏览器、插件或安装故障 | [常见问题排查](references/restriction-debug-cases.md) |
+| 重启后项目归属与归档错误提示 | [项目与归档状态修复](references/project-archive-state.md) |
 | dots 新入口缺失、账号与云端访问条件 | [dots 只读诊断](references/dots-diagnostics.md)，不包含云端资格解锁 |
 | 手机远控的授权、配对和 API 问题 | [手机远控排查](references/remote-control-debug-cases.md) |
 | Win10 截图的适用版本与验证范围 | [Win10 截图兼容说明](references/win10-computer-use-screenshot-backend.md) |

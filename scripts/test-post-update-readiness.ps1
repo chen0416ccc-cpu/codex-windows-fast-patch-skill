@@ -38,6 +38,13 @@ $features = @('fast-mode', 'fast-mode UI', 'custom models', 'Power slider', 'Ult
 $healthy = ($features | ForEach-Object { '[codex-msix-patch-win] ' + $_ + ' patch result: already-patched' }) -join "`n"
 $nativeHealthy = $healthy.Replace('Windows CUA surface patch result: already-patched', 'Windows CUA surface patch result: already-open-native-windows')
 if ((Get-PostUpdatePatchAssessment $nativeHealthy $true).Status -ne 'present') { throw 'Native Windows healthy layout rejected' }
+$modernHealthy = $nativeHealthy
+foreach ($feature in @('Power slider', 'plugin', 'goal')) {
+  $modernHealthy = $modernHealthy.Replace("$feature patch result: already-patched", "$feature patch result: already-open-native")
+}
+if ((Get-PostUpdatePatchAssessment $modernHealthy $true).Status -ne 'present') { throw 'Pinned native 26.1029 features rejected' }
+if ((Get-PostUpdatePatchAssessment ($modernHealthy.Replace('bundled marketplace copy patch result: already-patched', 'bundled marketplace copy patch result: already-open-native')) $true).Status -ne 'unsupported') { throw 'Native copy alone accepted as bundled plugin availability' }
+if ((Get-PostUpdatePatchAssessment ($modernHealthy.Replace('fast-mode patch result: already-patched', 'fast-mode patch result: already-open-native')) $true).Status -ne 'unsupported') { throw 'Unverified native Fast result accepted' }
 if ((Get-PostUpdatePatchAssessment ($healthy + "`n" + $healthy) $true).Status -ne 'unsupported') { throw 'Duplicate patch report accepted' }
 if ((Get-PostUpdatePatchAssessment ($healthy.Replace('locale i18n patch result: already-patched', 'locale i18n patch result: unknown')) $true).Status -ne 'unsupported') { throw 'Unknown patch state accepted' }
 $noUltra = $healthy.Replace('Ultra slider local-fallback patch result: already-patched', 'Ultra slider local-fallback patch result: not-applicable')

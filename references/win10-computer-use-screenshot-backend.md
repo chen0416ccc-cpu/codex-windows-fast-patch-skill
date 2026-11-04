@@ -470,3 +470,18 @@ Store builds `26.1016.6573.0`, `26.1016.8120.0` and `26.1016.8622.0` contain dis
 | `0.7.12-AA6EB7E9` | `AA6EB7E98D62888495F002168C3249D694912A81A029F32A1473F07E52B51679` | `02469CD31ABF82544A9EF21139C8302266CA4CAEF13D864D49C81C637D0AE326` |
 
 Run `test-computer-use-helper-win10-patch.ps1 -SkyVersion <profile> -HelperPath <preserved-original>` for candidate, guarded install, idempotence, rollback, backup preservation and unknown-input checks. The Windows 11 install guard remains in force. `ValidatedDesktopVersion` and `EndToEndValidatedDesktopVersion` remain null: contributor-reported current-Desktop capture/input samples are separate from independent full Windows 10 acceptance and a resource soak.
+
+### `@oai/sky 0.7.13` and `0.7.17` / Desktop 26.1029
+
+The `0.7.13` helper retains the older callback layout; `0.7.17` moves the wrapper section, exception table and imported thread/COM calls. Both profiles pin all thirteen guarded regions and complete hashes. The native unwind test derives the import slots from the pinned wrapper instructions and retains the earlier `0.7.12` profiles.
+
+| Profile | Original SHA-256 | Candidate SHA-256 |
+| --- | --- | --- |
+| `0.7.13-8A64A6A0` | `8A64A6A0FDEA2540F6D74D42EA826E928AD8F5C8891EEBE1CCCBBC8F6A70C2AE` | `8DCC49CB8CE2D341112681F7B96D09BF129F711A74C3C7AAD747D3403032CED0` |
+| `0.7.17-FC0447EF` | `FC0447EFB1AA5A0C527AE88C2ADA9FF7DDC398501BF451275218F1F866424BA8` | `C1B08268538E704ACFB4AFE6A8FE91D26B8D7DC9E0FD8D30E92A792964F6A151` |
+
+Isolated Windows 10 install, repeat install, rollback, repeat rollback, exact backup and unknown-input checks passed for both profiles. Their candidates each passed 47 unwind instruction boundaries and ten real caller frames without executing the helper entry point.
+
+On installed Desktop `26.1029.7803.3`, the packaged and extracted `0.7.17` helpers matched the candidate hash. The actual Desktop CUA channel returned inspected native settings screenshots with six archived chats and no load error. A coordinate click and reversible Chinese search input changed the list from six rows to zero and back to six. Ten static captures completed in 46-140 ms; eight current-chat frames completed in 47-360 ms and included two distinct images with advancing elapsed time. Over the finite 15-minute resource sample, helper private memory rose 1.54 MiB, handles fell by seven and threads fell by one. Element-index actions occasionally lost their cached state; a fresh Raise/screenshot plus observed coordinates recovered the intended navigation.
+
+These are finite screenshot/input observations, not a continuously animated native-target soak or full exception-dispatch validation. Both installed-validation fields remain null. Keep the complete-hash and Windows 10 installation guards, and record stronger acceptance separately when it is actually measured. Private chat screenshots and accessibility text remain local.
