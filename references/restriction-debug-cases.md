@@ -182,6 +182,21 @@ Action:
 
 ## Browser Client Lacks Privileged Node REPL Capabilities
 
+Desktop `26.1029.7803.0` removes both legacy missing-browser-client-path
+diagnostics while retaining schema-2 native-host registration. The previous
+local installer therefore rejected the package with `missing=browser-client
+path hint` before refreshing stale browser AX assets. In this layout, require
+the paired `browserClientPath` / `browserServicePath` assignments using the
+same join function and plugin root, the expected packaged client/service
+filenames, the schema-2 app-server entry and the existing chunked-message
+protocol marker. Scan with bounded buffers (the observed ASAR exceeds 680 MiB),
+including matches across read boundaries. Do not accept the field names alone.
+The packaged/cache client hashes and both native-host state-file checks remain
+required. This is diagnostic compatibility, not a client-byte, authentication,
+or Desktop gate override. On the contributor's package, local refresh then
+passed core strict verification and Sky `0.7.17` window enumeration; this does
+not establish Chrome navigation, native screenshot/input or proxy routing.
+
 Symptoms:
 
 - Importing the current bundled `scripts\browser-client.mjs` fails immediately with `Browser use requires privileged node_repl capabilities` before browser discovery, tab listing, or Chrome native-host communication.

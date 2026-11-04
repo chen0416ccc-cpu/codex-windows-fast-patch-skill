@@ -3223,7 +3223,8 @@ function Sync-BundledMarketplaceFromInstalledApp {
 function Test-FileContainsAsciiText {
   param(
     [string]$Path,
-    [string]$Needle
+    [string]$Needle,
+    [switch]$BoundedRegex
   )
 
   if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
@@ -3245,10 +3246,14 @@ function Test-FileContainsAsciiText {
   try {
     while (($read = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
       $text = $carry + $encoding.GetString($buffer, 0, $read)
-      if ($text.IndexOf($Needle, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+      $found = if ($BoundedRegex) { [regex]::IsMatch($text, $Needle) }
+               else { $text.IndexOf($Needle, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 }
+      if ($found) {
         return $true
       }
-      $carryLength = [Math]::Min($Needle.Length - 1, $text.Length)
+      # BoundedRegex is only used for the short paired registration below.
+      $overlap = if ($BoundedRegex) { 4096 } else { $Needle.Length - 1 }
+      $carryLength = [Math]::Min($overlap, $text.Length)
       $carry = if ($carryLength -gt 0) { $text.Substring($text.Length - $carryLength) } else { '' }
     }
   } finally {
@@ -3279,6 +3284,15 @@ function Get-ChromeBrowserClientTrustMode {
   }
   $browserClientHintPresent = (Test-FileContainsAsciiText $AppAsarPath 'Chrome native host did not provide a browser-client path') -or
                               (Test-FileContainsAsciiText $AppAsarPath 'browser-client path discovery or switch to another browser')
+  if (-not $browserClientHintPresent) {
+    # 26.1029 removes the legacy diagnostic. Require the actual paired path
+    # registration (same join function and plugin root) and schema-2 host entry.
+    # This only recognizes the shipped contract; packaged/cache byte matching
+    # and both native-host state file checks remain mandatory below.
+    $pairedPaths = 'browserClientPath:\(0,(?<join>[\w$]{1,64}\.join)\)\((?<root>[\w$]{1,64})\.pluginRoot,"scripts","browser-client\.mjs"\),browserServicePath:\(0,\k<join>\)\(\k<root>\.pluginRoot,"scripts","browser-service\.mjs"\),codexCliPath:'
+    $browserClientHintPresent = (Test-FileContainsAsciiText $AppAsarPath $pairedPaths -BoundedRegex) -and
+                               (Test-FileContainsAsciiText $AppAsarPath 'schemaVersion:2,appServerProtocolVersion:')
+  }
   if (-not $browserClientHintPresent) {
     throw "installed app.asar contains neither the packaged Chrome browser client hash nor the complete native-host path contract: sha256=$BrowserClientSha256 missing=browser-client path hint"
   }

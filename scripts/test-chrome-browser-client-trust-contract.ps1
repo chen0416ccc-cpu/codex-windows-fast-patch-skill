@@ -57,9 +57,25 @@ try {
   )
   Assert-Equal (Get-ChromeBrowserClientTrustMode $nativeAsar $sha256) 'native-host-paths' 'native-host path contract was not detected'
 
+  $registration = 'browserClientPath:(0,eh.join)(e.pluginRoot,"scripts","browser-client.mjs"),browserServicePath:(0,eh.join)(e.pluginRoot,"scripts","browser-service.mjs"),codexCliPath:o.codexCliPath'
+  $modern = 'codex-host-chunked-message-v1 schemaVersion:2,appServerProtocolVersion:1 ' + $registration
+  $modernAsar = Join-Path $fixture 'modern.asar'
+  [IO.File]::WriteAllText($modernAsar, $modern, [Text.Encoding]::ASCII)
+  Assert-Equal (Get-ChromeBrowserClientTrustMode $modernAsar $sha256) 'native-host-paths' 'paired native-host registration was not detected'
+  $boundaryAsar = Join-Path $fixture 'boundary.asar'
+  [IO.File]::WriteAllText($boundaryAsar, ('x' * (4MB - 180)) + $modern, [Text.Encoding]::ASCII)
+  Assert-Equal (Get-ChromeBrowserClientTrustMode $boundaryAsar $sha256) 'native-host-paths' 'paired registration across a read boundary was not detected'
+
   foreach ($content in @(
     'browserClientPath browserServicePath codex-host-chunked-message-v1',
-    'unknown browser runtime contract'
+    'unknown browser runtime contract',
+    $modern.Replace('schemaVersion:2,', 'schemaVersion:1,'),
+    $modern.Replace('codex-host-chunked-message-v1', 'unknown-protocol'),
+    $modern.Replace('browserServicePath:(0,eh.join)', 'browserServicePath:(0,other.join)'),
+    $modern.Replace('browserServicePath:(0,eh.join)(e.pluginRoot', 'browserServicePath:(0,eh.join)(other.pluginRoot'),
+    $modern.Replace('browser-service.mjs', 'unknown-service.mjs'),
+    $modern.Replace('browser-client.mjs', 'unknown-client.mjs'),
+    $registration
   )) {
     $unknownAsar = Join-Path $fixture ([guid]::NewGuid().ToString('N') + '.asar')
     [IO.File]::WriteAllText($unknownAsar, $content, [Text.Encoding]::ASCII)
