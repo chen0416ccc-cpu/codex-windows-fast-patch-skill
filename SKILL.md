@@ -66,6 +66,8 @@ Do not proceed with a config write if the backup of an existing config fails. Th
 
 ## Workflow Selection
 
+For reopening immediately after exit with no window, read [Windows reopen repair](references/windows-reopen-repair.md). Capture the old/new process timeline before selecting the pinned `26.1029` fix, then verify a real quit race and the user's original close/reopen path without a recovery watcher.
+
 For `failed to spawn code-mode host` or an older CLI selected after Desktop restart, read [executor runtime repair](references/executor-runtime-repair.md). Use the targeted local repair and verify actual post-restart tool execution before declaring recovery.
 
 For recurring update regressions, prefer the repository's
@@ -177,7 +179,7 @@ For Windows 10 screenshot issues investigated from a Windows 11 host, follow `re
 
 ## Default Workflow
 
-For the shipped `26.1029.7803.0` layout, the full patch uses `desktop-261029-profiles.json` with complete asset hashes. It covers all 26 changed files, including 11 Ultra and 9 Fast UI copies, the actual model/list identifiers, project-state recovery, Windows membership persistence, the merged archive error and its memo dependency, and the backend Deep Research availability gate. The package's native Power slider, Goal command, plugin install flow, CUA transport and decrypted-directory copy remain pinned witnesses. Native copy availability does not establish that every bundled plugin survives backend reconciliation; run the separate strict plugin check after installation and preserve the user's enabled choices.
+For the shipped `26.1029.7803.0` layout, the full patch uses `desktop-261029-profiles.json` and the Windows reopen profile with complete asset hashes. It covers all 27 changed files, including 11 Ultra and 9 Fast UI copies, the actual model/list identifiers, project-state recovery, Windows membership persistence, the merged archive error and its memo dependency, the backend Deep Research availability gate, and activation during Windows quit cleanup. The package's native Power slider, Goal command, plugin install flow, CUA transport and decrypted-directory copy remain pinned witnesses. Native copy availability does not establish that every bundled plugin survives backend reconciliation; run the separate strict plugin check after installation and preserve the user's enabled choices.
 
 The Windows 10 helper profiles for Sky `0.7.13` and `0.7.17` pin complete original/patched hashes and the callback wrapper's unwind metadata. Confirm the extracted per-user helper matches the current package before live acceptance. When screenshot/input acceptance is explicitly requested, Raise the exact returned target, inspect fresh image content with current accessibility state, test both static and changing frames, reverse test input, and retain the capture timings and resource limits. Do not substitute window enumeration or executed rendering snippets for that acceptance. Keep `ValidatedDesktopVersion` unset until the exact helper and Desktop combination has passed.
 

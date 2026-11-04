@@ -6,6 +6,7 @@ const crypto = require('node:crypto');
 const assert = require('node:assert/strict');
 const manifest = require('./desktop-261029-profiles.json');
 const project = require('./patch-project-archive-state.cjs');
+const reopen = require('./patch-windows-reopen.cjs');
 
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const escape = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -85,6 +86,10 @@ function planFiles(root, models) {
     const input = fs.readFileSync(path.join(root, profile.file), 'utf8');
     targets.set(profile.file, { file: profile.file, input, ...transform(input, profile, models) });
   }
+  const reopenInput = fs.readFileSync(path.join(root, reopen.file), 'utf8');
+  const reopenResult = reopen.transform(reopenInput);
+  targets.set(reopen.file, {file: reopen.file, input: reopenInput,
+    original: reopenInput.replace(reopen.after, reopen.before), ...reopenResult});
   const native = manifest.native.map(profile => {
     const source = targets.get(profile.file)?.original ?? fs.readFileSync(path.join(root, profile.file), 'utf8');
     assert.equal(hash(source), profile.sha256, `Unsupported native asset: ${profile.file}`);

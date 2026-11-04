@@ -34,6 +34,8 @@
 
 ## 能修复什么
 
+刚退出后立即重开却没有窗口时，`26.1029.7803` 的退出期间重开修复会保留启动请求，待旧进程退出后恢复一个窗口。已完成单次、连续三次重开请求及用户任务栏关闭路径验收。诊断与部署见[退出后重开修复](references/windows-reopen-repair.md)。
+
 工具报 `failed to spawn code-mode host` 时，可运行 `scripts/install-computer-use-local.ps1 -OnlyExecutorRuntime`，加 `-StrictVerifyOnly` 只检查。它核对当前包的完整文件哈希、恢复缺失的配套程序，并备份后迁移固定旧缓存目录的 `CODEX_CLI_PATH`。修复后重启 Codex，核对实际 app-server 路径和真实工具调用。
 
 一键修复已包含 CUA 浏览器代理恢复：从 Windows 显式 HTTP 系统代理生成受管理的本地 runtime 补丁，保留原件备份；代理改变后可重新应用。修改后需重启 Codex，并分别验证 Chrome 与内置浏览器。仅修复此项可运行 `scripts/install-computer-use-local.ps1 -OnlyRuntimeProxy`；加 `-StrictVerifyOnly` 只检查。暂不支持 PAC、带认证或非 HTTP 代理。
