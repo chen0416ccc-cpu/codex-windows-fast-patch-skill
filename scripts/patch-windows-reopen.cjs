@@ -37,7 +37,7 @@ function installReopenGuard(app, platform, dispatch, log) {
   });
 }
 
-const after = 'ed&&(' + installReopenGuard.toString() + ')(r.app,process.platform,n=>e.queueSecondInstanceArgs(n),()=>{(0,i.tZQ)().info("windows_reopen_queued_during_quit")})';
+const after = 'ed&&(' + installReopenGuard.toString().replace(/\r\n/g, '\n') + ')(r.app,process.platform,n=>e.queueSecondInstanceArgs(n),()=>{(0,i.tZQ)().info("windows_reopen_queued_during_quit")})';
 
 function transform(source) {
   if (source.includes(after)) {

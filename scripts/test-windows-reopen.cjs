@@ -6,6 +6,14 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const {installReopenGuard, before, after, transform} = require('./patch-windows-reopen.cjs');
 
+// Git's Windows checkout must generate the same asset as an LF checkout.
+const crlfModule = {exports:{}};
+const patcherSource = fs.readFileSync(require.resolve('./patch-windows-reopen.cjs'), 'utf8');
+vm.runInNewContext(patcherSource.replace(/\r?\n/g, '\r\n'), {
+  require, module:crlfModule, Buffer, console, process
+});
+assert.equal(crlfModule.exports.after, after, 'Checkout line endings must not change the patch');
+
 function scenario(install, platform = 'win32') {
   const app = new EventEmitter();
   const opens = [], relaunches = [], logs = [];
