@@ -3025,11 +3025,11 @@ function Invoke-PatchAppAsar {
       if ($LASTEXITCODE -ne 0) { Fail "26.1029 asset syntax failed: $($asset.file)" }
     }
     if ($DryRun) {
-      Write-Log 'dry run: complete pinned 26.1029 desktop and project/archive layout validated'
+      Write-Log 'dry run: complete pinned 26.1029 desktop layout validated'
       return $false
     }
     if (@($modernReport.files | Where-Object status -eq 'patched').Count -eq 0) {
-      Write-Log '26.1029 desktop and project/archive patches already present'
+      Write-Log '26.1029 desktop patches already present'
       return $false
     }
     Write-Log 'repacking 26.1029 app.asar with original unpacked files and shared extents'

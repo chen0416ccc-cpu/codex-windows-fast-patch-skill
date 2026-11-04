@@ -12,6 +12,9 @@ assert(sourceRoot, 'Pass the original extracted 26.1029 ASAR');
 const models = ['gpt-6-astra', 'fixture-model'];
 const plan = planFiles(sourceRoot, models);
 let checks = 0;
+assert.deepEqual(plan.targets.map(target => target.file), manifest.files.map(profile => profile.file)); checks++;
+const projectOnlyFiles = ['.vite/build/early-bootstrap-133-485dbc70b8296756.js',
+  'webview/assets/async/678916.1a2b7b8d2a.js'];
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-desktop-261029-'));
 const pending = [];
 
@@ -77,16 +80,11 @@ try {
     fs.mkdirSync(path.dirname(path.join(root, native.file)), {recursive: true});
     fs.copyFileSync(path.join(sourceRoot, native.file), path.join(root, native.file));
   }
-  const bundled = manifest.files.find(profile => profile.edits.some(edit => edit.kind === 'bundled-deep-research'));
-  const membership = require('./patch-project-archive-state.cjs').profiles.find(profile =>
-    require('./patch-project-archive-state.cjs').relativePath(profile) === bundled.file);
-  const legacy = membership.edits.reduce((text, [before, after]) => text.replace(before, after),
-    fs.readFileSync(path.join(sourceRoot, bundled.file), 'utf8'));
-  fs.writeFileSync(path.join(root, bundled.file), legacy);
-  const legacyUpgrade = planFiles(root, models).targets.find(target => target.file === bundled.file);
-  assert.equal(legacyUpgrade.source.includes(bundled.edits[0].after), true);
-  assert.equal(legacyUpgrade.source.includes(membership.edits[0][1]), true);
-  fs.writeFileSync(path.join(root, bundled.file), fs.readFileSync(path.join(sourceRoot, bundled.file))); checks += 2;
+  for (const file of projectOnlyFiles) {
+    assert(!plan.targets.some(target => target.file === file));
+    fs.mkdirSync(path.dirname(path.join(root, file)), {recursive: true});
+    fs.copyFileSync(path.join(sourceRoot, file), path.join(root, file)); checks++;
+  }
   patchFiles(root, backup, models, true);
   assert(!fs.existsSync(backup)); checks++;
   const last = plan.targets.at(-1);
@@ -96,6 +94,13 @@ try {
   assert(!fs.existsSync(backup)); checks++;
   fs.writeFileSync(path.join(root, last.file), last.input);
   const result = patchFiles(root, backup, models);
+  for (const file of projectOnlyFiles) {
+    assert.deepEqual(fs.readFileSync(path.join(root, file)), fs.readFileSync(path.join(sourceRoot, file)));
+    assert(!fs.existsSync(path.join(backup, file))); checks += 2;
+  }
+  const membershipFile = '.vite/build/early-bootstrap-632-62c641245a52ef0e.js';
+  const membershipAnchor = 'M.setThreadAssignmentsEnabled(tl().localProjectTaskMembership)';
+  assert(fs.readFileSync(path.join(root, membershipFile), 'utf8').includes(membershipAnchor)); checks++;
   assert(result.files.every(file => file.status === 'patched'));
   assert(patchFiles(root, backup, models).files.every(file => file.status === 'already-patched')); checks += 2;
   const changed = patchFiles(root, backup, ['fixture-model-2']);

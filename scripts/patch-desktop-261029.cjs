@@ -5,7 +5,6 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const assert = require('node:assert/strict');
 const manifest = require('./desktop-261029-profiles.json');
-const project = require('./patch-project-archive-state.cjs');
 
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const escape = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -52,35 +51,8 @@ function transform(source, profile, models) {
 
 function planFiles(root, models) {
   models = validateModels(models);
-  const selected = project.selectProfiles(rel => fs.existsSync(path.join(root, rel)));
-  assert(selected[0].file === 'early-bootstrap-133-485dbc70b8296756.js', 'Expected the complete 26.1029 project layout');
-  const overlapping = manifest.files.find(profile => selected.some(state => project.relativePath(state) === profile.file));
   const targets = new Map();
-  for (const profile of selected) {
-    const file = project.relativePath(profile);
-    const input = fs.readFileSync(path.join(root, file), 'utf8');
-    if (file === overlapping?.file) {
-      assert(profile.sha256.includes(overlapping.sha256), 'Overlapping source hashes differ');
-      const combined = {...overlapping, edits: [...profile.edits.map(([before, after]) => ({before, after})), ...overlapping.edits]};
-      let normalized = input;
-      // Accept the exact older project-only patch when adding the bundled gate.
-      try {
-        const legacy = project.transform(input, profile);
-        if (legacy.status === 'already-patched') {
-          const restored = profile.edits.slice().reverse().reduce((text, [before, after]) => replaceOnce(text, after, before), input);
-          if (hash(restored) === combined.sha256) normalized = restored;
-        }
-      } catch {}
-      const result = transform(normalized, combined, models);
-      targets.set(file, {file, input, ...result, status: input === result.source ? 'already-patched' : 'patched'});
-      continue;
-    }
-    const result = project.transform(input, profile);
-    const original = profile.edits.slice().reverse().reduce((text, [before, after]) => replaceOnce(text, after, before), result.source);
-    targets.set(file, { file, input, original, ...result });
-  }
   for (const profile of manifest.files) {
-    if (profile === overlapping) continue;
     assert(!targets.has(profile.file), 'Overlapping patch profiles');
     const input = fs.readFileSync(path.join(root, profile.file), 'utf8');
     targets.set(profile.file, { file: profile.file, input, ...transform(input, profile, models) });
