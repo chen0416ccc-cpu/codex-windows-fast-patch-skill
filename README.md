@@ -38,6 +38,8 @@
 
 `26.1029.7803` 启动卡在 Statsig 初始化时，完整桌面补丁将 Windows 登录后请求的总等待限制为 5 秒，SDK 网络回退等待限制为 2 秒，并保留缓存及后台刷新。日志新增渲染进程退出原因与退出码；这项诊断不等于已经修复原生渲染崩溃。见[启动等待与重载诊断](references/windows-startup-stability.md)。
 
+安装器以低优先级、单核运行时，应用激活子进程会恢复正常优先级和当前处理器组的可用核心，避免 Codex 继承构建限制。安装器及构建 Job 的限制保留，应用仍须从 Job 外启动。
+
 工具报 `failed to spawn code-mode host` 时，可运行 `scripts/install-computer-use-local.ps1 -OnlyExecutorRuntime`，加 `-StrictVerifyOnly` 只检查。它核对当前包的完整文件哈希、恢复缺失的配套程序，并备份后迁移固定旧缓存目录的 `CODEX_CLI_PATH`。修复后重启 Codex，核对实际 app-server 路径和真实工具调用。
 
 一键修复已包含 CUA 浏览器代理恢复：已继承有效的 `HTTP_PROXY` 和 `HTTPS_PROXY` 时保留运行时原件；否则从 Windows 显式 HTTP 系统代理生成受管理的本地 runtime 补丁，保留原件备份，代理改变后可重新应用。修改后需重启 Codex，并分别验证 Chrome 与内置浏览器。仅修复此项可运行 `scripts/install-computer-use-local.ps1 -OnlyRuntimeProxy`；加 `-StrictVerifyOnly` 只检查。暂不支持把 PAC、带认证或非 HTTP 代理用作回退。
