@@ -197,10 +197,14 @@ async function membershipCases(source, expectBroken) {
       assert.throws(() => transform(sources[i] + 'changed', profiles[i]), /Unsupported/); checks++;
     }
     if (profiles[1].file === 'early-bootstrap-632-62c641245a52ef0e.js') {
-      const full = patched[1].replace('isAvailable:({features:e})=>e.deepResearch',
-        'isAvailable:()=>!0/*codex_windows_deep_research_bundled_plugin_available*/');
+      const [before, after] = profiles[1].compatibleEdits[0];
+      const fullSource = sources[1].replace(before, after);
+      const full = patched[1].replace(before, after);
+      assert.equal(transform(fullSource, profiles[1]).source, full);
+      assert.equal(transform(fullSource, profiles[1]).status, 'patched');
       assert.equal(transform(full, profiles[1]).status, 'already-patched');
-      assert.throws(() => transform(full + 'changed', profiles[1]), /Unsupported/); checks += 2;
+      assert.throws(() => transform(fullSource + 'changed', profiles[1]), /Unsupported/);
+      assert.throws(() => transform(full + 'changed', profiles[1]), /Unsupported/); checks += 5;
     }
     const filesRoot = path.join(fixtureRoot, 'asar');
     const backupRoot = path.join(fixtureRoot, 'backups');

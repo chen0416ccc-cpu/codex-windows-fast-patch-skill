@@ -14,7 +14,7 @@ The shipped patcher changes application code only. It does not guess or rewrite 
 
 ## Supported patch
 
-`scripts/patch-project-archive-state.cjs` selects one complete three-asset layout and pins full SHA-256 hashes for Desktop `26.1027.6604.0`, the observed patched `.6604.1` combination, and `26.1029.7803.0`. The old membership asset has two accepted hashes because the earlier client patch changed the same chunk. The new membership asset also accepts the precisely restored full-patch combination containing the Deep Research gate. Unknown or partial content is rejected before any target is written; backups must match the exact original input.
+`scripts/patch-project-archive-state.cjs` selects one complete three-asset layout and pins full SHA-256 hashes for Desktop `26.1027.6604.0`, the observed patched `.6604.1` combination, and `26.1029.7803.0`. The old membership asset has two accepted hashes because the earlier client patch changed the same chunk. The new membership asset also accepts the precisely restored full-patch combination containing the Deep Research gate, whether or not the membership edit is already present. Desktop and project/archive patches preserve each other's edits in either order; project/archive repair remains opt-in. Unknown or partial content is rejected before any target is written; backups must match the exact original input.
 
 - Global state: try primary, `.bak`, then complete interrupted-write siblings in descending modification order. Skip invalid JSON and unrelated files. Flush synchronous and asynchronous temporary writes before rename.
 - Project membership: enable Windows local-project assignment writes while retaining the backend support check and non-Windows feature gate.
@@ -42,10 +42,11 @@ Run against original extracted assets from each supported source combination:
 
 ```powershell
 node "$SkillRoot\scripts\test-project-archive-state.cjs" '<original extracted ASAR>'
+node "$SkillRoot\scripts\test-desktop-project-composition.cjs" '<original extracted 26.1029 ASAR>'
 node "$SkillRoot\scripts\test-project-archive-asar.cjs"
 ```
 
-The old layout runs 34 checks; the new layout runs 36. They execute the shipped state loader, assignment writer and archive-error render/memo code, reproduce all three original defects, and verify backup/temporary recovery, valid-empty-primary precedence, durable writes, Windows backend requests, unsupported-backend/non-Windows guards, cached error invalidation, retry for empty failures, source hashes, dry-run immutability, exact backups and idempotence. The new archive tests cover both parent source-error props and the child's combined-row memo; testing only the account error source misses the durable/local error path seen beside six loaded chats.
+The old layout runs 34 checks; the new layout runs 39. They execute the shipped state loader, assignment writer and archive-error render/memo code, reproduce all three original defects, and verify backup/temporary recovery, valid-empty-primary precedence, durable writes, Windows backend requests, unsupported-backend/non-Windows guards, cached error invalidation, retry for empty failures, source hashes, dry-run immutability, exact backups and idempotence. The new archive tests cover both parent source-error props and the child's combined-row memo; testing only the account error source misses the durable/local error path seen beside six loaded chats. The composition suite also checks both patch orders, model-only updates, exact project backups, no-write rejection and idempotence on the pinned 26.1029 assets.
 
 The 14 ASAR layout checks verify a modified file sharing an extent with an unchanged file, preserved native/link entries, an identical no-change rebuild, source immutability and rejection before output when a target or source layout is invalid. Full `--all` repacking compares the complete extracted file set and preserves byte-identical unpacked files, including vendor certificate bytes beyond recorded header sizes. Compare the actual output header to the source and independently verify its packed extents before signing.
 

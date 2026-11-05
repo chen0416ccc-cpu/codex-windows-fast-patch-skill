@@ -5,6 +5,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const assert = require('node:assert/strict');
 const manifest = require('./desktop-261029-profiles.json');
+const { profiles: projectProfiles, relativePath: projectPath } = require('./patch-project-archive-state.cjs');
 const modelExperienceKinds = new Set(['custom-models', 'fast-request', 'fast-ui', 'ultra']);
 
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
@@ -27,25 +28,36 @@ function selectEdits(profile, scope) {
 }
 
 function restoreState(source, profile) {
-  if (hash(source) === profile.sha256) return { original: source, appliedEdits: [] };
-  // Only complete known desktop or model-only states can restore the pinned hash.
-  for (const edits of [profile.edits, selectEdits(profile, 'model-experience')].filter(edits => edits.length)) {
-    let original = source;
+  const membership = projectProfiles.find(candidate => candidate.kind === 'project-membership' &&
+    projectPath(candidate) === profile.file && candidate.sha256.includes(profile.sha256));
+  const states = [{ source, projectEdits: [] }];
+  if (membership) {
     try {
-      for (const edit of [...edits].reverse()) {
-        if (edit.after.includes('__MODELS_JSON__')) {
-          const [prefix, suffix] = edit.after.split('__MODELS_JSON__');
-          const matches = [...original.matchAll(new RegExp(escape(prefix) + '(\\[[^\\r\\n]*?\\])' + escape(suffix), 'g'))];
-          assert.equal(matches.length, 1, 'Expected one pinned model override');
-          validateModels(JSON.parse(matches[0][1]));
-          original = replaceOnce(original, matches[0][0], edit.before);
-        } else {
-          original = replaceOnce(original, edit.after, edit.before);
-        }
-      }
-      assert.equal(hash(original), profile.sha256, 'Restored file hash differs');
-      return { original, appliedEdits: edits };
+      states.push({ source: [...membership.edits].reverse().reduce((text, [before, after]) =>
+        replaceOnce(text, after, before), source), projectEdits: membership.edits });
     } catch {}
+  }
+  // An opt-in membership edit may coexist, but must restore the same pinned hash.
+  for (const state of states) {
+    if (hash(state.source) === profile.sha256) return { original: state.source, appliedEdits: [], projectEdits: state.projectEdits };
+    for (const edits of [profile.edits, selectEdits(profile, 'model-experience')].filter(edits => edits.length)) {
+      let original = state.source;
+      try {
+        for (const edit of [...edits].reverse()) {
+          if (edit.after.includes('__MODELS_JSON__')) {
+            const [prefix, suffix] = edit.after.split('__MODELS_JSON__');
+            const matches = [...original.matchAll(new RegExp(escape(prefix) + '(\\[[^\\r\\n]*?\\])' + escape(suffix), 'g'))];
+            assert.equal(matches.length, 1, 'Expected one pinned model override');
+            validateModels(JSON.parse(matches[0][1]));
+            original = replaceOnce(original, matches[0][0], edit.before);
+          } else {
+            original = replaceOnce(original, edit.after, edit.before);
+          }
+        }
+        assert.equal(hash(original), profile.sha256, 'Restored file hash differs');
+        return { original, appliedEdits: edits, projectEdits: state.projectEdits };
+      } catch {}
+    }
   }
   throw new Error(`Unsupported or partial 26.1029 asset ${profile.file}: ${hash(source)}`);
 }
@@ -56,11 +68,12 @@ function restore(source, profile) {
 
 function transform(source, profile, models, scope = 'desktop') {
   const requested = selectEdits(profile, scope);
-  const { original, appliedEdits } = restoreState(source, profile);
+  const { original, appliedEdits, projectEdits } = restoreState(source, profile);
   // A targeted model update must not remove an existing complete desktop patch.
   const edits = profile.edits.filter(edit => requested.includes(edit) || appliedEdits.includes(edit));
-  const output = edits.reduce((text, edit) => replaceOnce(text, edit.before,
+  const desktop = edits.reduce((text, edit) => replaceOnce(text, edit.before,
     edit.after.replace('__MODELS_JSON__', () => JSON.stringify(models))), original);
+  const output = projectEdits.reduce((text, [before, after]) => replaceOnce(text, before, after), desktop);
   return { original, source: output, status: source === output ? 'already-patched' : 'patched' };
 }
 

@@ -48,6 +48,8 @@ profiles.push(
     kind: 'project-membership',
     file: 'early-bootstrap-632-62c641245a52ef0e.js',
     sha256: ['c16675e64dae86bdb09f7720f038a8c2f2beacf0e85bbadd369f407d38662aa4'],
+    compatibleEdits: [['isAvailable:({features:e})=>e.deepResearch',
+      'isAvailable:()=>!0/*codex_windows_deep_research_bundled_plugin_available*/']],
     edits: [['M.setThreadAssignmentsEnabled(tl().localProjectTaskMembership)', 'M.setThreadAssignmentsEnabled(tl().localProjectTaskMembership||process.platform==="win32"/*codex_windows_local_project_membership_persistence*/)']],
   },
   {
@@ -87,19 +89,18 @@ function replaceOnce(text, before, after) {
 }
 
 function transform(source, profile) {
-  if (profile.sha256.includes(sha256(source))) {
-    return { source: profile.edits.reduce((s, [before, after]) => replaceOnce(s, before, after), source), status: 'patched' };
+  // Normalize only the known desktop overlay, then require the complete source hash.
+  const states = [[], ...(profile.compatibleEdits ? [profile.compatibleEdits] : [])];
+  for (const overlays of states) {
+    try {
+      const normalized = [...overlays].reverse().reduce((s, [before, after]) => replaceOnce(s, after, before), source);
+      if (profile.sha256.includes(sha256(normalized))) {
+        return { source: profile.edits.reduce((s, [before, after]) => replaceOnce(s, before, after), source), status: 'patched' };
+      }
+      const original = [...profile.edits].reverse().reduce((s, [before, after]) => replaceOnce(s, after, before), normalized);
+      if (profile.sha256.includes(sha256(original))) return { source, status: 'already-patched' };
+    } catch {}
   }
-  try {
-    const original = [...profile.edits].reverse().reduce((s, [before, after]) => replaceOnce(s, after, before), source);
-    if (profile.sha256.includes(sha256(original))) return { source, status: 'already-patched' };
-    if (profile.file === 'early-bootstrap-632-62c641245a52ef0e.js') {
-      const restored = replaceOnce(original,
-        'isAvailable:()=>!0/*codex_windows_deep_research_bundled_plugin_available*/',
-        'isAvailable:({features:e})=>e.deepResearch');
-      if (profile.sha256.includes(sha256(restored))) return { source, status: 'already-patched' };
-    }
-  } catch {}
   throw new Error(`Unsupported or partial ${profile.kind} source: ${sha256(source)}`);
 }
 
