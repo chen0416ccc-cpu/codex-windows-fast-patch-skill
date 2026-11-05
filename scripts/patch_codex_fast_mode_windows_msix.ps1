@@ -18,6 +18,7 @@ param(
   [switch]$OnlyBundledMarketplaceCopy,
   [switch]$OnlyComputerUseSurface,
   [switch]$OnlyNodeReplProxyEnv,
+  [switch]$OnlyProjectArchiveState,
   [switch]$OnlyComputerUseSurfaceAndProxyEnv,
   [switch]$PatchWindows10ScreenshotHelper,
   [switch]$PatchWindowsStoreUpdateFallback,
@@ -27,6 +28,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$CustomModels = @($CustomModels | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Select-Object -Unique)
+if ($CustomModels.Count -eq 0) { throw 'CustomModels must contain at least one model identifier.' }
 . (Join-Path $PSScriptRoot 'lib\windows-cua-runtime.ps1')
 . (Join-Path $PSScriptRoot 'lib\msix-safe-install.ps1')
 . (Join-Path $PSScriptRoot 'lib\appx-launch.ps1')
@@ -49,6 +52,12 @@ function Fail {
 }
 
 function Assert-ComputerUseSurfaceOptions {
+  if ($OnlyProjectArchiveState -and
+      ($OnlyComputerUseSurface -or $OnlyNodeReplProxyEnv -or $OnlyBundledMarketplaceCopy -or $OnlyModelExperience -or
+       $OnlyComputerUseSurfaceAndProxyEnv -or $AddLocalPluginMarketplace -or $VerifyFastModeRequest -or
+       $PatchWindows10ScreenshotHelper -or $PatchWindowsStoreUpdateFallback)) {
+    Fail '-OnlyProjectArchiveState cannot be combined with other targeted modes or unrelated repairs'
+  }
   if ($OnlyComputerUseSurfaceAndProxyEnv -and
       ($OnlyComputerUseSurface -or $OnlyNodeReplProxyEnv -or $OnlyBundledMarketplaceCopy -or $OnlyModelExperience -or
        $AddLocalPluginMarketplace -or $VerifyFastModeRequest -or $PatchWindows10ScreenshotHelper -or $PatchWindowsStoreUpdateFallback)) {
@@ -2774,6 +2783,35 @@ function Invoke-PatchAppAsar {
     return $true
   }
 
+  $modernModelAsset = Join-Path $extractDir 'webview\assets\async\24191.589dcc9878.js'
+  if ($OnlyModelExperience -and (Test-Path -LiteralPath $modernModelAsset -PathType Leaf)) {
+    $modelsPath = Join-Path $WorkDir 'custom-models.json'
+    [IO.File]::WriteAllText($modelsPath, (ConvertTo-Json -InputObject @($CustomModels) -Compress), [Text.UTF8Encoding]::new($false))
+    $modernResult = Invoke-NodePatcher $nodePath (Join-Path $PSScriptRoot 'patch-desktop-261029.cjs') `
+      @($extractDir, (Join-Path $WorkDir 'desktop-originals'), $modelsPath, '--model-experience')
+    Write-Log "Model Experience pinned 26.1029 patch result: $modernResult"
+    $modernReport = $modernResult | ConvertFrom-Json
+    Write-Log 'Model Experience Power slider result: already-open-native'
+    foreach ($asset in $modernReport.files) {
+      & $nodePath --check (Join-Path $extractDir $asset.file)
+      if ($LASTEXITCODE -ne 0) { Fail "Model Experience 26.1029 asset syntax failed: $($asset.file)" }
+    }
+    if ($DryRun) {
+      Write-Log 'dry run: pinned 26.1029 Model Experience validated; unrelated gates unchanged'
+      return $false
+    }
+    if (@($modernReport.files | Where-Object status -eq 'patched').Count -eq 0) {
+      Write-Log 'asar Model Experience patches already present'
+      return $false
+    }
+    Write-Log 'repacking 26.1029 Model Experience with original unpacked files and shared extents'
+    $modernRepack = Invoke-NodePatcher $nodePath (Join-Path $PSScriptRoot 'repack-project-archive-asar.cjs') `
+      @($asarPath, $extractDir, $newAsarPath, '--all')
+    Write-Log "Model Experience 26.1029 preserved ASAR layout: $modernRepack"
+    Copy-Item -LiteralPath $newAsarPath -Destination $asarPath -Force
+    return $true
+  }
+
   if ($OnlyModelExperience) {
     $assetsDir = Join-Path $extractDir 'webview\assets'
     $fastModeTarget = $null
@@ -2923,6 +2961,33 @@ function Invoke-PatchAppAsar {
     return $true
   }
 
+  if ($OnlyProjectArchiveState) {
+    $statePatcher = Join-Path $PSScriptRoot 'patch-project-archive-state.cjs'
+    $stateBackupRoot = Join-Path $WorkDir 'project-archive-originals'
+    $stateResults = Invoke-NodePatcher $nodePath $statePatcher @($extractDir, $stateBackupRoot)
+    Write-Log "project/archive state patch result: $stateResults"
+    $stateAssets = @(& $nodePath $statePatcher $extractDir '--paths')
+    if ($LASTEXITCODE -ne 0) { Fail 'could not select project/archive source layout' }
+    foreach ($stateAsset in $stateAssets) {
+      & $nodePath --check (Join-Path $extractDir $stateAsset)
+      if ($LASTEXITCODE -ne 0) { Fail "project/archive patched source syntax failed: $stateAsset" }
+    }
+    if ($DryRun) {
+      Write-Log 'dry run: project/archive patch validated; installed package unchanged'
+      return $false
+    }
+    if (@(($stateResults | ConvertFrom-Json) | Where-Object status -eq 'patched').Count -eq 0) {
+      Write-Log 'asar project/archive patches already present'
+      return $false
+    }
+    Write-Log 'repacking app.asar with original unpacked entries and shared extents'
+    $stateRepacker = Join-Path $PSScriptRoot 'repack-project-archive-asar.cjs'
+    $repackResult = Invoke-NodePatcher $nodePath $stateRepacker @($asarPath, $extractDir, $newAsarPath)
+    Write-Log "project/archive preserved layout: $repackResult"
+    Copy-Item -LiteralPath $newAsarPath -Destination $asarPath -Force
+    return $true
+  }
+
   if ($OnlyBundledMarketplaceCopy) {
     $viteBuildDir = Join-Path $extractDir '.vite\build'
     if (-not (Test-Path -LiteralPath $viteBuildDir -PathType Container)) {
@@ -2955,6 +3020,52 @@ function Invoke-PatchAppAsar {
     }
     Write-Log 'repacking app.asar'
     Invoke-NpxAsar 'pack' $extractDir $newAsarPath
+    Copy-Item -LiteralPath $newAsarPath -Destination $asarPath -Force
+    return $true
+  }
+
+  $modernAsset = Join-Path $extractDir 'webview\assets\async\24191.589dcc9878.js'
+  if (Test-Path -LiteralPath $modernAsset -PathType Leaf) {
+    if ($PatchWindowsStoreUpdateFallback) { Fail 'Windows Store update fallback is not validated for the pinned 26.1029 layout' }
+    $modelsPath = Join-Path $WorkDir 'custom-models.json'
+    [IO.File]::WriteAllText($modelsPath, (ConvertTo-Json -InputObject @($CustomModels) -Compress), [Text.UTF8Encoding]::new($false))
+    $modernResult = Invoke-NodePatcher $nodePath (Join-Path $PSScriptRoot 'patch-desktop-261029.cjs') @($extractDir, (Join-Path $WorkDir 'desktop-originals'), $modelsPath)
+    Write-Log "26.1029 pinned desktop patch result: $modernResult"
+    $modernReport = $modernResult | ConvertFrom-Json
+    $modernProfiles = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'desktop-261029-profiles.json') -Raw | ConvertFrom-Json
+    $modernFeatures = [ordered]@{
+      'fast-mode' = @('fast-request'); 'fast-mode UI' = @('fast-ui'); 'custom models' = @('custom-models')
+      'Ultra slider local-fallback' = @('ultra'); 'locale i18n' = @('locale')
+      'browser-use gate' = @('browser-in-app', 'browser-external', 'browser-pane')
+      'computer-use gate' = @('computer-use', 'cua-runtime', 'cua-model-gate')
+      'Node REPL trusted-paths' = @('trusted-paths'); 'Node REPL proxy environment' = @('proxy-env')
+      'bundled marketplace copy' = @('bundled-deep-research')
+    }
+    foreach ($feature in $modernFeatures.Keys) {
+      $kinds = @($modernFeatures[$feature])
+      $featureFiles = @($modernProfiles.files | Where-Object { @($_.edits | Where-Object { $_.kind -in $kinds }).Count } | ForEach-Object { $_.file })
+      $featureStatus = if (@($modernReport.files | Where-Object { $_.file -in $featureFiles -and $_.status -eq 'patched' }).Count) { 'patched' } else { 'already-patched' }
+      Write-Log "$feature patch result: $featureStatus"
+    }
+    foreach ($feature in @('Power slider', 'plugin', 'goal')) {
+      Write-Log "$feature patch result: already-open-native"
+    }
+    Write-Log 'Windows CUA surface patch result: already-open-native-windows'
+    foreach ($asset in $modernReport.files) {
+      & $nodePath --check (Join-Path $extractDir $asset.file)
+      if ($LASTEXITCODE -ne 0) { Fail "26.1029 asset syntax failed: $($asset.file)" }
+    }
+    if ($DryRun) {
+      Write-Log 'dry run: complete pinned 26.1029 desktop layout validated'
+      return $false
+    }
+    if (@($modernReport.files | Where-Object status -eq 'patched').Count -eq 0) {
+      Write-Log '26.1029 desktop patches already present'
+      return $false
+    }
+    Write-Log 'repacking 26.1029 app.asar with original unpacked files and shared extents'
+    $modernRepack = Invoke-NodePatcher $nodePath (Join-Path $PSScriptRoot 'repack-project-archive-asar.cjs') @($asarPath, $extractDir, $newAsarPath, '--all')
+    Write-Log "26.1029 preserved ASAR layout: $modernRepack"
     Copy-Item -LiteralPath $newAsarPath -Destination $asarPath -Force
     return $true
   }
@@ -3723,11 +3834,11 @@ try {
   Copy-PackageLayout $sourcePackageRoot $workPackageRoot
   Remove-OldPackageArtifacts $workPackageRoot
 
-  $chromeRegistryParsing = Patch-ChromePluginWindowsRegistryParsing $workApp
+  $chromeRegistryParsing = if ($OnlyProjectArchiveState) { 'skipped-targeted-project-archive-state' } else { Patch-ChromePluginWindowsRegistryParsing $workApp }
   Write-Log "Chrome localized registry parsing patch result: $chromeRegistryParsing"
 
   # Validate the runtime inside the package copy before it can enter an MSIX.
-  if (-not ($OnlyBundledMarketplaceCopy -or $OnlyComputerUseSurface -or $OnlyNodeReplProxyEnv -or $OnlyComputerUseSurfaceAndProxyEnv -or $OnlyModelExperience)) {
+  if (-not ($OnlyBundledMarketplaceCopy -or $OnlyComputerUseSurface -or $OnlyNodeReplProxyEnv -or $OnlyComputerUseSurfaceAndProxyEnv -or $OnlyModelExperience -or $OnlyProjectArchiveState)) {
     $stagedNodeModules = Join-Path $workApp 'resources\cua_node\bin\node_modules'
     $entryInstructions = Repair-WindowsCuaEntryInstructions -NodeModulesRoot $stagedNodeModules
     Write-Log "Windows CUA entry instructions patch result: $entryInstructions"

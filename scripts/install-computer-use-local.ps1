@@ -5,6 +5,7 @@ param(
   [switch]$VerifyOnly,
   [switch]$StrictVerifyOnly,
   [switch]$OnlyRuntimeProxy,
+  [switch]$OnlyExecutorRuntime,
   [switch]$VerifyAllBundledPluginsAvailable,
   [switch]$SkipUserEnvironment
 )
@@ -190,7 +191,7 @@ function Set-TomlTable {
     }
   }
   $body = ($lines -join "`r`n") + "`r`n"
-  $escapedHeader = [regex]::Escape($Header)
+  $escapedHeader = Get-CodexTomlHeaderPattern $Header
   $pattern = "(?ms)^$escapedHeader\s*\r?\n(?:(?!^\[).)*"
   $replacement = "$Header`r`n$body"
 
@@ -224,14 +225,14 @@ function Set-TomlTableKey {
   if (Test-Path -LiteralPath $ConfigPath) {
     $content = [System.IO.File]::ReadAllText($ConfigPath, [System.Text.UTF8Encoding]::new($false))
   }
-  $escapedHeader = [regex]::Escape($Header)
+  $escapedHeader = Get-CodexTomlHeaderPattern $Header
   $tablePattern = "(?ms)^(?<header>$escapedHeader)\s*\r?\n(?<body>(?:(?!^\[).)*)"
   $tableMatch = [regex]::Match($content, $tablePattern)
   $serializedValue = if ($Value -is [bool]) { $Value.ToString().ToLowerInvariant() } else { ConvertTo-CodexTomlString ([string]$Value) }
   $line = "$Key = $serializedValue"
   if ($tableMatch.Success) {
     $body = $tableMatch.Groups['body'].Value
-    $escapedKey = [regex]::Escape($Key)
+    $escapedKey = Get-CodexTomlKeyPattern $Key
     $keyPattern = "(?m)^[ \t]*$escapedKey[ \t]*=[^\r\n]*"
     if ([regex]::IsMatch($body, $keyPattern)) {
       $body = [regex]::Replace($body, $keyPattern, { $line }, 1)
@@ -268,14 +269,14 @@ function Remove-TomlTableKeys {
   }
 
   $content = [System.IO.File]::ReadAllText($ConfigPath, [System.Text.UTF8Encoding]::new($false))
-  $escapedHeader = [regex]::Escape($Header)
+  $escapedHeader = Get-CodexTomlHeaderPattern $Header
   $pattern = "(?ms)^$escapedHeader\s*\r?\n(?:(?!^\[).)*"
   $match = [regex]::Match($content, $pattern)
   if (-not $match.Success) {
     return
   }
 
-  $keyPattern = '^\s*(?:' + (($Keys | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')\s*='
+  $keyPattern = '^\s*(?:' + (($Keys | ForEach-Object { Get-CodexTomlKeyPattern $_ }) -join '|') + ')\s*='
   $lines = $match.Value -split "(\r?\n)"
   $rebuilt = New-Object System.Text.StringBuilder
   $changed = $false
@@ -1218,7 +1219,9 @@ function Get-PreferredBundledMarketplaceRoot {
     return $StableMarketplaceRoot
   }
   $content = [System.IO.File]::ReadAllText($ConfigPath, [System.Text.UTF8Encoding]::new($false))
-  $match = [regex]::Match($content, '(?ms)^\[marketplaces\.openai-bundled\]\s*\r?\n(?:(?!^\[).)*?^\s*source\s*=\s*[''"](?<value>[^''"]+)[''"]\s*$')
+  $headerPattern = Get-CodexTomlHeaderPattern '[marketplaces.openai-bundled]'
+  $keyPattern = Get-CodexTomlKeyPattern 'source'
+  $match = [regex]::Match($content, "(?ms)^$headerPattern\s*\r?\n(?:(?!^\[).)*?^\s*$keyPattern\s*=\s*['`"](?<value>[^'`"]+)['`"]\s*$")
   if (-not $match.Success) {
     return $StableMarketplaceRoot
   }
@@ -2193,7 +2196,146 @@ function Get-CurrentCodexAppServerRuntimeInventory {
     ReferenceNodePath = $packageNode
     ReferenceNodeReplPath = $packageNodeRepl
     PackageResourcesRoot = $PackageResourcesRoot
+    LocalCodexRoot = $LocalCodexRoot
   }
+}
+
+function Get-CodexNodeReplCliPin {
+  param([string]$ConfigPath)
+  if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) { return $null }
+  $content = [IO.File]::ReadAllText($ConfigPath)
+  Test-CodexTomlContent $content
+  $headerPattern = Get-CodexTomlHeaderPattern '[mcp_servers.node_repl.env]'
+  $table = [regex]::Match($content, "(?ms)^$headerPattern[ \t]*\r?\n(?<body>(?:(?!^\[).)*)")
+  if (-not $table.Success) { return $null }
+  $keyPattern = Get-CodexTomlKeyPattern 'CODEX_CLI_PATH'
+  $assignment = [regex]::Match($table.Groups['body'].Value, "(?m)^[ \t]*$keyPattern[ \t]*=[ \t]*(?<value>[^\r\n]*)")
+  if (-not $assignment.Success) { return $null }
+  $value = [regex]::Match($assignment.Groups['value'].Value, '^\s*(?<string>''[^''\r\n]*''|"(?:\\.|[^"\\\r\n])*")\s*(?:#.*)?$')
+  if (-not $value.Success) { throw 'Unsupported node_repl CODEX_CLI_PATH representation; configuration left unchanged.' }
+  $quoted = $value.Groups['string'].Value
+  if ($quoted.StartsWith("'")) { return $quoted.Substring(1, $quoted.Length - 2) }
+  try { return [string]($quoted | ConvertFrom-Json -ErrorAction Stop) }
+  catch { throw 'Unsupported node_repl CODEX_CLI_PATH escape; configuration left unchanged.' }
+}
+
+function Test-ManagedCodexCliPin {
+  param([string]$Path, [string]$LocalCodexRoot)
+  if ([string]::IsNullOrWhiteSpace($Path) -or -not [IO.Path]::IsPathRooted($Path)) { return $false }
+  $full = [IO.Path]::GetFullPath($Path)
+  $directory = Split-Path -Parent $full
+  $binRoot = [IO.Path]::GetFullPath((Join-Path $LocalCodexRoot 'bin')).TrimEnd('\')
+  if ((Split-Path -Leaf $full) -ine 'codex.exe' -or
+      (Split-Path -Parent $directory) -ine $binRoot -or
+      (Split-Path -Leaf $directory) -notmatch '^[0-9a-fA-F]{16}$') { return $false }
+  # Cache pins can be retired, but existing junctions/custom runtimes are not ours.
+  foreach ($itemPath in @($binRoot, $directory, $full)) {
+    if ((Test-Path -LiteralPath $itemPath) -and
+        ((Get-Item -LiteralPath $itemPath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { return $false }
+  }
+  return $true
+}
+
+function Send-CodexExecutorEnvironmentChange {
+  if (-not ('CodexEnvBroadcast' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class CodexEnvBroadcast {
+  [DllImport("user32.dll", SetLastError=true, CharSet=CharSet.Auto)]
+  public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint flags, uint timeout, out UIntPtr result);
+}
+'@
+  }
+  $result = [UIntPtr]::Zero
+  $null = [CodexEnvBroadcast]::SendMessageTimeout([IntPtr]0xffff, 0x001A, [UIntPtr]::Zero, 'Environment', 0x0002, 5000, [ref]$result)
+}
+
+function Repair-CodexExecutorRuntime {
+  param(
+    [object]$RuntimeInventory,
+    [string]$CodexHomeRoot = $CodexHome,
+    [switch]$VerifyOnly,
+    [switch]$SkipEnvironment
+  )
+
+  $localRoot = $RuntimeInventory.LocalCodexRoot
+  if (-not $localRoot) { $localRoot = Join-Path $env:LOCALAPPDATA 'OpenAI\Codex' }
+  $currentCli = [IO.Path]::GetFullPath($RuntimeInventory.CodexCliPath)
+  if (-not (Test-ManagedCodexCliPin $currentCli $localRoot) -or
+      -not (Test-FilesMatchByContent $currentCli $RuntimeInventory.ReferenceCodexCliPath)) {
+    throw 'Executor repair requires an ordinary user-local CLI matching the installed package.'
+  }
+  $configPath = Join-Path $CodexHomeRoot 'config.toml'
+  $configPin = Get-CodexNodeReplCliPin $configPath
+  $userPin = [Environment]::GetEnvironmentVariable('CODEX_CLI_PATH', 'User')
+  $changes = @()
+  foreach ($pin in @([pscustomobject]@{ Scope = 'node_repl'; Path = $configPin },
+      [pscustomobject]@{ Scope = 'User'; Path = $userPin })) {
+    if ($pin.Scope -eq 'User' -and $SkipEnvironment) { continue }
+    if ([string]::IsNullOrWhiteSpace($pin.Path) -or $pin.Path -ieq $currentCli) { continue }
+    if (-not (Test-ManagedCodexCliPin $pin.Path $localRoot)) {
+      throw "Non-current custom CODEX_CLI_PATH ($($pin.Scope)); left unchanged: $($pin.Path)"
+    }
+    if ($VerifyOnly) { throw "Stale CODEX_CLI_PATH ($($pin.Scope)); restart would select the retired CLI: $($pin.Path)" }
+    $changes += $pin
+  }
+
+  $missing = @()
+  foreach ($name in @('codex-code-mode-host.exe', 'codex-command-runner.exe', 'codex-windows-sandbox-setup.exe')) {
+    $reference = Join-Path $RuntimeInventory.PackageResourcesRoot $name
+    if (-not (Test-Path -LiteralPath $reference -PathType Leaf)) { continue }
+    foreach ($cliPath in @($RuntimeInventory.AllowedCodexCliPaths)) {
+      if (-not (Test-ManagedCodexCliPin $cliPath $localRoot) -or
+          -not (Test-FilesMatchByContent $cliPath $RuntimeInventory.ReferenceCodexCliPath)) {
+        throw "Executor companion target is not a verified user-local runtime: $cliPath"
+      }
+      $target = Join-Path (Split-Path -Parent $cliPath) $name
+      if (Test-Path -LiteralPath $target) {
+        if ((Get-Item -LiteralPath $target -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+          throw "Executor companion is a reparse point; left unchanged: $target"
+        }
+        if (-not (Test-FilesMatchByContent $target $reference)) {
+          throw "Executor companion differs from its package; left unchanged: $target"
+        }
+      } elseif ($VerifyOnly) {
+        throw "Missing package-matched executor companion: $target"
+      } else { $missing += [pscustomobject]@{ Source = $reference; Target = $target } }
+    }
+  }
+  if ($VerifyOnly) {
+    Write-Log 'executor runtime and persisted CLI pins verified'
+    $processPin = [Environment]::GetEnvironmentVariable('CODEX_CLI_PATH', 'Process')
+    $restart = -not [string]::IsNullOrWhiteSpace($processPin) -and $processPin -ine $currentCli
+    return [pscustomobject]@{ State = 'verified'; CliPath = $currentCli; RestartRequired = $restart; BackupPath = $null }
+  }
+
+  $backupPath = $null
+  if ($changes.Count -gt 0) {
+    Backup-ConfigBeforeOverwrite $configPath 'executor-runtime'
+    $backupRoot = Join-Path $CodexHomeRoot 'backups\executor-runtime'
+    New-Item -ItemType Directory -Force -Path $backupRoot | Out-Null
+    $backupPath = Join-Path $backupRoot ((Get-Date -Format 'yyyyMMdd-HHmmss-fff') + '.json')
+    ConvertTo-JsonFile $backupPath ([ordered]@{ UserCliPath = $userPin; NodeReplCliPath = $configPin;
+      ConfigBackupPath = $script:ConfigBackupBeforeOverwrite[[IO.Path]::GetFullPath($configPath)]; CurrentCliPath = $currentCli })
+  }
+  foreach ($file in $missing) {
+    Copy-Item -LiteralPath $file.Source -Destination $file.Target
+    if (-not (Test-FilesMatchByContent $file.Target $file.Source)) { throw "Executor companion copy verification failed: $($file.Target)" }
+  }
+  foreach ($pin in $changes) {
+    if ($pin.Scope -eq 'node_repl') {
+      Set-TomlTableKey $configPath '[mcp_servers.node_repl.env]' 'CODEX_CLI_PATH' $currentCli 'executor-runtime'
+    } else {
+      [Environment]::SetEnvironmentVariable('CODEX_CLI_PATH', $currentCli, 'User')
+      Send-CodexExecutorEnvironmentChange
+    }
+  }
+  $null = Repair-CodexExecutorRuntime $RuntimeInventory $CodexHomeRoot -VerifyOnly -SkipEnvironment:$SkipEnvironment
+  $processPin = [Environment]::GetEnvironmentVariable('CODEX_CLI_PATH', 'Process')
+  $restart = $changes.Count -gt 0 -or (-not [string]::IsNullOrWhiteSpace($processPin) -and $processPin -ine $currentCli)
+  if ($restart) { Write-Log 'Restart Codex Desktop with the verified CLI; existing app-server processes and retired runtimes were preserved.' }
+  return [pscustomobject]@{ State = 'repaired'; CliPath = $currentCli; RestartRequired = $restart; BackupPath = $backupPath }
 }
 
 function Resolve-ExistingFileProviderPath {
@@ -2411,7 +2553,8 @@ function Get-ChromeNativeHostV2ExpectedResource {
     [string]$ChromeCacheRoot,
     [pscustomobject]$RuntimeInventory,
     [string]$CodexHomeResolved,
-    [string]$CodexCliPathOverride
+    [string]$CodexCliPathOverride,
+    [string]$ChromeResourceRootOverride
   )
 
   $settings = Get-ChromeNativeMessagingSettings $ChromeCacheRoot
@@ -2441,6 +2584,22 @@ function Get-ChromeNativeHostV2ExpectedResource {
   $nodeModuleRoot = Join-Path (Split-Path -Parent $RuntimeInventory.NodePath) 'node_modules'
   $browserClientPath = [string]$hostConfig.browserClientPath
   $browserServicePath = Join-Path (Split-Path -Parent $browserClientPath) 'browser-service.mjs'
+  if (-not [string]::IsNullOrWhiteSpace($ChromeResourceRootOverride)) {
+    $aliasPaths = @(
+      (Join-Path $ChromeResourceRootOverride 'extension-host\windows\x64\extension-host.exe'),
+      (Join-Path $ChromeResourceRootOverride 'scripts\browser-client.mjs'),
+      (Join-Path $ChromeResourceRootOverride 'scripts\browser-service.mjs')
+    )
+    $currentPaths = @($extensionHostPath, $browserClientPath, $browserServicePath)
+    for ($index = 0; $index -lt $aliasPaths.Count; $index++) {
+      if (-not (Test-PathMatchesAnyCurrentFile $aliasPaths[$index] @($currentPaths[$index]))) {
+        throw 'Chrome v2 resource alias does not resolve to the current native-host files.'
+      }
+    }
+    $extensionHostPath = $aliasPaths[0]
+    $browserClientPath = $aliasPaths[1]
+    $browserServicePath = $aliasPaths[2]
+  }
   $appServerCliPath = $RuntimeInventory.CodexCliPath
   if (-not [string]::IsNullOrWhiteSpace($CodexCliPathOverride)) {
     $appServerCliPath = $CodexCliPathOverride
@@ -2526,6 +2685,7 @@ function Get-ChromeNativeHostV2AcceptableResources {
   )
 
   $resources = @(Get-ChromeNativeHostV2ExpectedResource $ChromeCacheRoot $RuntimeInventory $CodexHomeResolved)
+  $cliPaths = @($RuntimeInventory.CodexCliPath)
   foreach ($desktopManagedPath in @($RuntimeInventory.DesktopManagedCodexCliPaths)) {
     if ([string]::IsNullOrWhiteSpace($desktopManagedPath)) {
       continue
@@ -2533,8 +2693,32 @@ function Get-ChromeNativeHostV2AcceptableResources {
     if (Test-PathMatchesAnyCurrentFile $desktopManagedPath @($resources[0].paths.codexCliPath)) {
       continue
     }
+    $cliPaths += $desktopManagedPath
     $resources += (Get-ChromeNativeHostV2ExpectedResource `
       $ChromeCacheRoot $RuntimeInventory $CodexHomeResolved -CodexCliPathOverride $desktopManagedPath)
+  }
+  # Desktop hashes lexical latest/cache aliases, even when they resolve to the
+  # same files. Generate their exact identities only after physical-file checks.
+  foreach ($root in @(Get-CurrentChromeManifestRoots $ChromeCacheRoot)) {
+    $paths = @(
+      (Join-Path $root 'extension-host\windows\x64\extension-host.exe'),
+      (Join-Path $root 'scripts\browser-client.mjs'),
+      (Join-Path $root 'scripts\browser-service.mjs')
+    )
+    $currentPaths = @($resources[0].paths.extensionHostPath, $resources[0].paths.browserClientPath,
+      $resources[0].paths.browserServicePath)
+    $sameFiles = $true
+    for ($index = 0; $index -lt $paths.Count; $index++) {
+      if (-not (Test-PathMatchesAnyCurrentFile $paths[$index] @($currentPaths[$index]))) { $sameFiles = $false; break }
+    }
+    if (-not $sameFiles) { continue }
+    foreach ($cliPath in $cliPaths) {
+      $candidate = Get-ChromeNativeHostV2ExpectedResource $ChromeCacheRoot $RuntimeInventory $CodexHomeResolved `
+        -CodexCliPathOverride $cliPath -ChromeResourceRootOverride $root
+      if (@($resources | Where-Object { Test-ChromeNativeHostV2EntryCoreEqual $_ $candidate }).Count -eq 0) {
+        $resources += $candidate
+      }
+    }
   }
   return @($resources)
 }
@@ -3223,7 +3407,8 @@ function Sync-BundledMarketplaceFromInstalledApp {
 function Test-FileContainsAsciiText {
   param(
     [string]$Path,
-    [string]$Needle
+    [string]$Needle,
+    [switch]$BoundedRegex
   )
 
   if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
@@ -3245,10 +3430,14 @@ function Test-FileContainsAsciiText {
   try {
     while (($read = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
       $text = $carry + $encoding.GetString($buffer, 0, $read)
-      if ($text.IndexOf($Needle, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+      $found = if ($BoundedRegex) { [regex]::IsMatch($text, $Needle) }
+               else { $text.IndexOf($Needle, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 }
+      if ($found) {
         return $true
       }
-      $carryLength = [Math]::Min($Needle.Length - 1, $text.Length)
+      # BoundedRegex is only used for the short paired registration below.
+      $overlap = if ($BoundedRegex) { 4096 } else { $Needle.Length - 1 }
+      $carryLength = [Math]::Min($overlap, $text.Length)
       $carry = if ($carryLength -gt 0) { $text.Substring($text.Length - $carryLength) } else { '' }
     }
   } finally {
@@ -3260,11 +3449,20 @@ function Test-FileContainsAsciiText {
 function Get-ChromeBrowserClientTrustMode {
   param(
     [string]$AppAsarPath,
-    [string]$BrowserClientSha256
+    [string]$BrowserClientSha256,
+    [string]$BrowserClientPath
   )
 
   if (Test-FileContainsAsciiText $AppAsarPath $BrowserClientSha256) {
     return 'asar-sha256'
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($BrowserClientPath) -and
+      (Test-FileContainsAsciiText $AppAsarPath 'NODE_REPL_TRUSTED_SERVICES') -and
+      (Test-FileContainsAsciiText $AppAsarPath 'browserServicePath') -and
+      (Test-FileContainsAsciiText $BrowserClientPath 'Browser use requires a trusted Node REPL browser service') -and
+      (Test-FileContainsAsciiText $BrowserClientPath 'setupBrowserRuntime')) {
+    return 'node-repl-service'
   }
 
   $nativeHostMarkers = @(
@@ -3279,6 +3477,15 @@ function Get-ChromeBrowserClientTrustMode {
   }
   $browserClientHintPresent = (Test-FileContainsAsciiText $AppAsarPath 'Chrome native host did not provide a browser-client path') -or
                               (Test-FileContainsAsciiText $AppAsarPath 'browser-client path discovery or switch to another browser')
+  if (-not $browserClientHintPresent) {
+    # 26.1029 removes the legacy diagnostic. Require the actual paired path
+    # registration (same join function and plugin root) and schema-2 host entry.
+    # This only recognizes the shipped contract; packaged/cache byte matching
+    # and both native-host state file checks remain mandatory below.
+    $pairedPaths = 'browserClientPath:\(0,(?<join>[\w$]{1,64}\.join)\)\((?<root>[\w$]{1,64})\.pluginRoot,"scripts","browser-client\.mjs"\),browserServicePath:\(0,\k<join>\)\(\k<root>\.pluginRoot,"scripts","browser-service\.mjs"\),codexCliPath:'
+    $browserClientHintPresent = (Test-FileContainsAsciiText $AppAsarPath $pairedPaths -BoundedRegex) -and
+                               (Test-FileContainsAsciiText $AppAsarPath 'schemaVersion:2,appServerProtocolVersion:')
+  }
   if (-not $browserClientHintPresent) {
     throw "installed app.asar contains neither the packaged Chrome browser client hash nor the complete native-host path contract: sha256=$BrowserClientSha256 missing=browser-client path hint"
   }
@@ -3297,7 +3504,7 @@ function Get-InstalledChromeBrowserClientTrust {
   $sha256 = (Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash.ToLowerInvariant()
   $resourcesRoot = Split-Path -Parent (Split-Path -Parent $InstalledMarketplaceRoot)
   $appAsarPath = Join-Path $resourcesRoot 'app.asar'
-  $trustMode = Get-ChromeBrowserClientTrustMode $appAsarPath $sha256
+  $trustMode = Get-ChromeBrowserClientTrustMode $appAsarPath $sha256 $sourcePath
   Write-Log "installed Chrome browser client contract: mode=$trustMode sha256=$sha256"
 
   return [pscustomobject]@{
@@ -3565,6 +3772,36 @@ if errors:
   }
 }
 
+function Get-NodeReplConfiguredTrustedRoots {
+  param([string]$ConfigPath)
+
+  $python = Get-Command python -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($python) {
+    $probe = @'
+import json, pathlib, sys, tomllib
+config = tomllib.loads(pathlib.Path(sys.argv[1]).read_text(encoding='utf-8'))
+value = config.get('mcp_servers', {}).get('node_repl', {}).get('env', {}).get('NODE_REPL_TRUSTED_CODE_PATHS')
+if not isinstance(value, str):
+    sys.exit('config.toml is missing mcp_servers.node_repl.env.NODE_REPL_TRUSTED_CODE_PATHS')
+print(json.dumps([part for part in value.split(';') if part.strip()]))
+'@
+    $output = @(& $python.Source -c $probe $ConfigPath)
+    if ($LASTEXITCODE -ne 0) { throw 'Could not read Node REPL trusted paths from TOML' }
+    $values = ($output -join [Environment]::NewLine) | ConvertFrom-Json
+    foreach ($value in $values) { $value }
+    return
+  }
+
+  # Preserve the existing literal-path fallback when Python is unavailable.
+  $configContent = [System.IO.File]::ReadAllText($ConfigPath, [System.Text.UTF8Encoding]::new($false))
+  $configMatch = [regex]::Match($configContent, '(?m)^\s*NODE_REPL_TRUSTED_CODE_PATHS\s*=\s*[''"](?<value>[^''"]*)[''"]\s*$')
+  if (-not $configMatch.Success) {
+    throw 'config.toml is missing mcp_servers.node_repl.env.NODE_REPL_TRUSTED_CODE_PATHS'
+  }
+  $configRoots = @($configMatch.Groups['value'].Value -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+  return $configRoots
+}
+
 function Test-NodeReplTrustedPathRepair {
   param(
     [string]$ConfigPath,
@@ -3578,12 +3815,7 @@ function Test-NodeReplTrustedPathRepair {
     return
   }
 
-  $configContent = [System.IO.File]::ReadAllText($ConfigPath, [System.Text.UTF8Encoding]::new($false))
-  $configMatch = [regex]::Match($configContent, '(?m)^\s*NODE_REPL_TRUSTED_CODE_PATHS\s*=\s*[''"](?<value>[^''"]*)[''"]\s*$')
-  if (-not $configMatch.Success) {
-    throw 'config.toml is missing mcp_servers.node_repl.env.NODE_REPL_TRUSTED_CODE_PATHS'
-  }
-  $configRoots = @($configMatch.Groups['value'].Value -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+  $configRoots = @(Get-NodeReplConfiguredTrustedRoots $ConfigPath)
   $userRoots = @(([Environment]::GetEnvironmentVariable('NODE_REPL_TRUSTED_CODE_PATHS', 'User')) -split ';' |
     Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 
@@ -4165,6 +4397,22 @@ function Invoke-BrowserAccessibilityAssets {
 }
 
 function Get-CuaRuntimeSystemProxy {
+  $httpProxy = [Environment]::GetEnvironmentVariable('HTTP_PROXY', 'Process')
+  $httpsProxy = [Environment]::GetEnvironmentVariable('HTTPS_PROXY', 'Process')
+  if ($httpProxy -or $httpsProxy) {
+    if (-not $httpProxy -or -not $httpsProxy) { throw 'Inherited HTTP_PROXY and HTTPS_PROXY must both be configured.' }
+    foreach ($proxy in @($httpProxy, $httpsProxy)) {
+      $uri = $null
+      if ($proxy -notmatch '^http://(?:\[[0-9a-fA-F:.]+\]|[a-zA-Z0-9.-]+)(?::[0-9]+)?/?\z' -or
+          -not [Uri]::TryCreate($proxy, [UriKind]::Absolute, [ref]$uri) -or
+          $uri.Scheme -ne 'http' -or $uri.UserInfo -or $uri.AbsolutePath -ne '/' -or
+          $uri.Query -or $uri.Fragment -or $uri.Port -lt 1 -or $uri.Port -gt 65535) {
+        throw 'Inherited CUA proxies must be explicit HTTP URLs without credentials.'
+      }
+    }
+    # Complete explicit environment settings need no Windows proxy fallback.
+    return $null
+  }
   $settings = Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction Stop
   if ($settings.AutoConfigURL) {
     $connections = Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings\Connections' -ErrorAction SilentlyContinue
@@ -4258,6 +4506,8 @@ function Invoke-CuaRuntimeProxyRepair {
 
 function Install-ComputerUse {
   $codexHomeResolved = Resolve-OrCreateDirectory $CodexHome
+  $runtimeInventory = Get-CurrentCodexAppServerRuntimeInventory
+  Repair-CodexExecutorRuntime $runtimeInventory $codexHomeResolved -SkipEnvironment:$SkipUserEnvironment | Out-Host
   $marketplaceRoot = Get-StableBundledMarketplaceRoot $codexHomeResolved
   $pluginSourceRoot = Join-Path $marketplaceRoot 'plugins\computer-use'
   $cacheRoot = Join-Path $codexHomeResolved 'plugins\cache\openai-bundled\computer-use'
@@ -4295,7 +4545,6 @@ function Install-ComputerUse {
     Write-Log "refreshed existing optional plugin cache: $sitesCacheRoot"
   }
 
-  $runtimeInventory = Get-CurrentCodexAppServerRuntimeInventory
   Invoke-CuaRuntimeProxyRepair $runtimeInventory $codexHomeResolved
   $entryInstructions = Repair-WindowsCuaEntryInstructions `
     -NodeModulesRoot (Join-Path (Split-Path -Parent $runtimeInventory.NodePath) 'node_modules') `
@@ -4343,6 +4592,7 @@ function Test-ComputerUse {
   $installedChromeVersion = Get-PluginVersion $installedChromeRoot
   $installedChromeCacheRoot = Join-Path $codexHomeResolved "plugins\cache\openai-bundled\chrome\$installedChromeVersion"
   $runtimeInventory = Get-CurrentCodexAppServerRuntimeInventory
+  $null = Repair-CodexExecutorRuntime $runtimeInventory $codexHomeResolved -VerifyOnly -SkipEnvironment:$SkipUserEnvironment
   Invoke-CuaRuntimeProxyRepair $runtimeInventory $codexHomeResolved -VerifyOnly
   $headerMarketplaceRoot = Get-StableBundledMarketplaceRoot $codexHomeResolved
   Invoke-BrowserAccessibilityAssets $codexHomeResolved $headerMarketplaceRoot $installedMarketplaceRoot $runtimeInventory -VerifyOnly
@@ -4535,6 +4785,12 @@ function Test-ComputerUse {
   Test-HelperTransport $helperTransportPath
   Test-ComputerUseNodeReplContextPatch $helperTransportPath
   Write-Log 'verification ok'
+}
+
+if ($OnlyExecutorRuntime) {
+  $runtimeInventory = Get-CurrentCodexAppServerRuntimeInventory
+  Repair-CodexExecutorRuntime $runtimeInventory $CodexHome -VerifyOnly:$StrictVerifyOnly -SkipEnvironment:$SkipUserEnvironment | Out-Host
+  exit 0
 }
 
 if ($OnlyRuntimeProxy) {

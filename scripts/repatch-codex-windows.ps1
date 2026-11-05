@@ -134,7 +134,7 @@ function Set-TomlTable {
     }
   }
   $body = ($lines -join "`r`n") + "`r`n"
-  $escapedHeader = [regex]::Escape($Header)
+  $escapedHeader = Get-CodexTomlHeaderPattern $Header
   $pattern = "(?ms)^$escapedHeader\s*\r?\n(?:(?!^\[).)*"
   $replacement = "$Header`r`n$body"
 
@@ -174,8 +174,8 @@ function Set-TomlTableValue {
     $valueText = ConvertTo-CodexTomlString ([string]$Value)
   }
   $line = "$Key = $valueText"
-  $escapedHeader = [regex]::Escape($Header)
-  $escapedKey = [regex]::Escape($Key)
+  $escapedHeader = Get-CodexTomlHeaderPattern $Header
+  $escapedKey = Get-CodexTomlKeyPattern $Key
   $tablePattern = "(?ms)^$escapedHeader\s*\r?\n(?<body>(?:(?!^\[).)*)"
 
   if ([regex]::IsMatch($content, $tablePattern)) {

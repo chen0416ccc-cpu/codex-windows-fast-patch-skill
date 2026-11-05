@@ -57,9 +57,41 @@ try {
   )
   Assert-Equal (Get-ChromeBrowserClientTrustMode $nativeAsar $sha256) 'native-host-paths' 'native-host path contract was not detected'
 
+  $serviceAsar = Join-Path $fixture 'service.asar'
+  $serviceClient = Join-Path $fixture 'browser-client.mjs'
+  [IO.File]::WriteAllText($serviceAsar, 'NODE_REPL_TRUSTED_SERVICES browserServicePath', [Text.Encoding]::ASCII)
+  [IO.File]::WriteAllText($serviceClient, 'Browser use requires a trusted Node REPL browser service setupBrowserRuntime', [Text.Encoding]::ASCII)
+  Assert-Equal (Get-ChromeBrowserClientTrustMode $serviceAsar $sha256 $serviceClient) 'node-repl-service' 'trusted service contract was not detected'
+  foreach ($pair in @(
+    @('browserServicePath', 'Browser use requires a trusted Node REPL browser service setupBrowserRuntime'),
+    @('NODE_REPL_TRUSTED_SERVICES browserServicePath', 'setupBrowserRuntime'),
+    @('NODE_REPL_TRUSTED_SERVICES browserServicePath', 'Browser use requires a trusted Node REPL browser service')
+  )) {
+    [IO.File]::WriteAllText($serviceAsar, $pair[0], [Text.Encoding]::ASCII)
+    [IO.File]::WriteAllText($serviceClient, $pair[1], [Text.Encoding]::ASCII)
+    $rejected = $false
+    try { $null = Get-ChromeBrowserClientTrustMode $serviceAsar $sha256 $serviceClient } catch { $rejected = $true }
+    Assert-Equal $rejected $true 'partial trusted service contract was not rejected'
+  }
+  $registration = 'browserClientPath:(0,eh.join)(e.pluginRoot,"scripts","browser-client.mjs"),browserServicePath:(0,eh.join)(e.pluginRoot,"scripts","browser-service.mjs"),codexCliPath:o.codexCliPath'
+  $modern = 'codex-host-chunked-message-v1 schemaVersion:2,appServerProtocolVersion:1 ' + $registration
+  $modernAsar = Join-Path $fixture 'modern.asar'
+  [IO.File]::WriteAllText($modernAsar, $modern, [Text.Encoding]::ASCII)
+  Assert-Equal (Get-ChromeBrowserClientTrustMode $modernAsar $sha256) 'native-host-paths' 'paired native-host registration was not detected'
+  $boundaryAsar = Join-Path $fixture 'boundary.asar'
+  [IO.File]::WriteAllText($boundaryAsar, ('x' * (4MB - 180)) + $modern, [Text.Encoding]::ASCII)
+  Assert-Equal (Get-ChromeBrowserClientTrustMode $boundaryAsar $sha256) 'native-host-paths' 'paired registration across a read boundary was not detected'
+
   foreach ($content in @(
     'browserClientPath browserServicePath codex-host-chunked-message-v1',
-    'unknown browser runtime contract'
+    'unknown browser runtime contract',
+    $modern.Replace('schemaVersion:2,', 'schemaVersion:1,'),
+    $modern.Replace('codex-host-chunked-message-v1', 'unknown-protocol'),
+    $modern.Replace('browserServicePath:(0,eh.join)', 'browserServicePath:(0,other.join)'),
+    $modern.Replace('browserServicePath:(0,eh.join)(e.pluginRoot', 'browserServicePath:(0,eh.join)(other.pluginRoot'),
+    $modern.Replace('browser-service.mjs', 'unknown-service.mjs'),
+    $modern.Replace('browser-client.mjs', 'unknown-client.mjs'),
+    $registration
   )) {
     $unknownAsar = Join-Path $fixture ([guid]::NewGuid().ToString('N') + '.asar')
     [IO.File]::WriteAllText($unknownAsar, $content, [Text.Encoding]::ASCII)

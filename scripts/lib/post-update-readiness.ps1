@@ -53,6 +53,7 @@ function Get-PostUpdatePatchAssessment {
     $value = $results[$feature]
     if ($value -match '^patched(?: \([^\r\n]*\))?$') { continue }
     if ($value -eq 'already-patched') { continue }
+    if ($feature -in @('Power slider', 'plugin', 'goal') -and $value -eq 'already-open-native') { continue }
     if ($feature -eq 'Windows CUA surface' -and $value -eq 'already-open-native-windows') { continue }
     if ($feature -eq 'Ultra slider local-fallback' -and -not $HasUltraModels -and $value -eq 'not-applicable') { continue }
     return [pscustomobject]@{ Status = 'unsupported'; Results = $results; Reason = "Unverified patch result: $feature = $value" }
