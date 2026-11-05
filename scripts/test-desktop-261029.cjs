@@ -26,7 +26,8 @@ try {
     assert.equal(transform(patched.source, profile, models).status, 'already-patched');
     assert.throws(() => transform(source + 'drift', profile, models), /Unsupported/); checks += 2;
     if (profile.edits.length > 1) {
-      const edit = profile.edits[0];
+      // The complete pre-startup patch is a supported upgrade state, not a partial patch.
+      const edit = profile.edits.find(edit => edit.kind?.startsWith('startup-')) ?? profile.edits[0];
       const partial = source.replace(edit.before, edit.after.replace('__MODELS_JSON__', JSON.stringify(models)));
       const modelEdits = profile.edits.filter(item => modelExperienceKinds.has(item.kind));
       if (modelEdits.length === 1 && modelEdits[0] === edit) {

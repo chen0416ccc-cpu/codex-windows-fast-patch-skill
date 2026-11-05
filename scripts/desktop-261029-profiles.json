@@ -9,6 +9,11 @@
           "before": "isAvailable:({features:e})=>e.deepResearch",
           "after": "isAvailable:()=>!0/*codex_windows_deep_research_bundled_plugin_available*/",
           "kind": "bundled-deep-research"
+        },
+        {
+          "before": "r.on(\"render-process-gone\",(r,a)=>{if(\"clean-exit\"===a.reason||this.isAppQuitting)return;this.appBadgeCounts.delete(e)",
+          "after": "r.on(\"render-process-gone\",(r,a)=>{if(\"clean-exit\"===a.reason||this.isAppQuitting)return;eMU().warning(\"windows_renderer_process_gone\",{safe:{reason:a.reason,exitCode:a.exitCode,windowId:n,webContentsId:i,windowAppearance:t},sensitive:{}});/*CODEX_RENDERER_EXIT_DIAGNOSTICS_V1*/this.appBadgeCounts.delete(e)",
+          "kind": "startup-renderer-diagnostics"
         }
       ]
     },
@@ -45,6 +50,26 @@
           "before": "p=function({areRequirementsPending:e,areRequiredFeaturesEnabled:t,enabled:n,isBrowserAndComputerUseAllowed:r,isAnyFeatureLoading:i,isComputerUseGateEnabled:a,isHostCompatiblePlatform:s,isPlatformLoading:o,windowType:l}){return n?\"electron\"!==l?\"window-type-disabled\":e?\"loading\":r?a?o?\"loading\":s?i?\"loading\":t?\"available\":\"config-requirement-disabled\":\"unsupported-platform\":\"statsig-disabled\":\"config-requirement-disabled\":\"disabled\"}({areRequirementsPending:L,areRequiredFeaturesEnabled:M,enabled:T,isBrowserAndComputerUseAllowed:U,isAnyFeatureLoading:x,isComputerUseGateEnabled:b,isHostCompatiblePlatform:\"macOS\"===S||\"windows\"===S,isPlatformLoading:A,windowType:\"electron\"})",
           "after": "p=!T?\"disabled\":A?\"loading\":(\"windows\"===S||\"macOS\"===S)?\"available\":\"unsupported-platform\"/*CODEX_COMPUTER_USE_AVAILABILITY_V4*/",
           "kind": "computer-use"
+        },
+        {
+          "before": "async function tZ({appSessionId:e,appVersion:t,buildFlavor:n,beta:r,locale:i,stableId:a,systemName:s,systemVersion:o,windowType:l})",
+          "after": "async function tZ({appSessionId:e,appVersion:t,buildFlavor:n,beta:r,locale:i,stableId:a,systemName:s,systemVersion:o,windowType:l,startupTimeoutMs:h=1e4})",
+          "kind": "startup-bootstrap-timeout-argument"
+        },
+        {
+          "before": "p=globalThis.setTimeout(()=>{let e=Error(\"Timed out while fetching post-login Statsig bootstrap\");d.abort(e),t(e)},1e4)",
+          "after": "p=globalThis.setTimeout(()=>{let e=Error(\"Timed out while fetching post-login Statsig bootstrap\");d.abort(e),t(e)},h)",
+          "kind": "startup-bootstrap-timeout"
+        },
+        {
+          "before": "async function nx(e,t){let n={auth:0,request:0};for(;;){t.current+=1;try{return await tZ(e)}catch(t){let e=t instanceof tQ?t.cause:t;if(e instanceof n_.fk&&401===e.status){if(\"ip_not_authorized\"===e.errorCode||n.auth>=5)throw t;n.auth+=1}else if(t instanceof tQ&&t.failureType===c.CodexPostLoginStatsigBootstrapFailureType.CODEX_POST_LOGIN_STATSIG_BOOTSTRAP_FAILURE_TYPE_REQUEST_FAILED&&e instanceof Error&&n.request<5&&(0,nA.kh)(0,e))n.request+=1;else throw t;await new Promise(e=>{setTimeout(e,500)})}}}",
+          "after": "async function nx(e,t){/*CODEX_WINDOWS_STATSIG_STARTUP_BUDGET_V1*/let n={auth:0,request:0},deadline=\"Windows\"===e.systemName?performance.now()+5000:Infinity;for(;;){t.current+=1;try{return await tZ(Number.isFinite(deadline)?{...e,startupTimeoutMs:Math.max(1,deadline-performance.now())}:e)}catch(t){if(performance.now()+500>=deadline)throw t;let e=t instanceof tQ?t.cause:t;if(e instanceof n_.fk&&401===e.status){if(\"ip_not_authorized\"===e.errorCode||n.auth>=5)throw t;n.auth+=1}else if(t instanceof tQ&&t.failureType===c.CodexPostLoginStatsigBootstrapFailureType.CODEX_POST_LOGIN_STATSIG_BOOTSTRAP_FAILURE_TYPE_REQUEST_FAILED&&e instanceof Error&&n.request<5&&(0,nA.kh)(0,e))n.request+=1;else throw t;await new Promise(e=>{setTimeout(e,500)})}}}",
+          "kind": "startup-bootstrap-budget"
+        },
+        {
+          "before": "\"Ready\"!==n.loadingStatus&&n.initializeAsync().catch(r.Log.error).finally(()=>s(!1))",
+          "after": "\"Ready\"!==n.loadingStatus&&n.initializeAsync(\"Win32\"===globalThis.navigator?.platform?{timeoutMs:2000}:void 0).catch(r.Log.error).finally(()=>s(!1))",
+          "kind": "startup-sdk-budget"
         }
       ]
     },

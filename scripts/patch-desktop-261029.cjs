@@ -40,7 +40,8 @@ function restoreState(source, profile) {
   // An opt-in membership edit may coexist, but must restore the same pinned hash.
   for (const state of states) {
     if (hash(state.source) === profile.sha256) return { original: state.source, appliedEdits: [], projectEdits: state.projectEdits };
-    for (const edits of [profile.edits, selectEdits(profile, 'model-experience')].filter(edits => edits.length)) {
+    const legacyEdits = profile.edits.filter(edit => !edit.kind?.startsWith('startup-'));
+    for (const edits of [profile.edits, legacyEdits, selectEdits(profile, 'model-experience')].filter(edits => edits.length)) {
       let original = state.source;
       try {
         for (const edit of [...edits].reverse()) {

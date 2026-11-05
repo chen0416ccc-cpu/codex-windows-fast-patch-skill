@@ -91,6 +91,11 @@ function replaceOnce(text, before, after) {
 function transform(source, profile) {
   // Normalize only the known desktop overlay, then require the complete source hash.
   const states = [[], ...(profile.compatibleEdits ? [profile.compatibleEdits] : [])];
+  if (profile.compatibleEdits) {
+    const desktop = require('./desktop-261029-profiles.json').files.find(entry =>
+      entry.file === relativePath(profile) && profile.sha256.includes(entry.sha256));
+    if (desktop) states.push(desktop.edits.map(({before, after}) => [before, after]));
+  }
   for (const overlays of states) {
     try {
       const normalized = [...overlays].reverse().reduce((s, [before, after]) => replaceOnce(s, after, before), source);
