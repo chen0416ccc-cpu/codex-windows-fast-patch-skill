@@ -191,7 +191,7 @@ function Set-TomlTable {
     }
   }
   $body = ($lines -join "`r`n") + "`r`n"
-  $escapedHeader = [regex]::Escape($Header)
+  $escapedHeader = Get-CodexTomlHeaderPattern $Header
   $pattern = "(?ms)^$escapedHeader\s*\r?\n(?:(?!^\[).)*"
   $replacement = "$Header`r`n$body"
 
@@ -225,14 +225,14 @@ function Set-TomlTableKey {
   if (Test-Path -LiteralPath $ConfigPath) {
     $content = [System.IO.File]::ReadAllText($ConfigPath, [System.Text.UTF8Encoding]::new($false))
   }
-  $escapedHeader = [regex]::Escape($Header)
+  $escapedHeader = Get-CodexTomlHeaderPattern $Header
   $tablePattern = "(?ms)^(?<header>$escapedHeader)\s*\r?\n(?<body>(?:(?!^\[).)*)"
   $tableMatch = [regex]::Match($content, $tablePattern)
   $serializedValue = if ($Value -is [bool]) { $Value.ToString().ToLowerInvariant() } else { ConvertTo-CodexTomlString ([string]$Value) }
   $line = "$Key = $serializedValue"
   if ($tableMatch.Success) {
     $body = $tableMatch.Groups['body'].Value
-    $escapedKey = [regex]::Escape($Key)
+    $escapedKey = Get-CodexTomlKeyPattern $Key
     $keyPattern = "(?m)^[ \t]*$escapedKey[ \t]*=[^\r\n]*"
     if ([regex]::IsMatch($body, $keyPattern)) {
       $body = [regex]::Replace($body, $keyPattern, { $line }, 1)
@@ -269,14 +269,14 @@ function Remove-TomlTableKeys {
   }
 
   $content = [System.IO.File]::ReadAllText($ConfigPath, [System.Text.UTF8Encoding]::new($false))
-  $escapedHeader = [regex]::Escape($Header)
+  $escapedHeader = Get-CodexTomlHeaderPattern $Header
   $pattern = "(?ms)^$escapedHeader\s*\r?\n(?:(?!^\[).)*"
   $match = [regex]::Match($content, $pattern)
   if (-not $match.Success) {
     return
   }
 
-  $keyPattern = '^\s*(?:' + (($Keys | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')\s*='
+  $keyPattern = '^\s*(?:' + (($Keys | ForEach-Object { Get-CodexTomlKeyPattern $_ }) -join '|') + ')\s*='
   $lines = $match.Value -split "(\r?\n)"
   $rebuilt = New-Object System.Text.StringBuilder
   $changed = $false
@@ -1219,7 +1219,9 @@ function Get-PreferredBundledMarketplaceRoot {
     return $StableMarketplaceRoot
   }
   $content = [System.IO.File]::ReadAllText($ConfigPath, [System.Text.UTF8Encoding]::new($false))
-  $match = [regex]::Match($content, '(?ms)^\[marketplaces\.openai-bundled\]\s*\r?\n(?:(?!^\[).)*?^\s*source\s*=\s*[''"](?<value>[^''"]+)[''"]\s*$')
+  $headerPattern = Get-CodexTomlHeaderPattern '[marketplaces.openai-bundled]'
+  $keyPattern = Get-CodexTomlKeyPattern 'source'
+  $match = [regex]::Match($content, "(?ms)^$headerPattern\s*\r?\n(?:(?!^\[).)*?^\s*$keyPattern\s*=\s*['`"](?<value>[^'`"]+)['`"]\s*$")
   if (-not $match.Success) {
     return $StableMarketplaceRoot
   }
@@ -2203,9 +2205,11 @@ function Get-CodexNodeReplCliPin {
   if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) { return $null }
   $content = [IO.File]::ReadAllText($ConfigPath)
   Test-CodexTomlContent $content
-  $table = [regex]::Match($content, '(?ms)^\[mcp_servers\.node_repl\.env\][ \t]*\r?\n(?<body>(?:(?!^\[).)*)')
+  $headerPattern = Get-CodexTomlHeaderPattern '[mcp_servers.node_repl.env]'
+  $table = [regex]::Match($content, "(?ms)^$headerPattern[ \t]*\r?\n(?<body>(?:(?!^\[).)*)")
   if (-not $table.Success) { return $null }
-  $assignment = [regex]::Match($table.Groups['body'].Value, '(?m)^[ \t]*CODEX_CLI_PATH[ \t]*=[ \t]*(?<value>[^\r\n]*)')
+  $keyPattern = Get-CodexTomlKeyPattern 'CODEX_CLI_PATH'
+  $assignment = [regex]::Match($table.Groups['body'].Value, "(?m)^[ \t]*$keyPattern[ \t]*=[ \t]*(?<value>[^\r\n]*)")
   if (-not $assignment.Success) { return $null }
   $value = [regex]::Match($assignment.Groups['value'].Value, '^\s*(?<string>''[^''\r\n]*''|"(?:\\.|[^"\\\r\n])*")\s*(?:#.*)?$')
   if (-not $value.Success) { throw 'Unsupported node_repl CODEX_CLI_PATH representation; configuration left unchanged.' }
@@ -2549,7 +2553,8 @@ function Get-ChromeNativeHostV2ExpectedResource {
     [string]$ChromeCacheRoot,
     [pscustomobject]$RuntimeInventory,
     [string]$CodexHomeResolved,
-    [string]$CodexCliPathOverride
+    [string]$CodexCliPathOverride,
+    [string]$ChromeResourceRootOverride
   )
 
   $settings = Get-ChromeNativeMessagingSettings $ChromeCacheRoot
@@ -2579,6 +2584,22 @@ function Get-ChromeNativeHostV2ExpectedResource {
   $nodeModuleRoot = Join-Path (Split-Path -Parent $RuntimeInventory.NodePath) 'node_modules'
   $browserClientPath = [string]$hostConfig.browserClientPath
   $browserServicePath = Join-Path (Split-Path -Parent $browserClientPath) 'browser-service.mjs'
+  if (-not [string]::IsNullOrWhiteSpace($ChromeResourceRootOverride)) {
+    $aliasPaths = @(
+      (Join-Path $ChromeResourceRootOverride 'extension-host\windows\x64\extension-host.exe'),
+      (Join-Path $ChromeResourceRootOverride 'scripts\browser-client.mjs'),
+      (Join-Path $ChromeResourceRootOverride 'scripts\browser-service.mjs')
+    )
+    $currentPaths = @($extensionHostPath, $browserClientPath, $browserServicePath)
+    for ($index = 0; $index -lt $aliasPaths.Count; $index++) {
+      if (-not (Test-PathMatchesAnyCurrentFile $aliasPaths[$index] @($currentPaths[$index]))) {
+        throw 'Chrome v2 resource alias does not resolve to the current native-host files.'
+      }
+    }
+    $extensionHostPath = $aliasPaths[0]
+    $browserClientPath = $aliasPaths[1]
+    $browserServicePath = $aliasPaths[2]
+  }
   $appServerCliPath = $RuntimeInventory.CodexCliPath
   if (-not [string]::IsNullOrWhiteSpace($CodexCliPathOverride)) {
     $appServerCliPath = $CodexCliPathOverride
@@ -2664,6 +2685,7 @@ function Get-ChromeNativeHostV2AcceptableResources {
   )
 
   $resources = @(Get-ChromeNativeHostV2ExpectedResource $ChromeCacheRoot $RuntimeInventory $CodexHomeResolved)
+  $cliPaths = @($RuntimeInventory.CodexCliPath)
   foreach ($desktopManagedPath in @($RuntimeInventory.DesktopManagedCodexCliPaths)) {
     if ([string]::IsNullOrWhiteSpace($desktopManagedPath)) {
       continue
@@ -2671,8 +2693,32 @@ function Get-ChromeNativeHostV2AcceptableResources {
     if (Test-PathMatchesAnyCurrentFile $desktopManagedPath @($resources[0].paths.codexCliPath)) {
       continue
     }
+    $cliPaths += $desktopManagedPath
     $resources += (Get-ChromeNativeHostV2ExpectedResource `
       $ChromeCacheRoot $RuntimeInventory $CodexHomeResolved -CodexCliPathOverride $desktopManagedPath)
+  }
+  # Desktop hashes lexical latest/cache aliases, even when they resolve to the
+  # same files. Generate their exact identities only after physical-file checks.
+  foreach ($root in @(Get-CurrentChromeManifestRoots $ChromeCacheRoot)) {
+    $paths = @(
+      (Join-Path $root 'extension-host\windows\x64\extension-host.exe'),
+      (Join-Path $root 'scripts\browser-client.mjs'),
+      (Join-Path $root 'scripts\browser-service.mjs')
+    )
+    $currentPaths = @($resources[0].paths.extensionHostPath, $resources[0].paths.browserClientPath,
+      $resources[0].paths.browserServicePath)
+    $sameFiles = $true
+    for ($index = 0; $index -lt $paths.Count; $index++) {
+      if (-not (Test-PathMatchesAnyCurrentFile $paths[$index] @($currentPaths[$index]))) { $sameFiles = $false; break }
+    }
+    if (-not $sameFiles) { continue }
+    foreach ($cliPath in $cliPaths) {
+      $candidate = Get-ChromeNativeHostV2ExpectedResource $ChromeCacheRoot $RuntimeInventory $CodexHomeResolved `
+        -CodexCliPathOverride $cliPath -ChromeResourceRootOverride $root
+      if (@($resources | Where-Object { Test-ChromeNativeHostV2EntryCoreEqual $_ $candidate }).Count -eq 0) {
+        $resources += $candidate
+      }
+    }
   }
   return @($resources)
 }

@@ -5,7 +5,7 @@ const path = require('node:path');
 const os = require('node:os');
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
-const { manifest, planFiles, patchFiles, transform } = require('./patch-desktop-261029.cjs');
+const { manifest, modelExperienceKinds, planFiles, patchFiles, transform } = require('./patch-desktop-261029.cjs');
 
 const sourceRoot = process.argv[2];
 assert(sourceRoot, 'Pass the original extracted 26.1029 ASAR');
@@ -28,7 +28,13 @@ try {
     if (profile.edits.length > 1) {
       const edit = profile.edits[0];
       const partial = source.replace(edit.before, edit.after.replace('__MODELS_JSON__', JSON.stringify(models)));
-      assert.throws(() => transform(partial, profile, models), /Unsupported/); checks++;
+      const modelEdits = profile.edits.filter(item => modelExperienceKinds.has(item.kind));
+      if (modelEdits.length === 1 && modelEdits[0] === edit) {
+        assert.equal(transform(partial, profile, models).source, patched.source);
+      } else {
+        assert.throws(() => transform(partial, profile, models), /Unsupported/);
+      }
+      checks++;
     }
     for (const edit of profile.edits.filter(edit => edit.kind === 'bundled-deep-research')) {
       const before = vm.runInNewContext('({' + edit.before + '})');
@@ -85,6 +91,43 @@ try {
     fs.mkdirSync(path.dirname(path.join(root, file)), {recursive: true});
     fs.copyFileSync(path.join(sourceRoot, file), path.join(root, file)); checks++;
   }
+  const modelRoot = path.join(fixture, 'model-asar'), modelBackup = path.join(fixture, 'model-backups');
+  fs.cpSync(root, modelRoot, {recursive: true});
+  const modelPlan = planFiles(modelRoot, models, 'model-experience');
+  assert.equal(modelPlan.targets.length, 21);
+  assert.deepEqual(modelPlan.targets.map(target => target.file), manifest.files.filter(profile =>
+    profile.edits.some(edit => modelExperienceKinds.has(edit.kind))).map(profile => profile.file)); checks += 2;
+  patchFiles(modelRoot, modelBackup, models, true, 'model-experience');
+  assert(!fs.existsSync(modelBackup)); checks++;
+  const mixed = modelPlan.targets.find(target => target.file === shared.file);
+  const originalMixed = fs.readFileSync(path.join(modelRoot, mixed.file), 'utf8');
+  fs.writeFileSync(path.join(modelRoot, mixed.file), originalMixed.replace(visibility.before,
+    visibility.after.replace('__MODELS_JSON__', JSON.stringify(models))));
+  assert.throws(() => patchFiles(modelRoot, modelBackup, models, false, 'model-experience'), /Unsupported/);
+  assert(!fs.existsSync(modelBackup)); checks += 2;
+  fs.writeFileSync(path.join(modelRoot, mixed.file), originalMixed);
+  patchFiles(modelRoot, modelBackup, models, false, 'model-experience');
+  for (const profile of manifest.files) {
+    const original = fs.readFileSync(path.join(sourceRoot, profile.file), 'utf8');
+    const expected = profile.edits.filter(edit => modelExperienceKinds.has(edit.kind)).reduce((text, edit) =>
+      text.replace(edit.before, () => edit.after.replace('__MODELS_JSON__', JSON.stringify(models))), original);
+    assert.equal(fs.readFileSync(path.join(modelRoot, profile.file), 'utf8'), expected); checks++;
+  }
+  for (const file of projectOnlyFiles) {
+    assert.deepEqual(fs.readFileSync(path.join(modelRoot, file)), fs.readFileSync(path.join(sourceRoot, file)));
+    assert(!fs.existsSync(path.join(modelBackup, file))); checks += 2;
+  }
+  assert(patchFiles(modelRoot, modelBackup, models, false, 'model-experience').files.every(file => file.status === 'already-patched'));
+  assert.equal(patchFiles(modelRoot, modelBackup, ['model-only-updated'], false, 'model-experience').files.filter(file => file.status === 'patched').length, 1);
+  patchFiles(modelRoot, modelBackup, models);
+  assert(patchFiles(modelRoot, modelBackup, models).files.every(file => file.status === 'already-patched'));
+  assert(patchFiles(modelRoot, modelBackup, models, false, 'model-experience').files.every(file => file.status === 'already-patched')); checks += 4;
+  patchFiles(modelRoot, modelBackup, ['full-kept'], false, 'model-experience');
+  for (const target of plan.targets) {
+    const profile = manifest.files.find(profile => profile.file === target.file);
+    assert.equal(fs.readFileSync(path.join(modelRoot, target.file), 'utf8'), transform(target.input, profile, ['full-kept']).source); checks++;
+  }
+  assert.throws(() => planFiles(modelRoot, models, 'unknown'), /Unsupported desktop patch scope/); checks++;
   patchFiles(root, backup, models, true);
   assert(!fs.existsSync(backup)); checks++;
   const last = plan.targets.at(-1);

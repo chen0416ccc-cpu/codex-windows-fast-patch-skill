@@ -28,6 +28,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$CustomModels = @($CustomModels | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Select-Object -Unique)
+if ($CustomModels.Count -eq 0) { throw 'CustomModels must contain at least one model identifier.' }
 . (Join-Path $PSScriptRoot 'lib\windows-cua-runtime.ps1')
 . (Join-Path $PSScriptRoot 'lib\msix-safe-install.ps1')
 . (Join-Path $PSScriptRoot 'lib\appx-launch.ps1')
@@ -2777,6 +2779,35 @@ function Invoke-PatchAppAsar {
     }
     Write-Log 'repacking app.asar'
     Invoke-NpxAsar 'pack' $extractDir $newAsarPath
+    Copy-Item -LiteralPath $newAsarPath -Destination $asarPath -Force
+    return $true
+  }
+
+  $modernModelAsset = Join-Path $extractDir 'webview\assets\async\24191.589dcc9878.js'
+  if ($OnlyModelExperience -and (Test-Path -LiteralPath $modernModelAsset -PathType Leaf)) {
+    $modelsPath = Join-Path $WorkDir 'custom-models.json'
+    [IO.File]::WriteAllText($modelsPath, (ConvertTo-Json -InputObject @($CustomModels) -Compress), [Text.UTF8Encoding]::new($false))
+    $modernResult = Invoke-NodePatcher $nodePath (Join-Path $PSScriptRoot 'patch-desktop-261029.cjs') `
+      @($extractDir, (Join-Path $WorkDir 'desktop-originals'), $modelsPath, '--model-experience')
+    Write-Log "Model Experience pinned 26.1029 patch result: $modernResult"
+    $modernReport = $modernResult | ConvertFrom-Json
+    Write-Log 'Model Experience Power slider result: already-open-native'
+    foreach ($asset in $modernReport.files) {
+      & $nodePath --check (Join-Path $extractDir $asset.file)
+      if ($LASTEXITCODE -ne 0) { Fail "Model Experience 26.1029 asset syntax failed: $($asset.file)" }
+    }
+    if ($DryRun) {
+      Write-Log 'dry run: pinned 26.1029 Model Experience validated; unrelated gates unchanged'
+      return $false
+    }
+    if (@($modernReport.files | Where-Object status -eq 'patched').Count -eq 0) {
+      Write-Log 'asar Model Experience patches already present'
+      return $false
+    }
+    Write-Log 'repacking 26.1029 Model Experience with original unpacked files and shared extents'
+    $modernRepack = Invoke-NodePatcher $nodePath (Join-Path $PSScriptRoot 'repack-project-archive-asar.cjs') `
+      @($asarPath, $extractDir, $newAsarPath, '--all')
+    Write-Log "Model Experience 26.1029 preserved ASAR layout: $modernRepack"
     Copy-Item -LiteralPath $newAsarPath -Destination $asarPath -Force
     return $true
   }

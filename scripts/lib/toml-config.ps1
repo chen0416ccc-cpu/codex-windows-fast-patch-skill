@@ -1,3 +1,34 @@
+function Get-CodexTomlHeaderPattern {
+  param([string]$Header)
+
+  if (-not $Header.StartsWith('[') -or -not $Header.EndsWith(']')) { throw 'Unsupported TOML table header.' }
+  $remaining = $Header.Substring(1, $Header.Length - 2).Trim()
+  $parts = @()
+  while ($remaining.Length -gt 0) {
+    $match = [regex]::Match($remaining, '^(?:[A-Za-z0-9_-]+|"[^"\\\r\n]*"|''[^''\r\n]*'')')
+    if (-not $match.Success) { throw 'Unsupported TOML table key.' }
+    $token = $match.Value
+    if ($token.StartsWith('"') -or $token.StartsWith("'")) { $token = $token.Substring(1, $token.Length - 2) }
+    $escaped = [regex]::Escape($token)
+    $variants = @(('"' + $escaped + '"'), ("'" + $escaped + "'"))
+    if ($token -match '^[A-Za-z0-9_-]+$') { $variants += $escaped }
+    $parts += '(?:' + ($variants -join '|') + ')'
+    $remaining = $remaining.Substring($match.Length).TrimStart()
+    if ($remaining.Length -eq 0) { break }
+    if (-not $remaining.StartsWith('.')) { throw 'Unsupported TOML table separator.' }
+    $remaining = $remaining.Substring(1).TrimStart()
+    if ($remaining.Length -eq 0) { throw 'Unsupported TOML trailing separator.' }
+  }
+  if ($parts.Count -eq 0) { throw 'Empty TOML table header.' }
+  return '\[[ \t]*' + ($parts -join '[ \t]*\.[ \t]*') + '[ \t]*\]'
+}
+
+function Get-CodexTomlKeyPattern {
+  param([string]$Key)
+  $escaped = [regex]::Escape($Key)
+  return '(?:' + $escaped + '|"' + $escaped + '"|''' + $escaped + ''')'
+}
+
 function ConvertTo-CodexTomlString {
   param([AllowEmptyString()][string]$Value)
 

@@ -5,6 +5,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const assert = require('node:assert/strict');
 const manifest = require('./desktop-261029-profiles.json');
+const modelExperienceKinds = new Set(['custom-models', 'fast-request', 'fast-ui', 'ultra']);
 
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const escape = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -20,45 +21,62 @@ function validateModels(models) {
   return [...new Set(models)];
 }
 
-function restore(source, profile) {
-  if (hash(source) === profile.sha256) return source;
-  let original = source;
-  try {
-    for (const edit of [...profile.edits].reverse()) {
-      if (edit.after.includes('__MODELS_JSON__')) {
-        const [prefix, suffix] = edit.after.split('__MODELS_JSON__');
-        const matches = [...original.matchAll(new RegExp(escape(prefix) + '(\\[[^\\r\\n]*?\\])' + escape(suffix), 'g'))];
-        assert.equal(matches.length, 1, 'Expected one pinned model override');
-        validateModels(JSON.parse(matches[0][1]));
-        original = replaceOnce(original, matches[0][0], edit.before);
-      } else {
-        original = replaceOnce(original, edit.after, edit.before);
-      }
-    }
-    assert.equal(hash(original), profile.sha256, 'Restored file hash differs');
-    return original;
-  } catch {
-    throw new Error(`Unsupported or partial 26.1029 asset ${profile.file}: ${hash(source)}`);
-  }
+function selectEdits(profile, scope) {
+  assert(['desktop', 'model-experience'].includes(scope), 'Unsupported desktop patch scope');
+  return scope === 'desktop' ? profile.edits : profile.edits.filter(edit => modelExperienceKinds.has(edit.kind));
 }
 
-function transform(source, profile, models) {
-  const original = restore(source, profile);
-  const output = profile.edits.reduce((text, edit) => replaceOnce(text, edit.before,
+function restoreState(source, profile) {
+  if (hash(source) === profile.sha256) return { original: source, appliedEdits: [] };
+  // Only complete known desktop or model-only states can restore the pinned hash.
+  for (const edits of [profile.edits, selectEdits(profile, 'model-experience')].filter(edits => edits.length)) {
+    let original = source;
+    try {
+      for (const edit of [...edits].reverse()) {
+        if (edit.after.includes('__MODELS_JSON__')) {
+          const [prefix, suffix] = edit.after.split('__MODELS_JSON__');
+          const matches = [...original.matchAll(new RegExp(escape(prefix) + '(\\[[^\\r\\n]*?\\])' + escape(suffix), 'g'))];
+          assert.equal(matches.length, 1, 'Expected one pinned model override');
+          validateModels(JSON.parse(matches[0][1]));
+          original = replaceOnce(original, matches[0][0], edit.before);
+        } else {
+          original = replaceOnce(original, edit.after, edit.before);
+        }
+      }
+      assert.equal(hash(original), profile.sha256, 'Restored file hash differs');
+      return { original, appliedEdits: edits };
+    } catch {}
+  }
+  throw new Error(`Unsupported or partial 26.1029 asset ${profile.file}: ${hash(source)}`);
+}
+
+function restore(source, profile) {
+  return restoreState(source, profile).original;
+}
+
+function transform(source, profile, models, scope = 'desktop') {
+  const requested = selectEdits(profile, scope);
+  const { original, appliedEdits } = restoreState(source, profile);
+  // A targeted model update must not remove an existing complete desktop patch.
+  const edits = profile.edits.filter(edit => requested.includes(edit) || appliedEdits.includes(edit));
+  const output = edits.reduce((text, edit) => replaceOnce(text, edit.before,
     edit.after.replace('__MODELS_JSON__', () => JSON.stringify(models))), original);
   return { original, source: output, status: source === output ? 'already-patched' : 'patched' };
 }
 
-function planFiles(root, models) {
+function planFiles(root, models, scope = 'desktop') {
   models = validateModels(models);
   const targets = new Map();
   for (const profile of manifest.files) {
+    if (!selectEdits(profile, scope).length) continue;
     assert(!targets.has(profile.file), 'Overlapping patch profiles');
     const input = fs.readFileSync(path.join(root, profile.file), 'utf8');
-    targets.set(profile.file, { file: profile.file, input, ...transform(input, profile, models) });
+    targets.set(profile.file, { file: profile.file, input, ...transform(input, profile, models, scope) });
   }
   const native = manifest.native.map(profile => {
-    const source = targets.get(profile.file)?.original ?? fs.readFileSync(path.join(root, profile.file), 'utf8');
+    let source = targets.get(profile.file)?.original ?? fs.readFileSync(path.join(root, profile.file), 'utf8');
+    const desktopProfile = manifest.files.find(target => target.file === profile.file);
+    if (desktopProfile) source = restore(source, desktopProfile);
     assert.equal(hash(source), profile.sha256, `Unsupported native asset: ${profile.file}`);
     for (const witness of profile.witnesses) assert(source.includes(witness), `Missing native behavior in ${profile.file}`);
     return { file: profile.file, status: 'already-open-native', sha256: profile.sha256 };
@@ -66,8 +84,8 @@ function planFiles(root, models) {
   return { targets: [...targets.values()], native };
 }
 
-function patchFiles(root, backupRoot, models, checkOnly = false) {
-  const plan = planFiles(root, models);
+function patchFiles(root, backupRoot, models, checkOnly = false, scope = 'desktop') {
+  const plan = planFiles(root, models, scope);
   if (!checkOnly) {
     for (const target of plan.targets) {
       assert.equal(fs.readFileSync(path.join(root, target.file), 'utf8'), target.input, 'Target changed during preflight');
@@ -83,14 +101,16 @@ function patchFiles(root, backupRoot, models, checkOnly = false) {
       fs.writeFileSync(path.join(root, target.file), target.source, { encoding: 'utf8', flush: true });
     }
   }
-  return { version: manifest.version, files: plan.targets.map(target => ({ file: target.file,
+  return { version: manifest.version, scope, files: plan.targets.map(target => ({ file: target.file,
     status: target.status, sha256: hash(target.source) })), native: plan.native };
 }
 
-module.exports = { manifest, validateModels, restore, transform, planFiles, patchFiles };
+module.exports = { manifest, modelExperienceKinds, validateModels, restore, transform, planFiles, patchFiles };
 if (require.main === module) {
-  const [root, backupRoot, modelsJson, flag] = process.argv.slice(2);
-  assert(root && backupRoot && modelsJson && (!flag || flag === '--check'),
-    'Usage: patch-desktop-261029.cjs <extracted-asar> <backup-root> <models.json> [--check]');
-  console.log(JSON.stringify(patchFiles(root, backupRoot, JSON.parse(fs.readFileSync(modelsJson, 'utf8').replace(/^\uFEFF/, '')), flag === '--check')));
+  const [root, backupRoot, modelsJson, ...flags] = process.argv.slice(2);
+  assert(root && backupRoot && modelsJson && flags.every(flag => ['--check', '--model-experience'].includes(flag)) &&
+    new Set(flags).size === flags.length,
+    'Usage: patch-desktop-261029.cjs <extracted-asar> <backup-root> <models.json> [--check] [--model-experience]');
+  console.log(JSON.stringify(patchFiles(root, backupRoot, JSON.parse(fs.readFileSync(modelsJson, 'utf8').replace(/^\uFEFF/, '')),
+    flags.includes('--check'), flags.includes('--model-experience') ? 'model-experience' : 'desktop')));
 }

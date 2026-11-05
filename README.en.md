@@ -29,6 +29,8 @@ This community-maintained **Agent Skill** contains diagnostic workflows and repa
 
 The `26.1029.7803` layout is supported for models, Fast and Ultra. Project membership and archive fixes use their separate explicit entry point. The skill also offers Windows 10 screenshot profiles for Sky `0.7.13` / `0.7.17`. After installation, verify the actual runtime, plugin state and any requested screenshot acceptance. Repair stale custom MCP paths only after backing up configuration and matching the current packaged runtime.
 
+On this layout, `-OnlyModelExperience` also supports targeted diagnosis and repair of model visibility, Fast and Ultra without opening unrelated locale, browser or Computer Use gates. Existing complete desktop patches are preserved. Chrome registrations using `latest` pass strict verification only when the aliases resolve to the same current physical files and their official identities match; equal-content copies are not accepted as aliases.
+
 The one-click repair preserves the runtime launcher when valid `HTTP_PROXY` and `HTTPS_PROXY` values are already inherited. Otherwise, it includes CUA browser proxy recovery using the explicit Windows HTTP system proxy, with original-byte backups and reapplication after proxy changes. Restart Codex after a write and verify Chrome and the in-app browser separately. Run `scripts/install-computer-use-local.ps1 -OnlyRuntimeProxy` for only this repair; add `-StrictVerifyOnly` for read-only checks. PAC, authenticated and non-HTTP fallback proxies are unsupported.
 
 > [!WARNING]
