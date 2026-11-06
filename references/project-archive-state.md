@@ -14,6 +14,16 @@ The shipped patcher changes application code only. It does not guess or rewrite 
 
 ## Supported patch
 
+Desktop `26.1103.3517` uses an archive-only profile for
+`webview/assets/async/678916.8bc60ed422.js` (source SHA-256
+`d9a4fe97ef219d81dfa3d810734b038a56b38b81b5645967bfa93500380f549c`).
+The existing `-OnlyProjectArchiveState` entrypoint changes only this asset on
+that layout; global-state recovery and membership persistence are not included.
+The parent suppresses stale errors when its source already has rows. The child
+requires an empty combined list and tracks its length in the memo cache. Run
+`node scripts/test-archive-261103.cjs <original-extracted-asar>` (26 checks).
+Package deployment and live UI acceptance must be recorded separately.
+
 `scripts/patch-project-archive-state.cjs` selects one complete three-asset layout and pins full SHA-256 hashes for Desktop `26.1027.6604.0`, the observed patched `.6604.1` combination, and `26.1029.7803.0`. The old membership asset has two accepted hashes because the earlier client patch changed the same chunk. The new membership asset also accepts the precisely restored full-patch combination containing the Deep Research gate, whether or not the membership edit is already present. Desktop and project/archive patches preserve each other's edits in either order; project/archive repair remains opt-in. Unknown or partial content is rejected before any target is written; backups must match the exact original input.
 
 - Global state: try primary, `.bak`, then complete interrupted-write siblings in descending modification order. Skip invalid JSON and unrelated files. Flush synchronous and asynchronous temporary writes before rename.

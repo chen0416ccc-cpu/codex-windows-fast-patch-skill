@@ -71,12 +71,27 @@ profiles.push(
 profiles.push(profiles[3], { ...profiles[4], file: 'early-bootstrap-632-de164f1c54edebc1.js',
   sha256: ['546ae10f69b5bfa096da5c7cb54808f6af26ed494abc2558b6057600766793c8'] }, profiles[5]);
 
+// 26.1103 archive-only repair: project/state changes require separate evidence.
+profiles.push({
+  kind: 'archive-errors',
+  file: 'async/678916.8bc60ed422.js',
+  sha256: ['d9a4fe97ef219d81dfa3d810734b038a56b38b81b5645967bfa93500380f549c'],
+  edits: [
+    ['ea=(0,i.c)(142),{archivedChats:er', 'ea=(0,i.c)(143),{archivedChats:er'],
+    ['isLocalArchiveError:N&&eb,', 'isLocalArchiveError:N&&(ex?.length??0)===0&&eb/*codex_archive_local_error_scope_v3*/,'],
+    ['isDurableArchiveError:N&&null!=Q[1]&&(', 'isDurableArchiveError:N&&null!=Q[1]&&(Q[1].data?.length??0)===0&&('],
+    ['chatGptArchiveError:J&&eh?eu:null,', 'chatGptArchiveError:J&&eh&&(ee?.length??0)===0?eu:null/*codex_archive_cloud_error_scope_v3*/,'],
+    ['ea[123]!==td?(z=(null!=eS||td||tc)&&!eA?', 'ea[123]!==td||ea[142]!==er.length?(z=er.length===0&&(null!=eS||td||tc)&&!eA?'],
+    ['ea[123]=td,ea[124]=z):z=ea[124]', 'ea[123]=td,ea[124]=z,ea[142]=er.length):z=ea[124]'],
+  ],
+});
+
 function relativePath(profile) {
   return (profile.kind === 'archive-errors' ? 'webview/assets/' : '.vite/build/') + profile.file;
 }
 
 function selectProfiles(hasFile) {
-  const layouts = [profiles.slice(0, 3), profiles.slice(3, 6), profiles.slice(6, 9)];
+  const layouts = [profiles.slice(0, 3), profiles.slice(3, 6), profiles.slice(6, 9), profiles.slice(9, 10)];
   const matches = layouts.filter(layout => layout.every(profile => hasFile(relativePath(profile))));
   if (matches.length !== 1) throw new Error(`Expected one complete project/archive layout, found ${matches.length}`);
   return matches[0];
