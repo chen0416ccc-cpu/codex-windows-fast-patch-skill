@@ -36,6 +36,8 @@ The one-click repair preserves the runtime launcher when valid `HTTP_PROXY` and 
 > [!WARNING]
 > **Windows only. Some repairs include reinstalling Codex.** The app will close and the current conversation may be interrupted. After installation, reopen Codex, return to the original repair conversation, and send "continue" to resume. See the [reinstallation details](#which-repairs-reinstall-codex).
 
+The `26.1103.3517.0` layout passes full-hash checks across 29 files, model-only/full dry runs and behavioral regressions. It covers 7 Fast request copies, 7 Fast UI copies, 11 Ultra copies, locale, Browser/CUA and startup waits. Native CUA readiness and plugin guards remain intact; older project/archive and reopen edits are not applied. Post-install acceptance must still verify the actual registered version.
+
 ## What it repairs
 
 For `26.1029.7803` / `26.1029.9216` startup blocked by Statsig initialization, the full desktop patch bounds the Windows post-login request budget to 5 seconds and SDK network fallback to 2 seconds, preserving cached values and background refresh. Renderer exit reason and code are recorded locally; this diagnostic does not establish that a native renderer crash is fixed. See [startup delays and reload diagnosis](references/windows-startup-stability.md).
