@@ -49,13 +49,15 @@ try {
     function Write-Log([string]$Message) {}
     foreach ($writer in @('Set-TomlTable', $keyWriter)) {
       foreach ($value in $values) {
-        foreach ($mode in @('new', 'append', 'replace')) {
+        foreach ($mode in @('new', 'append', 'replace', 'quoted', 'literal-quoted')) {
           $caseRoot = Join-Path $root ([guid]::NewGuid().ToString('N') + "-h'p")
           New-Item -ItemType Directory -Path $caseRoot | Out-Null
           $config = Join-Path $caseRoot 'config.toml'
           $before = "sentinel = 'unchanged'`r`n"
           if ($mode -eq 'append') { $before += "[marketplaces.fixture]`r`nretained = 'keep'`r`n" }
           if ($mode -eq 'replace') { $before += "[marketplaces.fixture]`r`nsource = 'old'`r`n" }
+          if ($mode -eq 'quoted') { $before += "[`"marketplaces`" . `"fixture`"]`r`n`"source`" = 'old'`r`n" }
+          if ($mode -eq 'literal-quoted') { $before += "['marketplaces'.'fixture']`r`n'source' = 'old'`r`n" }
           $before += "[unrelated]`r`nvalue = 'preserve'`r`n"
           Write-Utf8NoBom $config $before
           $script:ConfigBackupBeforeOverwrite = @{}

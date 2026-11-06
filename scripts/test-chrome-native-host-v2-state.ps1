@@ -474,6 +474,44 @@ try {
   } '*invalid schemaVersion or entries array*'
   Update-ChromeNativeHostV2State $chromeRoot $runtimeInventory $script:CodexHome
   Test-ChromeNativeHostV2State $chromeRoot $runtimeInventory $script:CodexHome
+
+  $aliasRoot = Join-Path (Split-Path -Parent $chromeRoot) 'latest'
+  New-Item -ItemType Junction -Path $aliasRoot -Target $chromeRoot | Out-Null
+  try {
+    $aliasResource = Get-ChromeNativeHostV2ExpectedResource $chromeRoot $runtimeInventory $script:CodexHome `
+      -CodexCliPathOverride $desktopManagedCodexCliPath -ChromeResourceRootOverride $aliasRoot
+    $independentAliasId = Get-IndependentV2Identity -Prefix 'codex-runtime-' -Fields @(
+      $settings.HostName, $extensionIds[0], $extensionIds[1], 'prod', $chromeVersion,
+      (Join-Path $aliasRoot 'extension-host\windows\x64\extension-host.exe'),
+      $desktopManagedCodexCliPath, $script:CodexHome, $packageResourcesRoot
+    )
+    if ($aliasResource.entryId -cne $independentAliasId) { throw 'Alias entry did not preserve the official lexical-path identity.' }
+    $aliases = @(Get-ChromeNativeHostV2AcceptableResources $chromeRoot $runtimeInventory $script:CodexHome)
+    if ($aliases.Count -ne 4 -or @($aliases | Where-Object { Test-ChromeNativeHostV2EntryCoreEqual $_ $aliasResource }).Count -ne 1) {
+      throw 'Current latest alias and both CLI paths were not independently validated.'
+    }
+    foreach ($statePath in $statePaths) {
+      ConvertTo-JsonFile $statePath ([ordered]@{ schemaVersion = 2; entries = @((Copy-JsonValue $aliasResource)) })
+    }
+    Test-ChromeNativeHostV2State $chromeRoot $runtimeInventory $script:CodexHome
+    Update-ChromeNativeHostV2State $chromeRoot $runtimeInventory $script:CodexHome
+    foreach ($statePath in $statePaths) {
+      $aliasHash = (Get-FileHash -LiteralPath $statePath -Algorithm SHA256).Hash
+      Update-ChromeNativeHostV2State $chromeRoot $runtimeInventory $script:CodexHome
+      if ((Get-FileHash -LiteralPath $statePath -Algorithm SHA256).Hash -cne $aliasHash) { throw 'Current Desktop alias entry was rewritten.' }
+    }
+    $forged = Copy-JsonValue $aliasResource
+    $forged.entryId = 'codex-runtime-00000000000000000000000000000000'
+    ConvertTo-JsonFile $statePaths[0] ([ordered]@{ schemaVersion = 2; entries = @($forged) })
+    Assert-ThrowsLike { Test-ChromeNativeHostV2State $chromeRoot $runtimeInventory $script:CodexHome } '*has no current app-server entry*'
+    $copyRoot = Join-Path $fixtureRoot 'same-content-not-same-files'
+    Copy-Item -LiteralPath $chromeRoot -Destination $copyRoot -Recurse
+    Assert-ThrowsLike {
+      Get-ChromeNativeHostV2ExpectedResource $chromeRoot $runtimeInventory $script:CodexHome -ChromeResourceRootOverride $copyRoot
+    } '*does not resolve to the current native-host files*'
+  } finally {
+    [IO.Directory]::Delete($aliasRoot)
+  }
 } finally {
   $env:LOCALAPPDATA = $previousLocalAppData
 }
