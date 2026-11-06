@@ -117,7 +117,7 @@ Claude Code 可将目标改为 `$env:USERPROFILE\.claude\skills\codex-windows-fa
 
 ### 项目归属与归档加载
 
-对于已核验的 `26.1027.6604`、`26.1029.7803` 和 `26.1029.9216` 文件组合，`-OnlyProjectArchiveState` 只修复全局状态备份恢复、Windows 本地项目关联持久保存，以及归档列表已有内容时残留的错误提示。先运行 `scripts/patch_codex_fast_mode_windows_msix.ps1 -OnlyProjectArchiveState -DryRun`。此模式需要重新打包并原地更新；新版 `26.1029.7803` / `26.1029.9216` 全量修复也包含这些代码修复，未知文件哈希会停止。已有归属恢复须先核对数据库、全局状态及备份，按证据修复，不从工作目录批量猜测归属。步骤及验收见[项目与归档状态修复](references/project-archive-state.md)。
+对于已核验的 `26.1027.6604`、`26.1029.7803` 和 `26.1029.9216` 文件组合，`-OnlyProjectArchiveState` 只修复全局状态备份恢复、Windows 本地项目关联持久保存，以及归档列表已有内容时残留的错误提示。先运行 `scripts/patch_codex_fast_mode_windows_msix.ps1 -OnlyProjectArchiveState -DryRun`。此模式需要重新打包并原地更新；`26.1029.7803` / `26.1029.9216` 的全量桌面修复不会自动应用这些项目与归档代码修复，但会保留已显式应用的补丁，未知文件哈希会停止。已有归属恢复须先核对数据库、全局状态及备份，按证据修复，不从工作目录批量猜测归属。步骤及验收见[项目与归档状态修复](references/project-archive-state.md)。
 
 ### 配置听话水
 
