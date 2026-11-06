@@ -5,10 +5,11 @@ const path = require('node:path');
 const os = require('node:os');
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
-const { manifest, modelExperienceKinds, planFiles, patchFiles, transform } = require('./patch-desktop-261029.cjs');
+const { resolveManifest, modelExperienceKinds, planFiles, patchFiles, transform } = require('./patch-desktop-261029.cjs');
 
 const sourceRoot = process.argv[2];
 assert(sourceRoot, 'Pass the original extracted 26.1029 ASAR');
+const manifest = resolveManifest(rel => fs.existsSync(path.join(sourceRoot, rel)));
 const models = ['gpt-6-astra', 'fixture-model'];
 const plan = planFiles(sourceRoot, models);
 let checks = 0;
@@ -26,7 +27,8 @@ try {
     assert.equal(transform(patched.source, profile, models).status, 'already-patched');
     assert.throws(() => transform(source + 'drift', profile, models), /Unsupported/); checks += 2;
     if (profile.edits.length > 1) {
-      const edit = profile.edits[0];
+      // The complete pre-startup patch is a supported upgrade state, not a partial patch.
+      const edit = profile.edits.find(edit => edit.kind?.startsWith('startup-')) ?? profile.edits[0];
       const partial = source.replace(edit.before, edit.after.replace('__MODELS_JSON__', JSON.stringify(models)));
       const modelEdits = profile.edits.filter(item => modelExperienceKinds.has(item.kind));
       if (modelEdits.length === 1 && modelEdits[0] === edit) {
@@ -141,7 +143,7 @@ try {
     assert.deepEqual(fs.readFileSync(path.join(root, file)), fs.readFileSync(path.join(sourceRoot, file)));
     assert(!fs.existsSync(path.join(backup, file))); checks += 2;
   }
-  const membershipFile = '.vite/build/early-bootstrap-632-62c641245a52ef0e.js';
+  const membershipFile = manifest.files.find(profile => profile.file.includes('/early-bootstrap-632-')).file;
   const membershipAnchor = 'M.setThreadAssignmentsEnabled(tl().localProjectTaskMembership)';
   assert(fs.readFileSync(path.join(root, membershipFile), 'utf8').includes(membershipAnchor)); checks++;
   assert(result.files.every(file => file.status === 'patched'));

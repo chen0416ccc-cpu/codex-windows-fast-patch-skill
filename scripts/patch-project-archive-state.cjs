@@ -67,12 +67,16 @@ profiles.push(
   },
 );
 
+// 26.1029.9216 renames only the membership bundle; the project edits are unchanged.
+profiles.push(profiles[3], { ...profiles[4], file: 'early-bootstrap-632-de164f1c54edebc1.js',
+  sha256: ['546ae10f69b5bfa096da5c7cb54808f6af26ed494abc2558b6057600766793c8'] }, profiles[5]);
+
 function relativePath(profile) {
   return (profile.kind === 'archive-errors' ? 'webview/assets/' : '.vite/build/') + profile.file;
 }
 
 function selectProfiles(hasFile) {
-  const layouts = [profiles.slice(0, 3), profiles.slice(3, 6)];
+  const layouts = [profiles.slice(0, 3), profiles.slice(3, 6), profiles.slice(6, 9)];
   const matches = layouts.filter(layout => layout.every(profile => hasFile(relativePath(profile))));
   if (matches.length !== 1) throw new Error(`Expected one complete project/archive layout, found ${matches.length}`);
   return matches[0];
@@ -91,6 +95,13 @@ function replaceOnce(text, before, after) {
 function transform(source, profile) {
   // Normalize only the known desktop overlay, then require the complete source hash.
   const states = [[], ...(profile.compatibleEdits ? [profile.compatibleEdits] : [])];
+  if (profile.compatibleEdits) {
+    const manifest = require('./desktop-261029-profiles.json');
+    const candidates = [manifest.files, ...(manifest.variants ?? []).map(variant =>
+      manifest.files.map(entry => variant.files[entry.file] ? { ...entry, ...variant.files[entry.file] } : entry))].flat();
+    const desktop = candidates.find(entry => entry.file === relativePath(profile) && profile.sha256.includes(entry.sha256));
+    if (desktop) states.push(desktop.edits.map(({before, after}) => [before, after]));
+  }
   for (const overlays of states) {
     try {
       const normalized = [...overlays].reverse().reduce((s, [before, after]) => replaceOnce(s, after, before), source);

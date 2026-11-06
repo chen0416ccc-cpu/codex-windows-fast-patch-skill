@@ -27,7 +27,7 @@
 
 This community-maintained **Agent Skill** contains diagnostic workflows and repair scripts. It is not an official client or a universal one-click installer.
 
-The `26.1029.7803` layout is supported for models, Fast and Ultra. Project membership and archive fixes use their separate explicit entry point. The skill also offers Windows 10 screenshot profiles for Sky `0.7.13` / `0.7.17`. After installation, verify the actual runtime, plugin state and any requested screenshot acceptance. Repair stale custom MCP paths only after backing up configuration and matching the current packaged runtime.
+The `26.1029.7803` and `26.1029.9216` layouts are supported for models, Fast and Ultra. Project membership and archive fixes use their separate explicit entry point. The skill also offers Windows 10 screenshot profiles for Sky `0.7.13` / `0.7.17`. After installation, verify the actual runtime, plugin state and any requested screenshot acceptance. Repair stale custom MCP paths only after backing up configuration and matching the current packaged runtime.
 
 On this layout, `-OnlyModelExperience` also supports targeted diagnosis and repair of model visibility, Fast and Ultra without opening unrelated locale, browser or Computer Use gates. Existing complete desktop patches are preserved. Chrome registrations using `latest` pass strict verification only when the aliases resolve to the same current physical files and their official identities match; equal-content copies are not accepted as aliases.
 
@@ -37,6 +37,10 @@ The one-click repair preserves the runtime launcher when valid `HTTP_PROXY` and 
 > **Windows only. Some repairs include reinstalling Codex.** The app will close and the current conversation may be interrupted. After installation, reopen Codex, return to the original repair conversation, and send "continue" to resume. See the [reinstallation details](#which-repairs-reinstall-codex).
 
 ## What it repairs
+
+For `26.1029.7803` / `26.1029.9216` startup blocked by Statsig initialization, the full desktop patch bounds the Windows post-login request budget to 5 seconds and SDK network fallback to 2 seconds, preserving cached values and background refresh. Renderer exit reason and code are recorded locally; this diagnostic does not establish that a native renderer crash is fixed. See [startup delays and reload diagnosis](references/windows-startup-stability.md).
+
+When an installer uses low priority and one CPU, its activation child restores Normal priority and the current processor group's available CPUs before starting Desktop. Installer and build-job limits remain in place; Desktop must still launch outside the build job.
 
 For `failed to spawn code-mode host`, run `scripts/install-computer-use-local.ps1 -OnlyExecutorRuntime`; add `-StrictVerifyOnly` for read-only checks. It verifies complete file hashes against the current package, restores missing companions, and backs up and migrates `CODEX_CLI_PATH` pins to retired cache directories. Restart Codex after repair, then verify the actual app-server path and a real tool call.
 
@@ -120,7 +124,7 @@ The entry point emits a JSON status. `-ReportPath '<new-report-path>.json'` save
 
 ### Project assignments and archive loading
 
-For the verified `26.1027.6604` and `26.1029.7803` file combinations, `-OnlyProjectArchiveState` repairs global-state backup recovery, Windows local-project assignment persistence, and stale errors beside populated archive lists. Start with `scripts/patch_codex_fast_mode_windows_msix.ps1 -OnlyProjectArchiveState -DryRun`. This opt-in mode repackages the client for an in-place update; the pinned `26.1029.7803` full repair also includes these code fixes, and unknown source hashes stop the operation. Recover existing assignments only after comparing the database, global state and backups; a matching working directory alone is insufficient. See [project and archive state repair](references/project-archive-state.md) for deployment and acceptance.
+For the verified `26.1027.6604`, `26.1029.7803` and `26.1029.9216` file combinations, `-OnlyProjectArchiveState` repairs global-state backup recovery, Windows local-project assignment persistence, and stale errors beside populated archive lists. Start with `scripts/patch_codex_fast_mode_windows_msix.ps1 -OnlyProjectArchiveState -DryRun`. This opt-in mode repackages the client for an in-place update; the pinned `26.1029.7803` / `26.1029.9216` full desktop repair does not apply these project/archive fixes automatically, but preserves them when explicitly applied. Unknown source hashes stop the operation. Recover existing assignments only after comparing the database, global state and backups; a matching working directory alone is insufficient. See [project and archive state repair](references/project-archive-state.md) for deployment and acceptance.
 
 ### Configure Tinghuashui (听话水)
 

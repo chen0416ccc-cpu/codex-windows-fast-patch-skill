@@ -27,7 +27,7 @@
 
 这是社区维护的 **Agent Skill**，提供诊断流程与修复脚本，不是官方客户端，也不是适用于所有版本的一键安装器。
 
-已适配 `26.1029.7803` 新布局，包含模型、Fast、Ultra 恢复；项目归属与归档错误使用独立显式入口。另提供 Sky `0.7.13` / `0.7.17` 的 Windows 10 截图补丁。安装后仍须核验实际运行版本、插件状态和所请求的截图验收；更新遗留的 MCP 路径按备份与运行时核对结果处理。
+已适配 `26.1029.7803` 与 `26.1029.9216` 新布局，包含模型、Fast、Ultra 恢复；项目归属与归档错误使用独立显式入口。另提供 Sky `0.7.13` / `0.7.17` 的 Windows 10 截图补丁。安装后仍须核验实际运行版本、插件状态和所请求的截图验收；更新遗留的 MCP 路径按备份与运行时核对结果处理。
 
 该布局的 `-OnlyModelExperience` 也支持定向诊断与修复，只调整模型可见性、Fast 和 Ultra，不顺带打开语言、浏览器或 Computer Use 门禁；已有完整桌面补丁会保留。Chrome 使用 `latest` 路径重新登记后，仅在指向同一当前文件且官方身份匹配时通过严格检查，不以内容相同的副本替代路径验证。
 
@@ -35,6 +35,10 @@
 > **仅支持 Windows。部分修复包含重新安装 Codex 的步骤。** 期间应用会关闭，当前对话可能中断；安装完成后重新打开 Codex，回到原修复对话发送“继续”即可接着处理。具体见[重装说明](#哪些修复会重新安装-codex)。
 
 ## 能修复什么
+
+`26.1029.7803` / `26.1029.9216` 启动卡在 Statsig 初始化时，完整桌面补丁将 Windows 登录后请求的总等待限制为 5 秒，SDK 网络回退等待限制为 2 秒，并保留缓存及后台刷新。日志新增渲染进程退出原因与退出码；这项诊断不等于已经修复原生渲染崩溃。见[启动等待与重载诊断](references/windows-startup-stability.md)。
+
+安装器以低优先级、单核运行时，应用激活子进程会恢复正常优先级和当前处理器组的可用核心，避免 Codex 继承构建限制。安装器及构建 Job 的限制保留，应用仍须从 Job 外启动。
 
 工具报 `failed to spawn code-mode host` 时，可运行 `scripts/install-computer-use-local.ps1 -OnlyExecutorRuntime`，加 `-StrictVerifyOnly` 只检查。它核对当前包的完整文件哈希、恢复缺失的配套程序，并备份后迁移固定旧缓存目录的 `CODEX_CLI_PATH`。修复后重启 Codex，核对实际 app-server 路径和真实工具调用。
 
@@ -113,7 +117,7 @@ Claude Code 可将目标改为 `$env:USERPROFILE\.claude\skills\codex-windows-fa
 
 ### 项目归属与归档加载
 
-对于已核验的 `26.1027.6604` 和 `26.1029.7803` 文件组合，`-OnlyProjectArchiveState` 只修复全局状态备份恢复、Windows 本地项目关联持久保存，以及归档列表已有内容时残留的错误提示。先运行 `scripts/patch_codex_fast_mode_windows_msix.ps1 -OnlyProjectArchiveState -DryRun`。此模式需要重新打包并原地更新；新版 `26.1029.7803` 全量修复也包含这些代码修复，未知文件哈希会停止。已有归属恢复须先核对数据库、全局状态及备份，按证据修复，不从工作目录批量猜测归属。步骤及验收见[项目与归档状态修复](references/project-archive-state.md)。
+对于已核验的 `26.1027.6604`、`26.1029.7803` 和 `26.1029.9216` 文件组合，`-OnlyProjectArchiveState` 只修复全局状态备份恢复、Windows 本地项目关联持久保存，以及归档列表已有内容时残留的错误提示。先运行 `scripts/patch_codex_fast_mode_windows_msix.ps1 -OnlyProjectArchiveState -DryRun`。此模式需要重新打包并原地更新；`26.1029.7803` / `26.1029.9216` 的全量桌面修复不会自动应用这些项目与归档代码修复，但会保留已显式应用的补丁，未知文件哈希会停止。已有归属恢复须先核对数据库、全局状态及备份，按证据修复，不从工作目录批量猜测归属。步骤及验收见[项目与归档状态修复](references/project-archive-state.md)。
 
 ### 配置听话水
 

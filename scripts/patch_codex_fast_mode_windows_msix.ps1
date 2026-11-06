@@ -2783,8 +2783,10 @@ function Invoke-PatchAppAsar {
     return $true
   }
 
-  $modernModelAsset = Join-Path $extractDir 'webview\assets\async\24191.589dcc9878.js'
-  if ($OnlyModelExperience -and (Test-Path -LiteralPath $modernModelAsset -PathType Leaf)) {
+  $modernModelAsset = @('24191.589dcc9878.js', '24191.dc3ed2d869.js') |
+    ForEach-Object { Join-Path $extractDir "webview\assets\async\$_" } |
+    Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+  if ($OnlyModelExperience -and $modernModelAsset) {
     $modelsPath = Join-Path $WorkDir 'custom-models.json'
     [IO.File]::WriteAllText($modelsPath, (ConvertTo-Json -InputObject @($CustomModels) -Compress), [Text.UTF8Encoding]::new($false))
     $modernResult = Invoke-NodePatcher $nodePath (Join-Path $PSScriptRoot 'patch-desktop-261029.cjs') `
@@ -3024,15 +3026,16 @@ function Invoke-PatchAppAsar {
     return $true
   }
 
-  $modernAsset = Join-Path $extractDir 'webview\assets\async\24191.589dcc9878.js'
-  if (Test-Path -LiteralPath $modernAsset -PathType Leaf) {
+  $modernAsset = @('24191.589dcc9878.js', '24191.dc3ed2d869.js') |
+    ForEach-Object { Join-Path $extractDir "webview\assets\async\$_" } |
+    Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+  if ($modernAsset) {
     if ($PatchWindowsStoreUpdateFallback) { Fail 'Windows Store update fallback is not validated for the pinned 26.1029 layout' }
     $modelsPath = Join-Path $WorkDir 'custom-models.json'
     [IO.File]::WriteAllText($modelsPath, (ConvertTo-Json -InputObject @($CustomModels) -Compress), [Text.UTF8Encoding]::new($false))
     $modernResult = Invoke-NodePatcher $nodePath (Join-Path $PSScriptRoot 'patch-desktop-261029.cjs') @($extractDir, (Join-Path $WorkDir 'desktop-originals'), $modelsPath)
     Write-Log "26.1029 pinned desktop patch result: $modernResult"
     $modernReport = $modernResult | ConvertFrom-Json
-    $modernProfiles = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'desktop-261029-profiles.json') -Raw | ConvertFrom-Json
     $modernFeatures = [ordered]@{
       'fast-mode' = @('fast-request'); 'fast-mode UI' = @('fast-ui'); 'custom models' = @('custom-models')
       'Ultra slider local-fallback' = @('ultra'); 'locale i18n' = @('locale')
@@ -3043,8 +3046,7 @@ function Invoke-PatchAppAsar {
     }
     foreach ($feature in $modernFeatures.Keys) {
       $kinds = @($modernFeatures[$feature])
-      $featureFiles = @($modernProfiles.files | Where-Object { @($_.edits | Where-Object { $_.kind -in $kinds }).Count } | ForEach-Object { $_.file })
-      $featureStatus = if (@($modernReport.files | Where-Object { $_.file -in $featureFiles -and $_.status -eq 'patched' }).Count) { 'patched' } else { 'already-patched' }
+      $featureStatus = if (@($modernReport.files | Where-Object { $_.status -eq 'patched' -and @($_.kinds | Where-Object { $_ -in $kinds }).Count }).Count) { 'patched' } else { 'already-patched' }
       Write-Log "$feature patch result: $featureStatus"
     }
     foreach ($feature in @('Power slider', 'plugin', 'goal')) {

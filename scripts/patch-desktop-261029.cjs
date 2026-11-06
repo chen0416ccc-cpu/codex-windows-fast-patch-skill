@@ -16,6 +16,24 @@ function replaceOnce(source, before, after) {
   return source.replace(before, () => after);
 }
 
+// Later 26.1029 builds rename hashed bundles while keeping every anchor; each
+// variant pins the renamed file and its complete original hash.
+function layouts() {
+  return [{ version: manifest.version, files: manifest.files, native: manifest.native },
+    ...(manifest.variants ?? []).map(variant => {
+      const swap = profile => variant.files[profile.file] ? { ...profile, ...variant.files[profile.file] } : profile;
+      return { version: variant.version, files: manifest.files.map(swap), native: manifest.native.map(swap) };
+    })];
+}
+
+function resolveManifest(hasFile) {
+  const renamed = new Set((manifest.variants ?? []).flatMap(variant =>
+    Object.entries(variant.files).filter(([from, to]) => from !== to.file).flatMap(([from, to]) => [from, to.file])));
+  const matches = layouts().filter(layout => layout.files.every(profile => !renamed.has(profile.file) || hasFile(profile.file)));
+  if (matches.length !== 1) throw new Error(`Expected one complete 26.1029 desktop layout, found ${matches.length}`);
+  return matches[0];
+}
+
 function validateModels(models) {
   assert(Array.isArray(models) && models.length > 0 && models.every(model =>
     typeof model === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/.test(model)), 'Pass nonempty model identifiers');
@@ -40,7 +58,8 @@ function restoreState(source, profile) {
   // An opt-in membership edit may coexist, but must restore the same pinned hash.
   for (const state of states) {
     if (hash(state.source) === profile.sha256) return { original: state.source, appliedEdits: [], projectEdits: state.projectEdits };
-    for (const edits of [profile.edits, selectEdits(profile, 'model-experience')].filter(edits => edits.length)) {
+    const legacyEdits = profile.edits.filter(edit => !edit.kind?.startsWith('startup-'));
+    for (const edits of [profile.edits, legacyEdits, selectEdits(profile, 'model-experience')].filter(edits => edits.length)) {
       let original = state.source;
       try {
         for (const edit of [...edits].reverse()) {
@@ -79,22 +98,24 @@ function transform(source, profile, models, scope = 'desktop') {
 
 function planFiles(root, models, scope = 'desktop') {
   models = validateModels(models);
+  const layout = resolveManifest(rel => fs.existsSync(path.join(root, rel)));
   const targets = new Map();
-  for (const profile of manifest.files) {
+  for (const profile of layout.files) {
     if (!selectEdits(profile, scope).length) continue;
     assert(!targets.has(profile.file), 'Overlapping patch profiles');
     const input = fs.readFileSync(path.join(root, profile.file), 'utf8');
-    targets.set(profile.file, { file: profile.file, input, ...transform(input, profile, models, scope) });
+    targets.set(profile.file, { file: profile.file, input, kinds: profile.edits.map(edit => edit.kind),
+      ...transform(input, profile, models, scope) });
   }
-  const native = manifest.native.map(profile => {
+  const native = layout.native.map(profile => {
     let source = targets.get(profile.file)?.original ?? fs.readFileSync(path.join(root, profile.file), 'utf8');
-    const desktopProfile = manifest.files.find(target => target.file === profile.file);
+    const desktopProfile = layout.files.find(target => target.file === profile.file);
     if (desktopProfile) source = restore(source, desktopProfile);
     assert.equal(hash(source), profile.sha256, `Unsupported native asset: ${profile.file}`);
     for (const witness of profile.witnesses) assert(source.includes(witness), `Missing native behavior in ${profile.file}`);
     return { file: profile.file, status: 'already-open-native', sha256: profile.sha256 };
   });
-  return { targets: [...targets.values()], native };
+  return { version: layout.version, targets: [...targets.values()], native };
 }
 
 function patchFiles(root, backupRoot, models, checkOnly = false, scope = 'desktop') {
@@ -114,11 +135,11 @@ function patchFiles(root, backupRoot, models, checkOnly = false, scope = 'deskto
       fs.writeFileSync(path.join(root, target.file), target.source, { encoding: 'utf8', flush: true });
     }
   }
-  return { version: manifest.version, scope, files: plan.targets.map(target => ({ file: target.file,
-    status: target.status, sha256: hash(target.source) })), native: plan.native };
+  return { version: plan.version, scope, files: plan.targets.map(target => ({ file: target.file,
+    status: target.status, kinds: target.kinds, sha256: hash(target.source) })), native: plan.native };
 }
 
-module.exports = { manifest, modelExperienceKinds, validateModels, restore, transform, planFiles, patchFiles };
+module.exports = { manifest, layouts, resolveManifest, modelExperienceKinds, validateModels, restore, transform, planFiles, patchFiles };
 if (require.main === module) {
   const [root, backupRoot, modelsJson, ...flags] = process.argv.slice(2);
   assert(root && backupRoot && modelsJson && flags.every(flag => ['--check', '--model-experience'].includes(flag)) &&

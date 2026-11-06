@@ -58,6 +58,8 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 Add-Type -TypeDefinition @"
 using System;
+using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 [ComImport, Guid("2e941141-7f97-4756-ba1d-9decde894a3d"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 public interface IApplicationActivationManager {
@@ -71,6 +73,22 @@ public interface IApplicationActivationManager {
 [ComImport, Guid("45BA127D-10A8-46EA-8AB7-56EA9078943C")]
 public class ApplicationActivationManager { }
 public static class PackagedAppActivation {
+  [DllImport("kernel32.dll", SetLastError = true)]
+  static extern bool GetProcessAffinityMask(IntPtr process, out UIntPtr processMask, out UIntPtr systemMask);
+
+  public static void PrepareInteractiveScheduling() {
+    using (var process = Process.GetCurrentProcess()) {
+      UIntPtr processMask, systemMask;
+      if (!GetProcessAffinityMask(process.Handle, out processMask, out systemMask))
+        throw new Win32Exception(Marshal.GetLastWin32Error());
+      if (systemMask == UIntPtr.Zero)
+        throw new InvalidOperationException("Cannot determine interactive processor affinity.");
+      // This short-lived child alone drops inherited build scheduling.
+      process.ProcessorAffinity = new IntPtr(unchecked((long)systemMask.ToUInt64()));
+      process.PriorityClass = ProcessPriorityClass.Normal;
+    }
+  }
+
   public static uint Launch(string appUserModelId) {
     var manager = (IApplicationActivationManager)new ApplicationActivationManager();
     try {
@@ -82,6 +100,7 @@ public static class PackagedAppActivation {
   }
 }
 "@
+[PackagedAppActivation]::PrepareInteractiveScheduling()
 [Console]::Out.WriteLine([PackagedAppActivation]::Launch($args[0]))
 '@
   $source = $source.Replace('$args[0]', "'$($AppUserModelId.Replace("'", "''"))'")

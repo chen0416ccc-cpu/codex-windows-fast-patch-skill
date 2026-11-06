@@ -75,6 +75,32 @@ $activationAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $
 $activationFunction = $activationAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-InstalledAppxApplicationActivation' }, $true).Extent.Text
 $activationCall = '[Console]::Out.WriteLine([PackagedAppActivation]::Launch($args[0]))'
 Assert ($activationFunction.Contains($activationCall)) 'the real activation seam is present before non-interactive substitution'
+# Use the real child process, replacing only COM activation, to catch installer
+# scheduling leaking into the interactive Desktop and its descendants.
+& {
+  $self = [Diagnostics.Process]::GetCurrentProcess()
+  $priority = $self.PriorityClass
+  $affinity = $self.ProcessorAffinity
+  try {
+    $mask = $affinity.ToInt64()
+    $singleCore = $mask -band (-$mask)
+    $self.PriorityClass = 'Idle'
+    $self.ProcessorAffinity = [IntPtr]$singleCore
+    $schedulingProbe = '$child = [Diagnostics.Process]::GetCurrentProcess(); if ($child.PriorityClass -ne [Diagnostics.ProcessPriorityClass]::Normal -or $child.ProcessorAffinity.ToInt64() -eq ' + $singleCore + ') { exit 9 }; [Console]::Out.WriteLine([uint32]53124)'
+    if (($mask -band ($mask - 1)) -eq 0) {
+      $schedulingProbe = '$child = [Diagnostics.Process]::GetCurrentProcess(); if ($child.PriorityClass -ne [Diagnostics.ProcessPriorityClass]::Normal) { exit 9 }; [Console]::Out.WriteLine([uint32]53124)'
+    }
+    . ([scriptblock]::Create($activationFunction.Replace($activationCall, $schedulingProbe)))
+    $actual = Invoke-InstalledAppxApplicationActivation -AppUserModelId 'Fixture.NoActivation!App'
+    Assert ($actual -eq 53124) 'activation child restores normal interactive scheduling before COM'
+    $self.Refresh()
+    Assert ($self.PriorityClass -eq [Diagnostics.ProcessPriorityClass]::Idle -and $self.ProcessorAffinity.ToInt64() -eq $singleCore) 'activation leaves installer scheduling unchanged'
+  } finally {
+    $self.PriorityClass = $priority
+    $self.ProcessorAffinity = $affinity
+    $self.Dispose()
+  }
+}
 foreach ($case in @(
   @{ Source = '[Console]::Out.WriteLine([uint32]53124)'; Expected = [uint32]53124 },
   @{ Source = '[Console]::Out.WriteLine([uint32]4294967295)'; Expected = [uint32]::MaxValue },
