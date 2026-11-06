@@ -4,8 +4,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const {EventEmitter} = require('node:events');
-const {manifest, transform} = require('./patch-desktop-261029.cjs');
-const profile = manifest.files.find(p => p.edits.some(e => e.kind === 'startup-renderer-diagnostics'));
+const {resolveManifest, transform} = require('./patch-desktop-261029.cjs');
+const profile = resolveManifest(rel => fs.existsSync(path.join(process.argv[2], rel))).files
+  .find(p => p.edits.some(e => e.kind === 'startup-renderer-diagnostics'));
 const original = fs.readFileSync(path.join(process.argv[2], profile.file), 'utf8');
 const source = transform(original, profile, ['fixture']).source;
 const start = source.indexOf('installWebContentsDiagnostics(e,t){');

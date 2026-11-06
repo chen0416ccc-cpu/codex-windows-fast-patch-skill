@@ -380,5 +380,24 @@
         "mcpToolExposure"
       ]
     }
+  ],
+  "variants": [
+    {
+      "version": "26.1029.9216.0",
+      "files": {
+        ".vite/build/early-bootstrap-632-62c641245a52ef0e.js": {
+          "file": ".vite/build/early-bootstrap-632-de164f1c54edebc1.js",
+          "sha256": "546ae10f69b5bfa096da5c7cb54808f6af26ed494abc2558b6057600766793c8"
+        },
+        "webview/assets/async/24191.589dcc9878.js": {
+          "file": "webview/assets/async/24191.dc3ed2d869.js",
+          "sha256": "e73a7ed9120cf1be05ab5c798f4079c8e54cf5e45b5d99eb8fe7f3ce19acf0e5"
+        },
+        ".vite/build/early-bootstrap.js": {
+          "file": ".vite/build/early-bootstrap.js",
+          "sha256": "13ef7f976bd914a38cefcbf83cc2318e79b1eb0b4db0813d1033d0f40da48921"
+        }
+      }
+    }
   ]
 }

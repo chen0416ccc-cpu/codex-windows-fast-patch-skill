@@ -5,10 +5,11 @@ const path = require('node:path');
 const os = require('node:os');
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
-const { manifest, modelExperienceKinds, planFiles, patchFiles, transform } = require('./patch-desktop-261029.cjs');
+const { resolveManifest, modelExperienceKinds, planFiles, patchFiles, transform } = require('./patch-desktop-261029.cjs');
 
 const sourceRoot = process.argv[2];
 assert(sourceRoot, 'Pass the original extracted 26.1029 ASAR');
+const manifest = resolveManifest(rel => fs.existsSync(path.join(sourceRoot, rel)));
 const models = ['gpt-6-astra', 'fixture-model'];
 const plan = planFiles(sourceRoot, models);
 let checks = 0;
@@ -142,7 +143,7 @@ try {
     assert.deepEqual(fs.readFileSync(path.join(root, file)), fs.readFileSync(path.join(sourceRoot, file)));
     assert(!fs.existsSync(path.join(backup, file))); checks += 2;
   }
-  const membershipFile = '.vite/build/early-bootstrap-632-62c641245a52ef0e.js';
+  const membershipFile = manifest.files.find(profile => profile.file.includes('/early-bootstrap-632-')).file;
   const membershipAnchor = 'M.setThreadAssignmentsEnabled(tl().localProjectTaskMembership)';
   assert(fs.readFileSync(path.join(root, membershipFile), 'utf8').includes(membershipAnchor)); checks++;
   assert(result.files.every(file => file.status === 'patched'));

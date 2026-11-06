@@ -473,12 +473,15 @@ Run `test-computer-use-helper-win10-patch.ps1 -SkyVersion <profile> -HelperPath 
 
 ### `@oai/sky 0.7.13` and `0.7.17` / Desktop 26.1029
 
-The `0.7.13` helper retains the older callback layout; `0.7.17` moves the wrapper section, exception table and imported thread/COM calls. Both profiles pin all thirteen guarded regions and complete hashes. The native unwind test derives the import slots from the pinned wrapper instructions and retains the earlier `0.7.12` profiles.
+The `0.7.13` helper retains the older callback layout; `0.7.17` moves the wrapper section, exception table and imported thread/COM calls. All these profiles pin all thirteen guarded regions and complete hashes. The native unwind test derives the import slots from the pinned wrapper instructions and retains the earlier `0.7.12` profiles.
 
 | Profile | Original SHA-256 | Candidate SHA-256 |
 | --- | --- | --- |
 | `0.7.13-8A64A6A0` | `8A64A6A0FDEA2540F6D74D42EA826E928AD8F5C8891EEBE1CCCBBC8F6A70C2AE` | `8DCC49CB8CE2D341112681F7B96D09BF129F711A74C3C7AAD747D3403032CED0` |
 | `0.7.17-FC0447EF` | `FC0447EFB1AA5A0C527AE88C2ADA9FF7DDC398501BF451275218F1F866424BA8` | `C1B08268538E704ACFB4AFE6A8FE91D26B8D7DC9E0FD8D30E92A792964F6A151` |
+| `0.7.17-1F0DDEE3` | `1F0DDEE3E5955469D35A75A0E28CC491CCC5F46191F116547E671CA93F97331C` | `7EA9A40431C84E40A4AF51230C1C50588D9CE90019EB651D5A61563E7A10B59A` |
+
+`1F0DDEE3` ships in Desktop `26.1029.9216.0`. All nine PE sections are byte-identical to `FC0447EF`; only the COFF timestamp, PE checksum and Authenticode signature differ. Its profile reuses the same thirteen regions with that build's checksum and signature bytes as originals, and the patched output differs from `C1B08268` only in the timestamp before the unused signature tail.
 
 Isolated Windows 10 install, repeat install, rollback, repeat rollback, exact backup and unknown-input checks passed for both profiles. Their candidates each passed 47 unwind instruction boundaries and ten real caller frames without executing the helper entry point.
 

@@ -4,8 +4,12 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const {spawnSync} = require('node:child_process');
-const {manifest, restore, transform} = require('./patch-desktop-261029.cjs');
-const profile = manifest.files.find(entry => entry.file.endsWith('/24191.589dcc9878.js'));
+const path = require('node:path');
+const {layouts, restore, transform} = require('./patch-desktop-261029.cjs');
+// Select the pinned 24191 profile whose bundle name matches the input file.
+const profile = layouts().map(layout => layout.files.find(entry => entry.file.includes('/24191.')))
+  .find(entry => path.basename(entry.file) === path.basename(process.argv[2]));
+assert(profile, 'Pass a supported 26.1029 24191 bundle');
 const input = fs.readFileSync(process.argv[2], 'utf8');
 const original = restore(input, profile);
 const source = process.argv.includes('--original') ? original : transform(input, profile, ['fixture-model']).source;

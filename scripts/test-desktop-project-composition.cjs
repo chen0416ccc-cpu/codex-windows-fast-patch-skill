@@ -11,7 +11,8 @@ const sourceRoot = process.argv[2];
 assert(sourceRoot, 'Pass the original extracted 26.1029 ASAR');
 const profiles = project.selectProfiles(rel => fs.existsSync(path.join(sourceRoot, rel)));
 assert(profiles.some(profile => profile.compatibleEdits), 'Expected the 26.1029 membership layout');
-const files = new Set([...desktop.manifest.files, ...desktop.manifest.native].map(profile => profile.file));
+const layout = desktop.resolveManifest(rel => fs.existsSync(path.join(sourceRoot, rel)));
+const files = new Set([...layout.files, ...layout.native].map(profile => profile.file));
 profiles.forEach(profile => files.add(project.relativePath(profile)));
 const originals = new Map([...files].map(file => [file, fs.readFileSync(path.join(sourceRoot, file), 'utf8')]));
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-desktop-project-'));
@@ -38,7 +39,7 @@ function snapshot(fixture) {
 function verify(fixture, state) {
   for (const [file, original] of originals) {
     let expected = original;
-    const desktopProfile = desktop.manifest.files.find(profile => profile.file === file);
+    const desktopProfile = layout.files.find(profile => profile.file === file);
     for (const edit of desktopProfile?.edits ?? []) {
       if (state.full || state.models && desktop.modelExperienceKinds.has(edit.kind)) {
         expected = replace(expected, edit.before, edit.after.replace('__MODELS_JSON__', JSON.stringify(state.models)));

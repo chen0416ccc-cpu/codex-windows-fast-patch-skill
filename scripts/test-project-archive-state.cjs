@@ -196,7 +196,7 @@ async function membershipCases(source, expectBroken) {
       assert.equal(transform(patched[i], profiles[i]).status, 'already-patched'); checks++;
       assert.throws(() => transform(sources[i] + 'changed', profiles[i]), /Unsupported/); checks++;
     }
-    if (profiles[1].file === 'early-bootstrap-632-62c641245a52ef0e.js') {
+    if (profiles[1].file.startsWith('early-bootstrap-632-')) {
       const [before, after] = profiles[1].compatibleEdits[0];
       const fullSource = sources[1].replace(before, after);
       const full = patched[1].replace(before, after);
