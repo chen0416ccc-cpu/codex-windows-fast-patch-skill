@@ -1,0 +1,426 @@
+{
+  "version": "26.1103.4239.0",
+  "files": [
+    {
+      "file": ".vite/build/early-bootstrap-199-e3316cddb4ea6a6b.js",
+      "sha256": "3202cb775ee05404d2b08f6dbb6fa3e524321da435564d8b2a7c6359ccdc6b0a",
+      "edits": [
+        {
+          "before": "isAvailable:({features:e})=>e.deepResearch",
+          "after": "isAvailable:()=>!0/*codex_windows_deep_research_bundled_plugin_available*/",
+          "kind": "bundled-deep-research"
+        },
+        {
+          "before": "r.on(\"render-process-gone\",(a,o)=>{if(\"clean-exit\"===o.reason||this.isAppQuitting)return;this.appBadgeCounts.delete(e)",
+          "after": "r.on(\"render-process-gone\",(a,o)=>{if(\"clean-exit\"===o.reason||this.isAppQuitting)return;eEc().warning(\"windows_renderer_process_gone\",{safe:{reason:o.reason,exitCode:o.exitCode,windowId:n,webContentsId:i,windowAppearance:t},sensitive:{}});/*CODEX_RENDERER_EXIT_DIAGNOSTICS_V1*/this.appBadgeCounts.delete(e)",
+          "kind": "startup-renderer-diagnostics"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/182735.bb2cb0d2af.js",
+      "sha256": "ab463aa100bbd1c6306d7b32c9de911db22d9bd03ee7a30f844e32d0069916ce",
+      "edits": [
+        {
+          "before": "e?.has(s.model)===!0||\"codex-auto-review\"!==s.model&&(i&&!s.hidden||(o&&!a&&\"amazonBedrock\"!==n?r.has(s.model)||\"apikey\"===n&&t&&!s.hidden&&l?.some(e=>\"standard\"!==e)===!0:!s.hidden))",
+          "after": "/*CODEX_CUSTOM_MODELS_V1*/__MODELS_JSON__.includes(s.model)||e?.has(s.model)===!0||\"codex-auto-review\"!==s.model&&(i&&!s.hidden||(o&&!a&&\"amazonBedrock\"!==n?r.has(s.model)||\"apikey\"===n&&t&&!s.hidden&&l?.some(e=>\"standard\"!==e)===!0:!s.hidden))",
+          "kind": "custom-models"
+        },
+        {
+          "before": "x?.get(\"enable_i18n\",!1)",
+          "after": "(x?.get(\"enable_i18n\",!1),!0)/*CODEX_I18N_LOCAL_V2*/",
+          "kind": "locale"
+        },
+        {
+          "before": "h=function({areRequirementsPending:e,isBrowserAndComputerUseAllowed:t,isExternalBrowserUseFeatureEnabled:n,isExternalBrowserUseFeatureLoading:r,isExternalBrowserUseGateEnabled:i,runCodexInWsl:a,windowType:s}){return e?\"loading\":t?\"chrome-extension\"===s?\"available\":r?\"loading\":n?a?\"wsl-disabled\":i?\"available\":\"statsig-disabled\":\"config-requirement-disabled\":\"config-requirement-disabled\"}({areRequirementsPending:R,isBrowserAndComputerUseAllowed:P,isExternalBrowserUseFeatureEnabled:C.enabled,isExternalBrowserUseFeatureLoading:C.isLoading,isExternalBrowserUseGateEnabled:I,runCodexInWsl:N,windowType:E})",
+          "after": "h=!A?\"disabled\":N?\"wsl-disabled\":(\"electron\"===E||\"chrome-extension\"===E)?\"available\":\"window-type-disabled\"/*CODEX_BROWSER_EXTERNAL_V4*/",
+          "kind": "browser-external"
+        },
+        {
+          "before": "p=function({areRequirementsPending:e,areRequiredFeaturesEnabled:t,enabled:n,isBrowserAndComputerUseAllowed:r,isAnyFeatureLoading:i,isComputerUseGateEnabled:a,isHostCompatiblePlatform:s,isPlatformLoading:o,windowType:l}){return n?\"electron\"!==l?\"window-type-disabled\":e?\"loading\":r?a?o?\"loading\":s?i?\"loading\":t?\"available\":\"config-requirement-disabled\":\"unsupported-platform\":\"statsig-disabled\":\"config-requirement-disabled\":\"disabled\"}({areRequirementsPending:L,areRequiredFeaturesEnabled:M,enabled:T,isBrowserAndComputerUseAllowed:U,isAnyFeatureLoading:x,isComputerUseGateEnabled:b,isHostCompatiblePlatform:\"macOS\"===S||\"windows\"===S,isPlatformLoading:A,windowType:\"electron\"})",
+          "after": "p=!T?\"disabled\":A?\"loading\":(\"windows\"===S||\"macOS\"===S)?\"available\":\"unsupported-platform\"/*CODEX_COMPUTER_USE_AVAILABILITY_V4*/",
+          "kind": "computer-use"
+        },
+        {
+          "before": "\"Ready\"!==n.loadingStatus&&n.initializeAsync().catch(r.Log.error).finally(()=>s(!1))",
+          "after": "\"Ready\"!==n.loadingStatus&&n.initializeAsync(\"Win32\"===globalThis.navigator?.platform?{timeoutMs:2000}:void 0).catch(r.Log.error).finally(()=>s(!1))",
+          "kind": "startup-sdk-budget"
+        },
+        {
+          "before": "m=function({areRequirementsPending:e,isBrowserAgentGateEnabled:t,isBrowserAndComputerUseAllowed:n,isBrowserEnabled:r,isBrowserUseEnabled:i,isLoading:a,runCodexInWsl:s,windowType:o}){return\"chrome-extension\"===o?\"window-type-disabled\":e?\"loading\":n?a?\"loading\":r?t?i?s?\"wsl-disabled\":\"available\":\"config-requirement-disabled\":\"statsig-disabled\":\"browser-pane-disabled\":\"config-requirement-disabled\"}({areRequirementsPending:N,isBrowserAgentGateEnabled:C,isBrowserAndComputerUseAllowed:k,isBrowserEnabled:I,isBrowserUseEnabled:R,isLoading:P,runCodexInWsl:D,windowType:\"electron\"})",
+          "after": "m=E?(!D?\"available\":\"wsl-disabled\"):\"disabled\"/*CODEX_BROWSER_IN_APP_V4*/",
+          "kind": "browser-in-app"
+        },
+        {
+          "before": "Error(\"Reached the post-login Statsig bootstrap deadline\")))},62500)",
+          "after": "Error(\"Reached the post-login Statsig bootstrap deadline\")))},\"Windows\"===e.systemName?5000:62500)/*CODEX_WINDOWS_STATSIG_STARTUP_BUDGET_V2*/",
+          "kind": "startup-bootstrap-budget"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/159406.7576d6a66d.js",
+      "sha256": "f00daac90cf3f26ad1f033f751ab33a4b240a0310bb960cc05ae0deaf9842c96",
+      "edits": [
+        {
+          "before": "m=g?.authMethod===\"chatgpt\"||g?.authMethod===\"personalAccessToken\"||g?.authMethod===\"amazonBedrock\"",
+          "after": "m=/*CODEX_SERVICE_TIER_ACCESS_UI_V2*/!0",
+          "kind": "fast-ui"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/161445.832141020f.js",
+      "sha256": "b51ae750f6a856fa9b3234c40de31a20c3386340df5b4f9c43dda96a88cfc4df",
+      "edits": [
+        {
+          "before": "K=l&&x(v.JW,\"1186680773\")",
+          "after": "K=l&&(A||x(v.JW,\"1186680773\"))/*CODEX_CUSTOM_PROVIDER_ULTRA_V2*/",
+          "kind": "ultra"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/177472.42f91dd590.js",
+      "sha256": "8068ed9c55c8ffce7c69761b9c2d30c98417d8f0a0a98d569c9b8578c2d4a1e0",
+      "edits": [
+        {
+          "before": "R=n&&b(v.JW,\"1186680773\")",
+          "after": "R=n&&(S||b(v.JW,\"1186680773\"))/*CODEX_CUSTOM_PROVIDER_ULTRA_V2*/",
+          "kind": "ultra"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/32593.b61aaa00eb.js",
+      "sha256": "e1d5e4b48a14abb341d3f6afda2e6442aeb11a6aae518c7fcb79de21f180a554",
+      "edits": [
+        {
+          "before": "F=o&&x(v.JW,\"1186680773\")",
+          "after": "F=o&&(S||x(v.JW,\"1186680773\"))/*CODEX_CUSTOM_PROVIDER_ULTRA_V2*/",
+          "kind": "ultra"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/232354.26c2fdfee3.js",
+      "sha256": "f8fb9de033c1a658a85e2b8cd9598aad1d7bce5783442771a1a752c95ad58487",
+      "edits": [
+        {
+          "before": "if(\"chatgpt\"!==n&&\"personalAccessToken\"!==n&&\"amazonBedrock\"!==n)return null;",
+          "after": "/*CODEX_SERVICE_TIER_REQUEST_V2*/",
+          "kind": "fast-request"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/291906.d535e4f0a2.js",
+      "sha256": "dcd2a602c20906bbc6be37c374259ac6fa67250c41d27793425782dafe9ed5eb",
+      "edits": [
+        {
+          "before": "W=a&&x(v.JW,\"1186680773\")",
+          "after": "W=a&&(L||x(v.JW,\"1186680773\"))/*CODEX_CUSTOM_PROVIDER_ULTRA_V2*/",
+          "kind": "ultra"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/29761.678feb9296.js",
+      "sha256": "dd017aa021e6c3635e7c8ca18bcc58396245005c52d2ad579bf57d37e627be3d",
+      "edits": [
+        {
+          "before": "m=d?.authMethod===\"chatgpt\"||d?.authMethod===\"personalAccessToken\"||d?.authMethod===\"amazonBedrock\"",
+          "after": "m=/*CODEX_SERVICE_TIER_ACCESS_UI_V2*/!0",
+          "kind": "fast-ui"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/321808.c362f3c7ed.js",
+      "sha256": "cd6dcde823cb50f337eefc401edc5c30d28f5f3efb43c0e75172a14c35b41ab9",
+      "edits": [
+        {
+          "before": "if(\"chatgpt\"!==n&&\"personalAccessToken\"!==n&&\"amazonBedrock\"!==n)return null;",
+          "after": "/*CODEX_SERVICE_TIER_REQUEST_V2*/",
+          "kind": "fast-request"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/328669.4886871222.js",
+      "sha256": "95605f1ca01f2e73f80c06f867ad9440029d55f7453cc9bfd64d4a14842b4d79",
+      "edits": [
+        {
+          "before": "P=o&&y(v.JW,\"1186680773\")",
+          "after": "P=o&&(S||y(v.JW,\"1186680773\"))/*CODEX_CUSTOM_PROVIDER_ULTRA_V2*/",
+          "kind": "ultra"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/377631.ba30eb7339.js",
+      "sha256": "e3ada5f0fe2ad729d09cb5f3dee504e2767eee4da82ae788968c827eb0e0e92f",
+      "edits": [
+        {
+          "before": "if(\"chatgpt\"!==n&&\"personalAccessToken\"!==n&&\"amazonBedrock\"!==n)return null;",
+          "after": "/*CODEX_SERVICE_TIER_REQUEST_V2*/",
+          "kind": "fast-request"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/40728.eecdd20f4f.js",
+      "sha256": "f4cc3ebc944757f732747f66170367b877d19dd68c29e6243845c04df550973f",
+      "edits": [
+        {
+          "before": "Q=a&&w(v.JW,\"1186680773\")",
+          "after": "Q=a&&(z||w(v.JW,\"1186680773\"))/*CODEX_CUSTOM_PROVIDER_ULTRA_V2*/",
+          "kind": "ultra"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/414655.475f85a448.js",
+      "sha256": "db78945a4db37885f473d2ce5b07e3a03f5c7225fd58a3960de0041a9b3331bb",
+      "edits": [
+        {
+          "before": "f=m?.authMethod===\"chatgpt\"||m?.authMethod===\"personalAccessToken\"||m?.authMethod===\"amazonBedrock\"",
+          "after": "f=/*CODEX_SERVICE_TIER_ACCESS_UI_V2*/!0",
+          "kind": "fast-ui"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/415411.f81eb614e5.js",
+      "sha256": "f5afcfc13c65525077721f193d23d79793e4454406018b5900ccba8025194ffe",
+      "edits": [
+        {
+          "before": "W=o&&M(h.JW,\"1186680773\")",
+          "after": "W=o&&(I||M(h.JW,\"1186680773\"))/*CODEX_CUSTOM_PROVIDER_ULTRA_V2*/",
+          "kind": "ultra"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/434155.be55380188.js",
+      "sha256": "70fb77e2d594e7b89d0649d202588def2830df1353fea83f9efbaadafe0e9fc0",
+      "edits": [
+        {
+          "before": "g=m?.authMethod===\"chatgpt\"||m?.authMethod===\"personalAccessToken\"||m?.authMethod===\"amazonBedrock\"",
+          "after": "g=/*CODEX_SERVICE_TIER_ACCESS_UI_V2*/!0",
+          "kind": "fast-ui"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/455856.1aecab94d5.js",
+      "sha256": "460de5ce65e86b0157997d7788fd56b2a65c77bc51d9127af10750c220c3bb5c",
+      "edits": [
+        {
+          "before": "q=o&&w(v.JW,\"1186680773\")",
+          "after": "q=o&&(I||w(v.JW,\"1186680773\"))/*CODEX_CUSTOM_PROVIDER_ULTRA_V2*/",
+          "kind": "ultra"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/416681.6a90955453.js",
+      "sha256": "0f25b824ab19a68a033ef071614f5172f24656f5f42a99c27952e9d2b142de6d",
+      "edits": [
+        {
+          "before": "F=r&&v(x.JW,\"1186680773\")",
+          "after": "F=r&&(I||v(x.JW,\"1186680773\"))/*CODEX_CUSTOM_PROVIDER_ULTRA_V2*/",
+          "kind": "ultra"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/553834.8bcca01908.js",
+      "sha256": "d6ca69c44e25ae58f9ce2c9ac158e46dde150dd1b0252983ee3cadfc7a6846a7",
+      "edits": [
+        {
+          "before": "g=p?.authMethod===\"chatgpt\"||p?.authMethod===\"personalAccessToken\"||p?.authMethod===\"amazonBedrock\"",
+          "after": "g=/*CODEX_SERVICE_TIER_ACCESS_UI_V2*/!0",
+          "kind": "fast-ui"
+        },
+        {
+          "before": "E?.get(\"enable_i18n\",!0)",
+          "after": "(E?.get(\"enable_i18n\",!0),!0)/*CODEX_I18N_LOCAL_V2*/",
+          "kind": "locale"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/634175.4437e0034c.js",
+      "sha256": "e21e10ed45db9613ef69a54a65a06e1deb595ddb38352626e5bb4f864a476f23",
+      "edits": [
+        {
+          "before": "h=m?.authMethod===\"chatgpt\"||m?.authMethod===\"personalAccessToken\"||m?.authMethod===\"amazonBedrock\"",
+          "after": "h=/*CODEX_SERVICE_TIER_ACCESS_UI_V2*/!0",
+          "kind": "fast-ui"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/725998.a29d1f3c16.js",
+      "sha256": "de74b1c5284539a53b80c45b66114012417d4d79d5bf9c00da58d0dac07db1c4",
+      "edits": [
+        {
+          "before": "if(\"chatgpt\"!==r&&\"personalAccessToken\"!==r&&\"amazonBedrock\"!==r)return null;",
+          "after": "/*CODEX_SERVICE_TIER_REQUEST_V2*/",
+          "kind": "fast-request"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/783456.a3b05bbbc0.js",
+      "sha256": "f2d60b65162e707ce6871c193c7bb105b8dba82a3b7de72c18724accaaba79e9",
+      "edits": [
+        {
+          "before": "if(\"chatgpt\"!==t&&\"personalAccessToken\"!==t&&\"amazonBedrock\"!==t)return null;",
+          "after": "/*CODEX_SERVICE_TIER_REQUEST_V2*/",
+          "kind": "fast-request"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/870918.5e1155e232.js",
+      "sha256": "9d0f6f65b17d4e8db1b5acdbfab92ca46099aa4ad047ee2530128bb9a5b7a99f",
+      "edits": [
+        {
+          "before": "P=n&&b(v.JW,\"1186680773\")",
+          "after": "P=n&&(I||b(v.JW,\"1186680773\"))/*CODEX_CUSTOM_PROVIDER_ULTRA_V2*/",
+          "kind": "ultra"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/884655.2edb304734.js",
+      "sha256": "fc8855fae94a552a960ad172394e7dfcc9ce82dac611cf8dc2818a68693a8330",
+      "edits": [
+        {
+          "before": "f=m?.authMethod===\"chatgpt\"||m?.authMethod===\"personalAccessToken\"||m?.authMethod===\"amazonBedrock\"",
+          "after": "f=/*CODEX_SERVICE_TIER_ACCESS_UI_V2*/!0",
+          "kind": "fast-ui"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/503951.d3dccca0f7.js",
+      "sha256": "f46926c7c49b6fc33badec2f236a7e3a1de9b9c4f0e5bc633993133dc93c3209",
+      "edits": [
+        {
+          "before": "D=a&&b(v.JW,\"1186680773\")",
+          "after": "D=a&&(P||b(v.JW,\"1186680773\"))/*CODEX_CUSTOM_PROVIDER_ULTRA_V2*/",
+          "kind": "ultra"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/954045.056304beca.js",
+      "sha256": "9d43ef476e9df02e760fa573508e0386c8afb6f0e113dc9d2cb6937897aa529c",
+      "edits": [
+        {
+          "before": "if(\"chatgpt\"!==r&&\"personalAccessToken\"!==r&&\"amazonBedrock\"!==r)return null;",
+          "after": "/*CODEX_SERVICE_TIER_REQUEST_V2*/",
+          "kind": "fast-request"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/440338.88139063bc.js",
+      "sha256": "d7206f9f6e320b35a6b9cc5c4ce710db99c57116177385026e3889342bffdd9f",
+      "edits": [
+        {
+          "before": "if(\"chatgpt\"!==n&&\"personalAccessToken\"!==n&&\"amazonBedrock\"!==n)return null;",
+          "after": "/*CODEX_SERVICE_TIER_REQUEST_V2*/",
+          "kind": "fast-request"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/366057.8dff3ed0b6.js",
+      "sha256": "d5e8a2fcbc633f7059f5089a6cc7a9320e8e88e0bc756942faf3209572284418",
+      "edits": [
+        {
+          "before": "B=(0,E._U)(ex.G,{name:\"browser.in-app\"}).isCapable",
+          "after": "B=((0,E._U)(ex.G,{name:\"browser.in-app\"}).isCapable,!0)/*CODEX_BROWSER_PANE_LOCAL_V4*/",
+          "kind": "browser-pane"
+        },
+        {
+          "before": "X=(0,eg.Zj)(\"1892382740\")",
+          "after": "X=((0,eg.Zj)(\"1892382740\"),!0)/*CODEX_CUA_RUNTIME_V4*/",
+          "kind": "cua-runtime"
+        },
+        {
+          "before": "eh=(0,eg.Zj)(\"337408568\")",
+          "after": "eh=((0,eg.Zj)(\"337408568\"),!1)/*CODEX_NODE_REPL_MODEL_GATE_V4*/",
+          "kind": "cua-model-gate"
+        }
+      ]
+    },
+    {
+      "file": ".vite/build/early-bootstrap.js",
+      "sha256": "130d12cbaa4335cd6f21c8d281b9706c6c25f5c8be455cef1c85f57cdd5613b4",
+      "edits": [
+        {
+          "before": "[u]:p([t,m],g)",
+          "after": "[u]:p([t,m,process.env[u]??``],g)/*CODEX_NODE_REPL_TRUSTED_PATHS_V1*/",
+          "kind": "trusted-paths"
+        },
+        {
+          "before": "let e=\"CODEX_WINDOWS_REGISTERED_CORE\";_=[...new Set([...n,e])];",
+          "after": "let e=\"CODEX_WINDOWS_REGISTERED_CORE\";_=[...new Set([...n,e,...[\"HTTP_PROXY\",\"HTTPS_PROXY\",\"ALL_PROXY\",\"NO_PROXY\",\"http_proxy\",\"https_proxy\",\"all_proxy\",\"no_proxy\"].filter(e=>process.env[e])])];/*CODEX_NODE_REPL_PROXY_ENV_V1*/",
+          "kind": "proxy-env"
+        }
+      ]
+    }
+  ],
+  "native": [
+    {
+      "file": "webview/assets/async/209288.7eb941c4d4.js",
+      "sha256": "166f9bc2eb2278629a27e808664f51806300438c42acd7eae6767761f56e92b4",
+      "witnesses": [
+        "composer.modelPicker.power",
+        "PowerSlider",
+        "selectedPowerSelection"
+      ]
+    },
+    {
+      "file": "webview/assets/async/309406.7154f09b4b.js",
+      "sha256": "06263696ecd73577d8394c8da6e13357d8c4b50162399a1420ddac4538bebce9",
+      "witnesses": [
+        "function rp(e,t){return\"cloud\"!==t&&(\"local\"!==e.kind||\"side\"!==e.placement)}",
+        "id:\"goal\",triggers:",
+        "requiresEmptyComposer:!1"
+      ]
+    },
+    {
+      "file": "webview/assets/async/309325.836d33aeb4.js",
+      "sha256": "f72a0420140534e17917f36a744de6035e45e79d3a1db6b81a8a273198b7b2bb",
+      "witnesses": [
+        "tM=tL.available,tD=tR.available,tq=tU.available",
+        "openPluginInstall"
+      ]
+    },
+    {
+      "file": "webview/assets/async/996150.cedcc632ff.js",
+      "sha256": "49634ee5dfdcf05b09f1e9f3a598ab106e12f90d9242d92cc2944a251a07d6c2",
+      "witnesses": [
+        "showComputerUseSetup:",
+        "computerUseToggleDisabled:"
+      ]
+    },
+    {
+      "file": ".vite/build/early-bootstrap-199-e3316cddb4ea6a6b.js",
+      "sha256": "3202cb775ee05404d2b08f6dbb6fa3e524321da435564d8b2a7c6359ccdc6b0a",
+      "witnesses": [
+        "copyDirectoryAllowDecryptedDestinationOnEncryptionFailure",
+        "cuaReplSurfaces",
+        "mcpToolExposure",
+        "a?.plugin.installed===!0&&a.plugin.enabled&&\"AVAILABLE\"===a.plugin.availability",
+        "h=u&&t.computerUse&&c.enabled&&(\"win32\"===o.platform||\"darwin\"===o.platform&&null!=c.paths.serviceAppPath)"
+      ]
+    }
+  ]
+}

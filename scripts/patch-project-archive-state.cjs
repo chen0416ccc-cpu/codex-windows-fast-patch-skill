@@ -90,7 +90,33 @@ function relativePath(profile) {
   return (profile.kind === 'archive-errors' ? 'webview/assets/' : '.vite/build/') + profile.file;
 }
 
+// 26.1103.4239 retains the archive asset but changes the state and host modules.
+profiles.push({
+  kind: 'global-state',
+  file: 'early-bootstrap-133-1c544c3280919085.js',
+  sha256: ['2fde4e50ae9ea97e9fb0b1a6b741b64a00257b9cf73fd143fc6a0c9921ec2992'],
+  edits: [
+    ['if(null==t||null!=r&&t.owner===r)return;', 'if(null==t||t.owner===r)return;/*codex_same_renderer_owner_preserves_local_state*/'],
+    ['this.state=function(e){if(!(0,n.existsSync)(e))return new Map;let t=em(e);if(null!=t)return t;let r=em(`${e}.bak`);return null!=r?(ei().warning("Loaded global state from backup",{safe:{},sensitive:{}}),r):new Map}(this.filePath)', 'this.state=ez(this.filePath)'],
+    ['function em(e){', recovery.replaceAll('eu(', 'em(').replaceAll('K()', 'ei()') + 'function em(e){'],
+    ['(0,n.writeFileSync)(r,t,"utf8")', '(0,n.writeFileSync)(r,t,{encoding:"utf8",flush:!0})'],
+    ['(0,s.writeFile)(r,t,"utf8")', '(0,s.writeFile)(r,t,{encoding:"utf8",flush:!0})'],
+  ],
+}, {
+  kind: 'project-membership',
+  file: 'early-bootstrap-199-e3316cddb4ea6a6b.js',
+  sha256: ['3202cb775ee05404d2b08f6dbb6fa3e524321da435564d8b2a7c6359ccdc6b0a'],
+  compatibleEdits: [['isAvailable:({features:e})=>e.deepResearch',
+    'isAvailable:()=>!0/*codex_windows_deep_research_bundled_plugin_available*/']],
+  edits: [['T.setThreadAssignmentsEnabled(tr().localProjectTaskMembership)', 'T.setThreadAssignmentsEnabled(tr().localProjectTaskMembership||process.platform==="win32"/*codex_windows_local_project_membership_persistence*/)']],
+}, profiles[9]);
+
 function selectProfiles(hasFile) {
+  const current = profiles.slice(10, 13);
+  if (current.slice(0, 2).some(profile => hasFile(relativePath(profile)))) {
+    if (!current.every(profile => hasFile(relativePath(profile)))) throw new Error('Expected one complete project/archive layout');
+    return current;
+  }
   const layouts = [profiles.slice(0, 3), profiles.slice(3, 6), profiles.slice(6, 9), profiles.slice(9, 10)];
   const matches = layouts.filter(layout => layout.every(profile => hasFile(relativePath(profile))));
   if (matches.length !== 1) throw new Error(`Expected one complete project/archive layout, found ${matches.length}`);
@@ -114,6 +140,7 @@ function transform(source, profile) {
     const manifest = require('./desktop-261029-profiles.json');
     const candidates = [manifest.files, ...(manifest.variants ?? []).map(variant =>
       manifest.files.map(entry => variant.files[entry.file] ? { ...entry, ...variant.files[entry.file] } : entry))].flat();
+    candidates.push(...require('./desktop-2611034239-profiles.json').files);
     const desktop = candidates.find(entry => entry.file === relativePath(profile) && profile.sha256.includes(entry.sha256));
     if (desktop) states.push(desktop.edits.map(({before, after}) => [before, after]));
   }

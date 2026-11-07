@@ -14,6 +14,16 @@ The shipped patcher changes application code only. It does not guess or rewrite 
 
 ## Supported patch
 
+Desktop `26.1103.4239.0` has a complete three-asset profile. Its state loader
+recovers missing primary files and flushes temporary writes. Re-selecting the
+same null renderer owner preserves local project state; switching to a different
+account still stashes and isolates its state. Windows assignments reach the
+backend while retaining its support check. The archive asset is shared with
+3517. Run `test-project-state-2611034239.cjs` (34 checks), the archive regression,
+and `test-desktop-project-composition.cjs` (1068 checks) against this layout.
+Recovery must also remove only verified restored IDs from `projectless-thread-ids`
+and preserve the new `threadAssignmentsReadMigrated` checkpoint semantics.
+
 Desktop `26.1103.3517` uses an archive-only profile for
 `webview/assets/async/678916.8bc60ed422.js` (source SHA-256
 `d9a4fe97ef219d81dfa3d810734b038a56b38b81b5645967bfa93500380f549c`).

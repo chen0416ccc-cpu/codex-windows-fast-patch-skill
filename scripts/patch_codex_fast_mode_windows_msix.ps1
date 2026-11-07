@@ -2783,7 +2783,7 @@ function Invoke-PatchAppAsar {
     return $true
   }
 
-  $modernModelAsset = @('24191.589dcc9878.js', '24191.dc3ed2d869.js', '182735.e33af7cdca.js') |
+  $modernModelAsset = @('24191.589dcc9878.js', '24191.dc3ed2d869.js', '182735.e33af7cdca.js', '182735.bb2cb0d2af.js') |
     ForEach-Object { Join-Path $extractDir "webview\assets\async\$_" } |
     Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
   if ($OnlyModelExperience -and $modernModelAsset) {
@@ -3026,7 +3026,7 @@ function Invoke-PatchAppAsar {
     return $true
   }
 
-  $modernAsset = @('24191.589dcc9878.js', '24191.dc3ed2d869.js', '182735.e33af7cdca.js') |
+  $modernAsset = @('24191.589dcc9878.js', '24191.dc3ed2d869.js', '182735.e33af7cdca.js', '182735.bb2cb0d2af.js') |
     ForEach-Object { Join-Path $extractDir "webview\assets\async\$_" } |
     Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
   if ($modernAsset) {

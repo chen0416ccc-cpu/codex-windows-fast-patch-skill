@@ -8,13 +8,13 @@ const crypto = require('node:crypto');
 const {transform, resolveManifest} = require('./patch-desktop-261029.cjs');
 const root = process.argv[2];
 const manifest = resolveManifest(rel => fs.existsSync(path.join(root, rel)));
-assert.equal(manifest.version, '26.1103.3517.0');
+assert(['26.1103.3517.0', '26.1103.4239.0'].includes(manifest.version));
 let checks = 0;
 const models = ['fixture-model'];
 async function main() {
   assert.equal(manifest.files.length, 29);
   assert.throws(()=>resolveManifest(()=>false),/Expected one complete/);
-  assert.throws(()=>resolveManifest(rel=>!rel.includes('265759.')&&fs.existsSync(path.join(root,rel))),/Expected one complete/);
+  assert.throws(()=>resolveManifest(rel=>rel!==manifest.files[0].file&&fs.existsSync(path.join(root,rel))),/Expected one complete/);
   checks+=3;
   for (const profile of manifest.files) {
     const source = fs.readFileSync(path.join(root, profile.file), 'utf8');

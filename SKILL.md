@@ -178,6 +178,14 @@ For Windows 10 screenshot issues investigated from a Windows 11 host, follow `re
 
 ## Default Workflow
 
+Desktop `26.1103.4239.0` uses `desktop-2611034239-profiles.json` with the same
+29-file feature scope and five native witnesses. The explicit project/archive
+mode supports its three-asset state, membership and archive repair; full mode
+does not implicitly rewrite project code. Require the 1103 regression for both
+3517 and 4239, the 4239 project regression, composition checks and public dry
+runs. Its re-signed Sky 0.7.17 helper has the pinned `7F73CF56` profile; all nine
+PE sections match `87ECB164`, and live capture acceptance remains unset.
+
 For Desktop `26.1103.3517.0`, use `desktop-261103-profiles.json` through the same public full or `-OnlyModelExperience` entrypoint. The 29-file layout pins 7 Fast request, 7 Fast UI and 11 Ultra copies plus locale, Browser/CUA, trusted paths and startup budgets. Preserve shipped native readiness/plugin guards. This full profile excludes project/archive and quit-reopen edits. The opt-in `-OnlyProjectArchiveState` entrypoint supports an archive-only 26.1103 profile; see `references/project-archive-state.md` for its separate regression and deployment acceptance. Require `test-desktop-261103.cjs`, both older layout regressions after resolver changes, both public DryRuns, and signed payload/runtime verification. The helper profile `87ECB164` is shared with upstream PR #127; its live end-to-end fields remain unset.
 
 For the shipped `26.1029.7803.0` and `26.1029.9216.0` layouts, the full patch uses `desktop-261029-profiles.json` with complete asset hashes. 9216 differs from 7803 in three assets, declared under `variants`; the layout is selected from the files present, and anything other than exactly one complete match fails before writing. It applies only the desktop manifest files, including 11 Ultra and 9 Fast UI copies, the actual model/list identifiers, and the backend Deep Research availability gate. Project-state recovery, Windows membership persistence and archive-error repairs remain separate through the explicit `-OnlyProjectArchiveState` workflow. The package's native Power slider, Goal command, plugin install flow, CUA transport and decrypted-directory copy remain pinned witnesses. Native copy availability does not establish that every bundled plugin survives backend reconciliation; run the separate strict plugin check after installation and preserve the user's enabled choices.
