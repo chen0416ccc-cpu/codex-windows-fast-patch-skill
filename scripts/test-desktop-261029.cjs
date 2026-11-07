@@ -14,6 +14,10 @@ const models = ['gpt-6-astra', 'fixture-model'];
 const plan = planFiles(sourceRoot, models);
 let checks = 0;
 assert.deepEqual(plan.targets.map(target => target.file), manifest.files.map(profile => profile.file)); checks++;
+for (const target of plan.targets) {
+  delete target.source;
+  delete target.original;
+}
 const projectOnlyFiles = ['.vite/build/early-bootstrap-133-485dbc70b8296756.js',
   'webview/assets/async/678916.1a2b7b8d2a.js'];
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-desktop-261029-'));
@@ -99,6 +103,11 @@ try {
   assert.equal(modelPlan.targets.length, 21);
   assert.deepEqual(modelPlan.targets.map(target => target.file), manifest.files.filter(profile =>
     profile.edits.some(edit => modelExperienceKinds.has(edit.kind))).map(profile => profile.file)); checks += 2;
+  for (const target of modelPlan.targets) {
+    delete target.input;
+    delete target.original;
+    delete target.source;
+  }
   patchFiles(modelRoot, modelBackup, models, true, 'model-experience');
   assert(!fs.existsSync(modelBackup)); checks++;
   const mixed = modelPlan.targets.find(target => target.file === shared.file);

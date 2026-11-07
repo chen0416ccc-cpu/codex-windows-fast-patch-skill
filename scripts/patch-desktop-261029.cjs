@@ -5,6 +5,8 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const assert = require('node:assert/strict');
 const manifest = require('./desktop-261029-profiles.json');
+const desktop261103 = require('./desktop-261103-profiles.json');
+const desktop2611034239 = require('./desktop-2611034239-profiles.json');
 const { profiles: projectProfiles, relativePath: projectPath } = require('./patch-project-archive-state.cjs');
 const modelExperienceKinds = new Set(['custom-models', 'fast-request', 'fast-ui', 'ultra']);
 
@@ -23,14 +25,12 @@ function layouts() {
     ...(manifest.variants ?? []).map(variant => {
       const swap = profile => variant.files[profile.file] ? { ...profile, ...variant.files[profile.file] } : profile;
       return { version: variant.version, files: manifest.files.map(swap), native: manifest.native.map(swap) };
-    })];
+    }), desktop261103, desktop2611034239];
 }
 
 function resolveManifest(hasFile) {
-  const renamed = new Set((manifest.variants ?? []).flatMap(variant =>
-    Object.entries(variant.files).filter(([from, to]) => from !== to.file).flatMap(([from, to]) => [from, to.file])));
-  const matches = layouts().filter(layout => layout.files.every(profile => !renamed.has(profile.file) || hasFile(profile.file)));
-  if (matches.length !== 1) throw new Error(`Expected one complete 26.1029 desktop layout, found ${matches.length}`);
+  const matches = layouts().filter(layout => layout.files.every(profile => hasFile(profile.file)));
+  if (matches.length !== 1) throw new Error(`Expected one complete supported desktop layout, found ${matches.length}`);
   return matches[0];
 }
 
@@ -78,7 +78,7 @@ function restoreState(source, profile) {
       } catch {}
     }
   }
-  throw new Error(`Unsupported or partial 26.1029 asset ${profile.file}: ${hash(source)}`);
+  throw new Error(`Unsupported or partial desktop asset ${profile.file}: ${hash(source)}`);
 }
 
 function restore(source, profile) {
