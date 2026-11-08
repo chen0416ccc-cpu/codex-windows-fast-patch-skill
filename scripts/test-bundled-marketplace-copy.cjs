@@ -74,9 +74,19 @@ try {
     });
     assert.deepEqual(JSON.parse(JSON.stringify(state)), [
       {available:true,automatic:false},{available:true,automatic:false},
-      {available:true,automatic:false},{available:true,automatic:true}
+      {available:true,automatic:false},{available:true,automatic:false}
     ]);
   });
+  const legacyResearch = research.replace('({features:flags})=>flags.deepResearch',
+    '()=>!0/*codex_windows_deep_research_bundled_plugin_available*/');
+  run('legacy-research-upgrade', retirement + `const plugins=[${legacyResearch}];`, 0, after => {
+    assert.ok(after.includes('codex_windows_deep_research_bundled_plugin_available*/,installWhenMissing:!1'));
+  });
+  run('duplicate-research', retirement + `const plugins=[${research},${research}];`, 2);
+  run('research-marker-only', retirement + '/*codex_windows_deep_research_bundled_plugin_available*/const plugins=[];', 2);
+  run('research-extra-predicate', retirement + `const plugins=[${research.replace('flags.deepResearch}', 'flags.deepResearch&&flags.futurePolicy}')}];`, 2);
+  run('research-extra-property', retirement + `const plugins=[${research.replace('flags.deepResearch}', 'flags.deepResearch,installWhenMissing:true}')}];`, 2);
+  run('research-unsafe-patched', retirement + `const plugins=[${legacyResearch.replace('*/}', '*/,installWhenMissing:!0}')}];`, 2);
   run('unknown-code-review', retirement + `const plugins=[${codeReview.replace('codeReviewPlugin', 'futureReview')},${research}];`, 2);
   run('duplicate-code-review', retirement + `const plugins=[${codeReview},${codeReview},${research}];`, 2);
   run('unknown-unified-cua', retirement + `const plugins=[${unifiedCua.replace('browserUseTinysky', 'futureEngine')},${research}];`, 2);

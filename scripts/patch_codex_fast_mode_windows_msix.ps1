@@ -1920,13 +1920,28 @@ if (!after.includes(sitesPatchedMarker)) {
   }
 }
 
-if (!after.includes(deepResearchPatchedMarker)) {
-  const deepResearchAvailabilityRe = /isAvailable:\(\{features:([A-Za-z_$][\w$]*)\}\)=>\1\.deepResearch/;
-  if (!deepResearchAvailabilityRe.test(after)) {
-    process.stderr.write('bundled-marketplace-deep-research-availability-target-not-found\n');
-    process.exit(2);
-  }
-  after = after.replace(deepResearchAvailabilityRe, `isAvailable:()=>!0/*${deepResearchPatchedMarker}*/`);
+const researchIdentifier = '[A-Za-z_$][\\w$]*';
+const researchPrefix = `\\.\\.\\.(?:${researchIdentifier}\\.)+deepResearch,`;
+const researchDeclarations = [...after.matchAll(new RegExp(researchPrefix, 'g'))];
+const researchOriginalRe = new RegExp(
+  `(${researchPrefix}isAvailable:)\\(\\{features:(${researchIdentifier})\\}\\)=>\\2\\.deepResearch(?=})`, 'g');
+const researchLegacyRe = new RegExp(
+  `(${researchPrefix}isAvailable:)\\(\\)=>!0/\\*${deepResearchPatchedMarker}\\*/(?=})`, 'g');
+const researchPatchedRe = new RegExp(
+  `${researchPrefix}isAvailable:\\(\\)=>!0/\\*${deepResearchPatchedMarker}\\*/,installWhenMissing:!1(?=})`, 'g');
+const researchOriginal = [...after.matchAll(researchOriginalRe)];
+const researchLegacy = [...after.matchAll(researchLegacyRe)];
+const researchPatched = [...after.matchAll(researchPatchedRe)];
+const researchMarkerCount = after.split(deepResearchPatchedMarker).length - 1;
+if (researchDeclarations.length !== 1 ||
+    (researchMarkerCount === 0 ? researchOriginal.length !== 1 :
+      researchMarkerCount !== 1 || researchOriginal.length !== 0 || researchLegacy.length + researchPatched.length !== 1)) {
+  process.stderr.write('bundled-marketplace-deep-research-availability-target-not-found-or-ambiguous\n');
+  process.exit(2);
+}
+if (researchPatched.length === 0) {
+  after = after.replace(researchOriginal.length ? researchOriginalRe : researchLegacyRe,
+    (match, prefix) => `${prefix}()=>!0/*${deepResearchPatchedMarker}*/,installWhenMissing:!1`);
   changed = true;
 }
 

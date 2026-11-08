@@ -7,7 +7,8 @@
       "edits": [
         {
           "before": "isAvailable:({features:e})=>e.deepResearch",
-          "after": "isAvailable:()=>!0/*codex_windows_deep_research_bundled_plugin_available*/",
+          "after": "isAvailable:()=>!0/*codex_windows_deep_research_bundled_plugin_available*/,installWhenMissing:!1",
+          "legacyAfter": "isAvailable:()=>!0/*codex_windows_deep_research_bundled_plugin_available*/",
           "kind": "bundled-deep-research"
         },
         {

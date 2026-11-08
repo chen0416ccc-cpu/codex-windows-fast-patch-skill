@@ -49,7 +49,7 @@ profiles.push(
     file: 'early-bootstrap-632-62c641245a52ef0e.js',
     sha256: ['c16675e64dae86bdb09f7720f038a8c2f2beacf0e85bbadd369f407d38662aa4'],
     compatibleEdits: [['isAvailable:({features:e})=>e.deepResearch',
-      'isAvailable:()=>!0/*codex_windows_deep_research_bundled_plugin_available*/']],
+      'isAvailable:()=>!0/*codex_windows_deep_research_bundled_plugin_available*/,installWhenMissing:!1']],
     edits: [['M.setThreadAssignmentsEnabled(tl().localProjectTaskMembership)', 'M.setThreadAssignmentsEnabled(tl().localProjectTaskMembership||process.platform==="win32"/*codex_windows_local_project_membership_persistence*/)']],
   },
   {
@@ -107,7 +107,7 @@ profiles.push({
   file: 'early-bootstrap-199-e3316cddb4ea6a6b.js',
   sha256: ['3202cb775ee05404d2b08f6dbb6fa3e524321da435564d8b2a7c6359ccdc6b0a'],
   compatibleEdits: [['isAvailable:({features:e})=>e.deepResearch',
-    'isAvailable:()=>!0/*codex_windows_deep_research_bundled_plugin_available*/']],
+    'isAvailable:()=>!0/*codex_windows_deep_research_bundled_plugin_available*/,installWhenMissing:!1']],
   edits: [['T.setThreadAssignmentsEnabled(tr().localProjectTaskMembership)', 'T.setThreadAssignmentsEnabled(tr().localProjectTaskMembership||process.platform==="win32"/*codex_windows_local_project_membership_persistence*/)']],
 }, profiles[9]);
 
@@ -142,7 +142,12 @@ function transform(source, profile) {
       manifest.files.map(entry => variant.files[entry.file] ? { ...entry, ...variant.files[entry.file] } : entry))].flat();
     candidates.push(...require('./desktop-2611034239-profiles.json').files);
     const desktop = candidates.find(entry => entry.file === relativePath(profile) && profile.sha256.includes(entry.sha256));
-    if (desktop) states.push(desktop.edits.map(({before, after}) => [before, after]));
+    if (desktop) {
+      for (const edits of [desktop.edits, desktop.edits.filter(edit => !edit.kind?.startsWith('startup-'))]) {
+        states.push(edits.map(({before, after}) => [before, after]));
+        states.push(edits.map(({before, after, legacyAfter}) => [before, legacyAfter ?? after]));
+      }
+    }
   }
   for (const overlays of states) {
     try {

@@ -70,7 +70,9 @@ function restoreState(source, profile) {
             validateModels(JSON.parse(matches[0][1]));
             original = replaceOnce(original, matches[0][0], edit.before);
           } else {
-            original = replaceOnce(original, edit.after, edit.before);
+            // Upgrade the exact old discovery overlay only after restoring the full pinned hash.
+            const applied = original.includes(edit.after) ? edit.after : edit.legacyAfter ?? edit.after;
+            original = replaceOnce(original, applied, edit.before);
           }
         }
         assert.equal(hash(original), profile.sha256, 'Restored file hash differs');

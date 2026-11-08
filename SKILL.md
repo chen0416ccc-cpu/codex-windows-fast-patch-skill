@@ -98,6 +98,11 @@ After a package update, the local plugin repair also backs up and refreshes
 already published descriptors in Desktop's actual reserved marketplace mirror,
 then upgrades installed plugin version records to the package versions while
 preserving disabled states. It does not install unrelated optional plugins.
+Desktop availability patches for optional plugins, including Deep Research,
+must also set `installWhenMissing:false`; discovery must not change existing
+installation or enabled/disabled choices. Run
+`node scripts/test-bundled-plugin-discovery.cjs <original-extracted-asar>` and
+`node scripts/test-bundled-marketplace-copy.cjs` when changing this boundary.
 Run `test-bundled-plugin-upgrade-repair.ps1` when changing this synchronization.
 
 If `install-computer-use-local.ps1 -StrictVerifyOnly` also reports that installed `app.asar` does not preserve external `NODE_REPL_TRUSTED_CODE_PATHS` across Desktop config regeneration, do not use the Model Experience-only installer: that mode cannot repair the shared Node REPL trust contract. Run a full package dry run on D: and require a `Node REPL trusted-paths patch result: patched` or `already-patched` report plus the trusted-path marker in the staged `app.asar`, then use `scripts\start-model-experience-repair.ps1`. A repair runner must confirm that marker in the candidate package; it must not infer failure from `already-patched` alone. This launcher requests ordinary UAC consent, binds the external installer to the current user SID, desktop session, and exact source package version, and invokes the complete non-phone patch path. It builds a higher-revision signed recovery package containing the original program files, installs the patch in place, then requires the default model to expose `priority` plus a passing `-StrictVerifyOnly` before removing temporary artifacts. Record `ultrafast` per model from `model/list`; never fabricate it for a model/provider that does not advertise that tier. No phone remote-control patch is included. UAC or policy rejection stops before the app is closed; do not replace it with a scheduled task, policy change, or another elevation bypass.
