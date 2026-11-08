@@ -1920,13 +1920,28 @@ if (!after.includes(sitesPatchedMarker)) {
   }
 }
 
-if (!after.includes(deepResearchPatchedMarker)) {
-  const deepResearchAvailabilityRe = /isAvailable:\(\{features:([A-Za-z_$][\w$]*)\}\)=>\1\.deepResearch/;
-  if (!deepResearchAvailabilityRe.test(after)) {
-    process.stderr.write('bundled-marketplace-deep-research-availability-target-not-found\n');
-    process.exit(2);
-  }
-  after = after.replace(deepResearchAvailabilityRe, `isAvailable:()=>!0/*${deepResearchPatchedMarker}*/`);
+const researchIdentifier = '[A-Za-z_$][\\w$]*';
+const researchPrefix = `\\.\\.\\.(?:${researchIdentifier}\\.)+deepResearch,`;
+const researchDeclarations = [...after.matchAll(new RegExp(researchPrefix, 'g'))];
+const researchOriginalRe = new RegExp(
+  `(${researchPrefix}isAvailable:)\\(\\{features:(${researchIdentifier})\\}\\)=>\\2\\.deepResearch(?=})`, 'g');
+const researchLegacyRe = new RegExp(
+  `(${researchPrefix}isAvailable:)\\(\\)=>!0/\\*${deepResearchPatchedMarker}\\*/(?=})`, 'g');
+const researchPatchedRe = new RegExp(
+  `${researchPrefix}isAvailable:\\(\\)=>!0/\\*${deepResearchPatchedMarker}\\*/,installWhenMissing:!1(?=})`, 'g');
+const researchOriginal = [...after.matchAll(researchOriginalRe)];
+const researchLegacy = [...after.matchAll(researchLegacyRe)];
+const researchPatched = [...after.matchAll(researchPatchedRe)];
+const researchMarkerCount = after.split(deepResearchPatchedMarker).length - 1;
+if (researchDeclarations.length !== 1 ||
+    (researchMarkerCount === 0 ? researchOriginal.length !== 1 :
+      researchMarkerCount !== 1 || researchOriginal.length !== 0 || researchLegacy.length + researchPatched.length !== 1)) {
+  process.stderr.write('bundled-marketplace-deep-research-availability-target-not-found-or-ambiguous\n');
+  process.exit(2);
+}
+if (researchPatched.length === 0) {
+  after = after.replace(researchOriginal.length ? researchOriginalRe : researchLegacyRe,
+    (match, prefix) => `${prefix}()=>!0/*${deepResearchPatchedMarker}*/,installWhenMissing:!1`);
   changed = true;
 }
 
@@ -2783,33 +2798,35 @@ function Invoke-PatchAppAsar {
     return $true
   }
 
-  $modernModelAsset = @('24191.589dcc9878.js', '24191.dc3ed2d869.js') |
+  $modernModelAsset = @('24191.589dcc9878.js', '24191.dc3ed2d869.js', '182735.e33af7cdca.js', '182735.bb2cb0d2af.js') |
     ForEach-Object { Join-Path $extractDir "webview\assets\async\$_" } |
     Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
-  if ($OnlyModelExperience -and $modernModelAsset) {
+  if (($OnlyModelExperience -or $OnlyBundledMarketplaceCopy) -and $modernModelAsset) {
+    $modernScopeName = if ($OnlyModelExperience) { 'Model Experience' } else { 'bundled marketplace copy' }
+    $modernScopeFlag = if ($OnlyModelExperience) { '--model-experience' } else { '--bundled-marketplace' }
     $modelsPath = Join-Path $WorkDir 'custom-models.json'
     [IO.File]::WriteAllText($modelsPath, (ConvertTo-Json -InputObject @($CustomModels) -Compress), [Text.UTF8Encoding]::new($false))
     $modernResult = Invoke-NodePatcher $nodePath (Join-Path $PSScriptRoot 'patch-desktop-261029.cjs') `
-      @($extractDir, (Join-Path $WorkDir 'desktop-originals'), $modelsPath, '--model-experience')
-    Write-Log "Model Experience pinned 26.1029 patch result: $modernResult"
+      @($extractDir, (Join-Path $WorkDir 'desktop-originals'), $modelsPath, $modernScopeFlag)
+    Write-Log "$modernScopeName pinned desktop patch result: $modernResult"
     $modernReport = $modernResult | ConvertFrom-Json
-    Write-Log 'Model Experience Power slider result: already-open-native'
+    if ($OnlyModelExperience) { Write-Log 'Model Experience Power slider result: already-open-native' }
     foreach ($asset in $modernReport.files) {
       & $nodePath --check (Join-Path $extractDir $asset.file)
-      if ($LASTEXITCODE -ne 0) { Fail "Model Experience 26.1029 asset syntax failed: $($asset.file)" }
+      if ($LASTEXITCODE -ne 0) { Fail "$modernScopeName asset syntax failed: $($asset.file)" }
     }
     if ($DryRun) {
-      Write-Log 'dry run: pinned 26.1029 Model Experience validated; unrelated gates unchanged'
+      Write-Log "dry run: pinned $($modernReport.version) $modernScopeName validated; unrelated gates unchanged"
       return $false
     }
     if (@($modernReport.files | Where-Object status -eq 'patched').Count -eq 0) {
-      Write-Log 'asar Model Experience patches already present'
+      Write-Log "asar $modernScopeName patches already present"
       return $false
     }
-    Write-Log 'repacking 26.1029 Model Experience with original unpacked files and shared extents'
+    Write-Log "repacking $modernScopeName with original unpacked files and shared extents"
     $modernRepack = Invoke-NodePatcher $nodePath (Join-Path $PSScriptRoot 'repack-project-archive-asar.cjs') `
       @($asarPath, $extractDir, $newAsarPath, '--all')
-    Write-Log "Model Experience 26.1029 preserved ASAR layout: $modernRepack"
+    Write-Log "$modernScopeName preserved ASAR layout: $modernRepack"
     Copy-Item -LiteralPath $newAsarPath -Destination $asarPath -Force
     return $true
   }
@@ -3026,15 +3043,15 @@ function Invoke-PatchAppAsar {
     return $true
   }
 
-  $modernAsset = @('24191.589dcc9878.js', '24191.dc3ed2d869.js') |
+  $modernAsset = @('24191.589dcc9878.js', '24191.dc3ed2d869.js', '182735.e33af7cdca.js', '182735.bb2cb0d2af.js') |
     ForEach-Object { Join-Path $extractDir "webview\assets\async\$_" } |
     Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
   if ($modernAsset) {
-    if ($PatchWindowsStoreUpdateFallback) { Fail 'Windows Store update fallback is not validated for the pinned 26.1029 layout' }
+    if ($PatchWindowsStoreUpdateFallback) { Fail 'Windows Store update fallback is not validated for this pinned desktop layout' }
     $modelsPath = Join-Path $WorkDir 'custom-models.json'
     [IO.File]::WriteAllText($modelsPath, (ConvertTo-Json -InputObject @($CustomModels) -Compress), [Text.UTF8Encoding]::new($false))
     $modernResult = Invoke-NodePatcher $nodePath (Join-Path $PSScriptRoot 'patch-desktop-261029.cjs') @($extractDir, (Join-Path $WorkDir 'desktop-originals'), $modelsPath)
-    Write-Log "26.1029 pinned desktop patch result: $modernResult"
+    Write-Log "Pinned desktop patch result: $modernResult"
     $modernReport = $modernResult | ConvertFrom-Json
     $modernFeatures = [ordered]@{
       'fast-mode' = @('fast-request'); 'fast-mode UI' = @('fast-ui'); 'custom models' = @('custom-models')
@@ -3055,19 +3072,19 @@ function Invoke-PatchAppAsar {
     Write-Log 'Windows CUA surface patch result: already-open-native-windows'
     foreach ($asset in $modernReport.files) {
       & $nodePath --check (Join-Path $extractDir $asset.file)
-      if ($LASTEXITCODE -ne 0) { Fail "26.1029 asset syntax failed: $($asset.file)" }
+      if ($LASTEXITCODE -ne 0) { Fail "Pinned desktop asset syntax failed: $($asset.file)" }
     }
     if ($DryRun) {
-      Write-Log 'dry run: complete pinned 26.1029 desktop layout validated'
+      Write-Log "dry run: complete pinned $($modernReport.version) desktop layout validated"
       return $false
     }
     if (@($modernReport.files | Where-Object status -eq 'patched').Count -eq 0) {
-      Write-Log '26.1029 desktop patches already present'
+      Write-Log 'Pinned desktop patches already present'
       return $false
     }
-    Write-Log 'repacking 26.1029 app.asar with original unpacked files and shared extents'
+    Write-Log 'repacking pinned app.asar with original unpacked files and shared extents'
     $modernRepack = Invoke-NodePatcher $nodePath (Join-Path $PSScriptRoot 'repack-project-archive-asar.cjs') @($asarPath, $extractDir, $newAsarPath, '--all')
-    Write-Log "26.1029 preserved ASAR layout: $modernRepack"
+    Write-Log "Pinned desktop preserved ASAR layout: $modernRepack"
     Copy-Item -LiteralPath $newAsarPath -Destination $asarPath -Force
     return $true
   }

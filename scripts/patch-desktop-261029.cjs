@@ -5,6 +5,8 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const assert = require('node:assert/strict');
 const manifest = require('./desktop-261029-profiles.json');
+const desktop261103 = require('./desktop-261103-profiles.json');
+const desktop2611034239 = require('./desktop-2611034239-profiles.json');
 const { profiles: projectProfiles, relativePath: projectPath } = require('./patch-project-archive-state.cjs');
 const modelExperienceKinds = new Set(['custom-models', 'fast-request', 'fast-ui', 'ultra']);
 
@@ -23,14 +25,12 @@ function layouts() {
     ...(manifest.variants ?? []).map(variant => {
       const swap = profile => variant.files[profile.file] ? { ...profile, ...variant.files[profile.file] } : profile;
       return { version: variant.version, files: manifest.files.map(swap), native: manifest.native.map(swap) };
-    })];
+    }), desktop261103, desktop2611034239];
 }
 
 function resolveManifest(hasFile) {
-  const renamed = new Set((manifest.variants ?? []).flatMap(variant =>
-    Object.entries(variant.files).filter(([from, to]) => from !== to.file).flatMap(([from, to]) => [from, to.file])));
-  const matches = layouts().filter(layout => layout.files.every(profile => !renamed.has(profile.file) || hasFile(profile.file)));
-  if (matches.length !== 1) throw new Error(`Expected one complete 26.1029 desktop layout, found ${matches.length}`);
+  const matches = layouts().filter(layout => layout.files.every(profile => hasFile(profile.file)));
+  if (matches.length !== 1) throw new Error(`Expected one complete supported desktop layout, found ${matches.length}`);
   return matches[0];
 }
 
@@ -41,8 +41,9 @@ function validateModels(models) {
 }
 
 function selectEdits(profile, scope) {
-  assert(['desktop', 'model-experience'].includes(scope), 'Unsupported desktop patch scope');
-  return scope === 'desktop' ? profile.edits : profile.edits.filter(edit => modelExperienceKinds.has(edit.kind));
+  assert(['desktop', 'model-experience', 'bundled-marketplace'].includes(scope), 'Unsupported desktop patch scope');
+  return scope === 'desktop' ? profile.edits : profile.edits.filter(edit => scope === 'model-experience' ?
+    modelExperienceKinds.has(edit.kind) : edit.kind === 'bundled-deep-research');
 }
 
 function restoreState(source, profile) {
@@ -70,7 +71,9 @@ function restoreState(source, profile) {
             validateModels(JSON.parse(matches[0][1]));
             original = replaceOnce(original, matches[0][0], edit.before);
           } else {
-            original = replaceOnce(original, edit.after, edit.before);
+            // Upgrade the exact old discovery overlay only after restoring the full pinned hash.
+            const applied = original.includes(edit.after) ? edit.after : edit.legacyAfter ?? edit.after;
+            original = replaceOnce(original, applied, edit.before);
           }
         }
         assert.equal(hash(original), profile.sha256, 'Restored file hash differs');
@@ -78,7 +81,7 @@ function restoreState(source, profile) {
       } catch {}
     }
   }
-  throw new Error(`Unsupported or partial 26.1029 asset ${profile.file}: ${hash(source)}`);
+  throw new Error(`Unsupported or partial desktop asset ${profile.file}: ${hash(source)}`);
 }
 
 function restore(source, profile) {
@@ -142,9 +145,10 @@ function patchFiles(root, backupRoot, models, checkOnly = false, scope = 'deskto
 module.exports = { manifest, layouts, resolveManifest, modelExperienceKinds, validateModels, restore, transform, planFiles, patchFiles };
 if (require.main === module) {
   const [root, backupRoot, modelsJson, ...flags] = process.argv.slice(2);
-  assert(root && backupRoot && modelsJson && flags.every(flag => ['--check', '--model-experience'].includes(flag)) &&
-    new Set(flags).size === flags.length,
-    'Usage: patch-desktop-261029.cjs <extracted-asar> <backup-root> <models.json> [--check] [--model-experience]');
+  assert(root && backupRoot && modelsJson && flags.every(flag => ['--check', '--model-experience', '--bundled-marketplace'].includes(flag)) &&
+    new Set(flags).size === flags.length && !(flags.includes('--model-experience') && flags.includes('--bundled-marketplace')),
+    'Usage: patch-desktop-261029.cjs <extracted-asar> <backup-root> <models.json> [--check] [--model-experience | --bundled-marketplace]');
   console.log(JSON.stringify(patchFiles(root, backupRoot, JSON.parse(fs.readFileSync(modelsJson, 'utf8').replace(/^\uFEFF/, '')),
-    flags.includes('--check'), flags.includes('--model-experience') ? 'model-experience' : 'desktop')));
+    flags.includes('--check'), flags.includes('--model-experience') ? 'model-experience' :
+      flags.includes('--bundled-marketplace') ? 'bundled-marketplace' : 'desktop')));
 }

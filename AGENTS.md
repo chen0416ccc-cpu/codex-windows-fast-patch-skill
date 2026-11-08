@@ -14,6 +14,12 @@
 - Prefer a dedicated `codex/` branch for non-trivial work.
 - Keep changes small and focused. If changing Chinese user-facing guidance in `README.md`, update the matching English guidance in `README.en.md` when practical.
 
+## PR Acceptance
+
+- Accept useful new ideas when their benefit, scope and verification are concrete; novelty alone is neither a reason to merge nor reject.
+- Review the actual base/head diff and overlap with main and other PRs. Reuse covered fixes; do not add duplicate implementations, contributor run logs or redundant guides to the core project.
+- Repair defaults must not install/enable optional plugins or broaden unrelated features. Preserve user choices, keep optional behavior opt-in, and require regression evidence for the boundary being changed. An empty checks list or a clean merge is not CI acceptance.
+
 ## Safety Boundaries
 
 - Never commit secrets, `auth.json`, API keys, OAuth tokens, private keys, browser profiles, local credential stores, or generated auth files.
