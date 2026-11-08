@@ -32,6 +32,14 @@ for (const root of process.argv.slice(2)) {
   const edit = profile.edits.find(edit => edit.kind === 'bundled-deep-research');
   const original = fs.readFileSync(path.join(root, profile.file), 'utf8');
   const safe = desktop.transform(original, profile, ['fixture-model']).source;
+  const targeted = desktop.planFiles(root, ['fixture-model'], 'bundled-marketplace');
+  assert.equal(targeted.targets.length, 1);
+  assert.equal(targeted.targets[0].file, profile.file);
+  assert.equal(targeted.targets[0].source, original.replace(edit.before, edit.after));
+  assert.equal(desktop.transform(targeted.targets[0].source, profile, ['fixture-model'],
+    'bundled-marketplace').status, 'already-patched');
+  assert.equal(desktop.transform(targeted.targets[0].source, profile, ['fixture-model']).source, safe);
+  checks += 5;
   const membership = project.profiles.find(candidate => candidate.kind === 'project-membership' &&
     project.relativePath(candidate) === profile.file);
   const prior = safe.replace(edit.after, legacyAvailability);

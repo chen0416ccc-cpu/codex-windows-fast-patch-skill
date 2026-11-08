@@ -2801,30 +2801,32 @@ function Invoke-PatchAppAsar {
   $modernModelAsset = @('24191.589dcc9878.js', '24191.dc3ed2d869.js', '182735.e33af7cdca.js', '182735.bb2cb0d2af.js') |
     ForEach-Object { Join-Path $extractDir "webview\assets\async\$_" } |
     Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
-  if ($OnlyModelExperience -and $modernModelAsset) {
+  if (($OnlyModelExperience -or $OnlyBundledMarketplaceCopy) -and $modernModelAsset) {
+    $modernScopeName = if ($OnlyModelExperience) { 'Model Experience' } else { 'bundled marketplace copy' }
+    $modernScopeFlag = if ($OnlyModelExperience) { '--model-experience' } else { '--bundled-marketplace' }
     $modelsPath = Join-Path $WorkDir 'custom-models.json'
     [IO.File]::WriteAllText($modelsPath, (ConvertTo-Json -InputObject @($CustomModels) -Compress), [Text.UTF8Encoding]::new($false))
     $modernResult = Invoke-NodePatcher $nodePath (Join-Path $PSScriptRoot 'patch-desktop-261029.cjs') `
-      @($extractDir, (Join-Path $WorkDir 'desktop-originals'), $modelsPath, '--model-experience')
-    Write-Log "Model Experience pinned desktop patch result: $modernResult"
+      @($extractDir, (Join-Path $WorkDir 'desktop-originals'), $modelsPath, $modernScopeFlag)
+    Write-Log "$modernScopeName pinned desktop patch result: $modernResult"
     $modernReport = $modernResult | ConvertFrom-Json
-    Write-Log 'Model Experience Power slider result: already-open-native'
+    if ($OnlyModelExperience) { Write-Log 'Model Experience Power slider result: already-open-native' }
     foreach ($asset in $modernReport.files) {
       & $nodePath --check (Join-Path $extractDir $asset.file)
-      if ($LASTEXITCODE -ne 0) { Fail "Model Experience asset syntax failed: $($asset.file)" }
+      if ($LASTEXITCODE -ne 0) { Fail "$modernScopeName asset syntax failed: $($asset.file)" }
     }
     if ($DryRun) {
-      Write-Log "dry run: pinned $($modernReport.version) Model Experience validated; unrelated gates unchanged"
+      Write-Log "dry run: pinned $($modernReport.version) $modernScopeName validated; unrelated gates unchanged"
       return $false
     }
     if (@($modernReport.files | Where-Object status -eq 'patched').Count -eq 0) {
-      Write-Log 'asar Model Experience patches already present'
+      Write-Log "asar $modernScopeName patches already present"
       return $false
     }
-    Write-Log 'repacking Model Experience with original unpacked files and shared extents'
+    Write-Log "repacking $modernScopeName with original unpacked files and shared extents"
     $modernRepack = Invoke-NodePatcher $nodePath (Join-Path $PSScriptRoot 'repack-project-archive-asar.cjs') `
       @($asarPath, $extractDir, $newAsarPath, '--all')
-    Write-Log "Model Experience preserved ASAR layout: $modernRepack"
+    Write-Log "$modernScopeName preserved ASAR layout: $modernRepack"
     Copy-Item -LiteralPath $newAsarPath -Destination $asarPath -Force
     return $true
   }
