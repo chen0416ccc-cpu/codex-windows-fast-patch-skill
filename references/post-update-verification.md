@@ -105,7 +105,8 @@ If a plugin appears between snapshots, report the first snapshot/log that proves
 ## Match claims to acceptance evidence
 
 - Read `model/list` per model. A `service_tier=priority` wire check proves that request, not support for every model or an unadvertised `ultrafast` tier.
-- Run `install-computer-use-local.ps1 -StrictVerifyOnly -VerifyAllBundledPluginsAvailable` for current package/runtime/plugin contracts. Report optional plugins as available or installed according to evidence.
+- Report verification scope explicitly: `install-computer-use-local.ps1 -StrictVerifyOnly` checks core runtime/plugin contracts; adding `-VerifyAllBundledPluginsAvailable` also requires every current bundled descriptor to be discoverable, not installed or enabled. A core pass does not erase an all-bundled failure.
+- Keep the combined `codex-after-update.ps1` check intact and read its JSON `status`, `pluginExitCode` and `app.Status`. Process exit 0 is not `verified-contracts`, and `not-checked` is not application acceptance. A proxy-only repair without a full-runner checkpoint must report that limit; do not edit transaction JSON or suppress failures to obtain a green report.
 - Verify Chrome and the in-app browser separately when browser acceptance is requested. One browser's success does not establish the other's. Use temporary background tabs and report the operation actually performed.
 - Window enumeration proves transport/enumeration only. Keep the ordinary background-only verification boundary: native screenshots and input require the existing explicit authorization described in `SKILL.md`.
 - Do not promote an isolated pattern test, signed package or successful dry run to installed/runtime acceptance. Preserve the exact tested versions and outstanding limits in the handoff.
