@@ -208,28 +208,17 @@ diff --git a/codex-rs/app-server-transport/src/transport/remote_control/websocke
 index 7434454..b345595 100644
 --- a/codex-rs/app-server-transport/src/transport/remote_control/websocket.rs
 +++ b/codex-rs/app-server-transport/src/transport/remote_control/websocket.rs
-@@ -44,8 +44,10 @@ use futures::stream::SplitSink;
+@@ -44,8 +44,9 @@ use futures::stream::SplitSink;
  use futures::stream::SplitStream;
  use std::collections::HashMap;
  use std::collections::VecDeque;
 +use std::env;
  use std::io;
  use std::io::ErrorKind;
-+use std::net::SocketAddr;
  use std::sync::Arc;
  use tokio::net::TcpStream;
  use tokio::sync::Mutex;
-@@ -83,6 +85,9 @@ const REMOTE_CONTROL_WEBSOCKET_CONNECT_TIMEOUT: std::time::Duration =
- const REMOTE_CONTROL_CONNECTION_SHUTDOWN_TIMEOUT: std::time::Duration =
-     std::time::Duration::from_secs(5);
- const REMOTE_APP_SERVER_NOT_FOUND_DETAIL: &str = "Remote app server not found";
-+const REMOTE_CONTROL_V2RAYN_PROXY_FALLBACK: &str = "http://127.0.0.1:10808";
-+const REMOTE_CONTROL_DISABLE_V2RAYN_PROXY_FALLBACK: &str =
-+    "CODEX_REMOTE_CONTROL_DISABLE_V2RAYN_PROXY_FALLBACK";
- 
- struct BoundedOutboundBuffer {
-     buffer_by_stream: HashMap<(ClientId, StreamId), VecDeque<ServerEnvelope>>,
-@@ -1311,6 +1316,82 @@ fn next_reconnect_delay(reconnect_attempt: &mut u64) -> (std::time::Duration, bo
+@@ -1311,6 +1312,39 @@ fn next_reconnect_delay(reconnect_attempt: &mut u64) -> (std::time::Duration, bo
      (reconnect_delay, reconnect_backoff_reset)
  }
  
@@ -252,7 +241,7 @@ index 7434454..b345595 100644
 +    })
 +}
 +
-+fn maybe_apply_remote_control_proxy_fallback(websocket_url: &str) -> Option<String> {
++fn configured_remote_control_proxy(websocket_url: &str) -> Option<String> {
 +    const MARKER: &str = "remote_control_websocket_proxy_attempt";
 +    if let Some((name, value)) = remote_control_proxy_env_value() {
 +        info!(
@@ -263,64 +252,21 @@ index 7434454..b345595 100644
 +        );
 +        return Some(value);
 +    }
-+
-+    if env::var(REMOTE_CONTROL_DISABLE_V2RAYN_PROXY_FALLBACK)
-+        .ok()
-+        .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
-+    {
-+        info!(
-+            websocket_url,
-+            marker = MARKER,
-+            "remote control websocket v2rayN proxy fallback disabled"
-+        );
-+        return None;
-+    }
-+
-+    let fallback_addr = SocketAddr::from(([127, 0, 0, 1], 10808));
-+    match std::net::TcpStream::connect_timeout(
-+        &fallback_addr,
-+        std::time::Duration::from_millis(300),
-+    ) {
-+        Ok(stream) => {
-+            drop(stream);
-+            // The patched tokio-tungstenite fork reads standard proxy env vars.
-+            // Set them only for this process, immediately before the remote-control connect.
-+            unsafe {
-+                env::set_var("HTTPS_PROXY", REMOTE_CONTROL_V2RAYN_PROXY_FALLBACK);
-+                env::set_var("HTTP_PROXY", REMOTE_CONTROL_V2RAYN_PROXY_FALLBACK);
-+            }
-+            info!(
-+                websocket_url,
-+                proxy = REMOTE_CONTROL_V2RAYN_PROXY_FALLBACK,
-+                marker = MARKER,
-+                "remote control websocket using local v2rayN proxy fallback"
-+            );
-+            Some(REMOTE_CONTROL_V2RAYN_PROXY_FALLBACK.to_string())
-+        }
-+        Err(err) => {
-+            warn!(
-+                websocket_url,
-+                proxy = REMOTE_CONTROL_V2RAYN_PROXY_FALLBACK,
-+                marker = MARKER,
-+                "remote control websocket proxy fallback unavailable: {err}"
-+            );
-+            None
-+        }
-+    }
++    None
 +}
 +
  pub(super) async fn connect_remote_control_websocket(
      remote_control_target: &RemoteControlTarget,
      state_db: Option<&StateRuntime>,
-@@ -1346,6 +1427,7 @@ pub(super) async fn connect_remote_control_websocket(
+@@ -1346,6 +1380,7 @@ pub(super) async fn connect_remote_control_websocket(
          connect_options.installation_id,
          connect_options.subscribe_cursor,
      )?;
-+    let proxy = maybe_apply_remote_control_proxy_fallback(&remote_control_target.websocket_url);
++    let proxy = configured_remote_control_proxy(&remote_control_target.websocket_url);
  
      let websocket_connect_result = tokio::time::timeout(
          REMOTE_CONTROL_WEBSOCKET_CONNECT_TIMEOUT,
-@@ -1363,7 +1445,17 @@ pub(super) async fn connect_remote_control_websocket(
+@@ -1363,7 +1398,17 @@ pub(super) async fn connect_remote_control_websocket(
      })?;
  
      match websocket_connect_result {

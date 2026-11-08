@@ -12,6 +12,7 @@ function Write-Fixture([string]$RelativePath, [string]$Text) {
 }
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'codex-after-update.ps1') -Destination $root
 Copy-Item -LiteralPath (Join-Path $sourceRoot 'lib\post-update-readiness.ps1') -Destination (Join-Path $root 'lib')
+Copy-Item -LiteralPath (Join-Path $sourceRoot 'lib\repair-storage.ps1') -Destination (Join-Path $root 'lib')
 Write-Fixture 'probe-repair-models.cjs' 'process.stdout.write(JSON.stringify({defaultModel:"fixture-new",customModels:["fixture-new","future-model"],models:[{model:"fixture-new",reasoningEfforts:["ultra"],serviceTiers:["priority"]}]}));'
 Write-Fixture 'OpenAI\Codex\bin\fixture\codex.exe' 'unused executable marker'
 Write-Fixture 'get-model-experience-repair-status.ps1' @'

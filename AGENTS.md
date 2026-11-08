@@ -8,17 +8,22 @@
 
 ## Before Editing
 
-- Before each update or patch, follow `SKILL.md` Self-Update Preflight and `references/remote-review-and-publication.md`: fetch/review fork and upstream main, reuse covered fixes, then validate, commit, push fork main and publish an upstream PR for necessary increments. Record the commit and PR URL.
+- Before updating the skill or changing patch code, follow `SKILL.md` Self-Update Preflight and `references/remote-review-and-publication.md`: review the actual update source and reuse covered fixes. Do not require a fork for ordinary skill use. Publishing changes or preparing an upstream PR requires an explicit human contribution request; ordinary skill use or local repair does not grant it.
 - Inspect the current branch, working tree, and remote before making changes.
 - Preserve user changes. Do not discard, overwrite, or reset uncommitted work unless the user explicitly asks for it.
 - Prefer a dedicated `codex/` branch for non-trivial work.
 - Keep changes small and focused. If changing Chinese user-facing guidance in `README.md`, update the matching English guidance in `README.en.md` when practical.
 
-## PR Acceptance
+## Human-Directed PR Contributions
 
-- Accept useful new ideas when their benefit, scope and verification are concrete; novelty alone is neither a reason to merge nor reject.
-- Review the actual base/head diff and overlap with main and other PRs. Reuse covered fixes; do not add duplicate implementations, contributor run logs or redundant guides to the core project.
-- Repair defaults must not install/enable optional plugins or broaden unrelated features. Preserve user choices, keep optional behavior opt-in, and require regression evidence for the boundary being changed. An empty checks list or a clean merge is not CI acceptance.
+Apply this section only when a human explicitly asks an agent to prepare, submit or revise a PR to this project. Installing, updating or using the skill, or repairing a local client, does not activate a contribution workflow or require the user to maintain this repository. Read this section before preparing an authorized contribution.
+
+- Propose useful fixes or new ideas with concrete benefit, scope and verification; novelty alone is neither a reason to accept nor reject a contribution.
+- Compare the proposed base/head diff with main and open PRs. Reuse covered fixes; do not add duplicate implementations, contributor run logs or redundant guides to the core project.
+- Do not turn a maintainer's local paths, proxy ports or one-off preferences into universal defaults. Keep environment-specific inputs configurable and distinguish optional workflows from ordinary repair.
+- Preserve user choices: repair defaults must not install/enable optional plugins or broaden unrelated features. Keep optional behavior opt-in, test changed boundaries, and report actual checks and remaining limits in the PR. An empty checks list or a clean merge is not CI acceptance.
+
+Contributors propose changes; this project's maintainers decide acceptance. A request to contribute does not authorize merging PRs or changing the user's repair scope.
 
 ## Safety Boundaries
 
@@ -43,7 +48,7 @@ Get-ChildItem -LiteralPath scripts -Filter *.ps1 -Recurse | ForEach-Object {
 - After touching `scripts\lib\asar-integrity.ps1` or any `Update-ElectronAsarIntegrity` call site, run the regression suite; a wrong integrity hash produces a package that installs and then dies at startup:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-asar-integrity.ps1 -TemporaryRoot D:\tmp\asar-test -CheckInstalledPackage
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-asar-integrity.ps1 -TemporaryRoot (Join-Path $env:TEMP 'codex-asar-test') -CheckInstalledPackage
 ```
 
 - After touching package selection, run `scripts\test-staged-package-selection.ps1 -TemporaryRoot <dir>`.

@@ -8,19 +8,26 @@ param(
   [switch]$ResumePreparedBuild,
   [string]$PreparedTranscriptPath,
   [string[]]$CustomModels = @('gpt-6-astra', 'gpt-6-sol', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'),
-  [switch]$KeepArtifacts
+  [switch]$KeepArtifacts,
+  [string]$DataRoot
 )
 
 $ErrorActionPreference = 'Stop'
-$script:RepairRunRoot = 'D:\CodexData\codex-windows-fast-patch\model-experience-repair-runs'
-$script:RepairLogRoot = 'D:\CodexData\codex-windows-fast-patch\model-experience-repair-logs'
+. (Join-Path $PSScriptRoot 'lib\repair-storage.ps1')
+$boundDataRoot = Get-RepairDataRootFromRunPath $OutputRoot
+if ($DataRoot -and (Get-RepairStorageLayout $DataRoot).DataRoot -ine $boundDataRoot) {
+  throw 'Repair output does not belong to the requested data root.'
+}
+$storage = Get-RepairStorageLayout -DataRoot $boundDataRoot
+$script:RepairRunRoot = $storage.RunRoot
+$script:RepairLogRoot = $storage.LogRoot
 . (Join-Path $PSScriptRoot 'lib\msix-safe-install.ps1')
 . (Join-Path $PSScriptRoot 'lib\msix-payload.ps1')
 . (Join-Path $PSScriptRoot 'lib\repair-deployment-state.ps1')
 . (Join-Path $PSScriptRoot 'lib\appx-launch.ps1')
 $patcher = Join-Path $PSScriptRoot 'patch_codex_fast_mode_windows_msix.ps1'
 $script:TranscriptStarted = $false
-$repairTempParent = 'D:\CodexData\cwp-tmp'
+$repairTempParent = $storage.TemporaryRoot
 $script:RepairDeploymentState = $null
 $script:RepairStatePath = $null
 $script:RepairCheckpointFailed = $false
@@ -38,23 +45,7 @@ function Save-RepairCheckpoint {
 }
 
 function New-RepairTemporaryRoot {
-  $drive = [IO.DriveInfo]::new('D:\')
-  if ($drive.DriveType -ne [IO.DriveType]::Fixed) { throw 'D: is not a fixed local drive.' }
-
-  $parent = [IO.Path]::GetFullPath($repairTempParent)
-  $current = 'D:\'
-  foreach ($part in $parent.Substring(3).Split('\')) {
-    if ([string]::IsNullOrWhiteSpace($part)) { continue }
-    $current = Join-Path $current $part
-    if (Test-Path -LiteralPath $current) {
-      $item = Get-Item -LiteralPath $current -Force
-      if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-        throw "Repair temp path is not an ordinary directory: $current"
-      }
-    } else {
-      New-Item -ItemType Directory -Path $current -ErrorAction Stop | Out-Null
-    }
-  }
+  $parent = Assert-RepairLocalDirectory -Path $repairTempParent -Create
 
   $leaf = 'r-' + [guid]::NewGuid().ToString('N').Substring(0, 12)
   $path = Join-Path $parent $leaf
@@ -67,7 +58,7 @@ function New-RepairTemporaryRoot {
 
 function Remove-RepairTemporaryRoot {
   param([string]$Path, [string]$SentinelId)
-  $fullPath = [IO.Path]::GetFullPath($Path)
+  $fullPath = Assert-RepairLocalDirectory -Path $Path
   $parent = [IO.Path]::GetFullPath($repairTempParent).TrimEnd('\')
   if (-not $fullPath.StartsWith($parent + '\', [StringComparison]::OrdinalIgnoreCase) -or
       (Split-Path -Parent $fullPath) -ine $parent) {
@@ -388,7 +379,9 @@ function Read-PreparedPatchTranscript {
 
 function Get-PreparedTemporaryWorkspace {
   param([string]$TranscriptText)
-  $matches = [regex]::Matches($TranscriptText, '(?m)^\[model-experience-repair\] short-path temporary workspace: (?<path>D:\\CodexData\\cwp-tmp\\r-[a-f0-9]{12})\s*$')
+  $pattern = '(?m)^\[model-experience-repair\] short-path temporary workspace: (?<path>' +
+    [regex]::Escape($repairTempParent.TrimEnd('\')) + '\\r-[a-f0-9]{12})\r?$'
+  $matches = [regex]::Matches($TranscriptText, $pattern)
   $paths = @($matches | ForEach-Object { $_.Groups['path'].Value } | Select-Object -Unique)
   if ($paths.Count -ne 1) { throw 'Prepared transcript must identify exactly one short-path temporary workspace.' }
   $fullPath = [IO.Path]::GetFullPath($paths[0])
@@ -767,6 +760,9 @@ try {
     Write-Log "resuming prepared build from: $resolvedOutputRoot"
     Write-Log "verified short-path temporary workspace: $tempRoot"
   }
+  $script:RepairDeploymentState['temporaryRoot'] = $tempRoot
+  $script:RepairDeploymentState['temporarySentinelId'] = $tempSentinelId
+  Save-RepairCheckpoint
   $env:TEMP = $tempRoot
   $env:TMP = $tempRoot
   $env:npm_config_cache = Join-Path $tempRoot 'npm-cache'

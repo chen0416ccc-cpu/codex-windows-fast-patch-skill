@@ -1,6 +1,7 @@
 param()
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'lib\repair-storage.ps1')
 $script:checks = 0
 
 function Assert([bool]$Condition, [string]$Message) {
@@ -36,6 +37,7 @@ foreach ($required in @(
   'Assert-LegacyRepairRunRoot',
   'Assert-ObsoleteBuildRoot',
   'Get-VerifiedRepairRunCandidate',
+  'Get-VerifiedRepairTemporaryCandidate',
   '-not $ExplicitTargetsOnly',
   'Get-CurrentCodexPackageVersion',
   'Get-LegacyRecoveryVersion',
@@ -66,6 +68,7 @@ foreach ($name in @(
   'Get-LegacyGeneratedArtifactDirectories',
   'Assert-ObsoleteBuildRoot',
   'Get-VerifiedRepairRunCandidate',
+  'Get-VerifiedRepairTemporaryCandidate',
   'Remove-DirectoryTreeRobust'
 )) {
   $functionAst = $ast.Find({
@@ -183,6 +186,55 @@ try {
   $verifiedCandidate = Get-VerifiedRepairRunCandidate -StatePath $verifiedStatePath -DataRoot $verifiedData -RunsRoot $verifiedRuns
   Assert (-not $verifiedCandidate.Missing -and $verifiedCandidate.Path -ceq $verifiedOutput -and
     $verifiedCandidate.SentinelId -ceq ('b' * 32)) 'immediate cleanup is bound to a verified checkpoint and matching run sentinel'
+  Assert ($null -eq $verifiedCandidate.Temporary) 'legacy checkpoints do not invent a temporary workspace to delete'
+  $layout = Get-RepairStorageLayout -DataRoot $verifiedData
+  $verifiedTemp = Join-Path $layout.TemporaryRoot ('r-' + [guid]::NewGuid().ToString('N').Substring(0, 12))
+  $null = Assert-RepairLocalDirectory -Path $verifiedTemp -Create
+  try {
+    $tempMarker = Join-Path $verifiedTemp '.codex-model-experience-temp'
+    [IO.File]::WriteAllText($tempMarker, ('c' * 32))
+    $verifiedState['temporaryRoot'] = $verifiedTemp
+    $verifiedState['temporarySentinelId'] = 'c' * 32
+    Write-RepairDeploymentState -Path $verifiedStatePath -State $verifiedState
+    $verifiedCandidate = Get-VerifiedRepairRunCandidate -StatePath $verifiedStatePath -DataRoot $verifiedData -RunsRoot $verifiedRuns
+    Assert ($verifiedCandidate.Temporary.Path -ceq $verifiedTemp -and -not $verifiedCandidate.Temporary.Missing) 'exact cleanup recovers the recorded temporary workspace on the original drive'
+    [IO.File]::WriteAllText($tempMarker, ('d' * 32))
+    Assert-Throws { Get-VerifiedRepairRunCandidate -StatePath $verifiedStatePath -DataRoot $verifiedData -RunsRoot $verifiedRuns } 'changed temporary ownership prevents cleanup'
+    $verifiedState['temporaryRoot'] = Join-Path $fixtureRoot 'r-1234567890ab'
+    Write-RepairDeploymentState -Path $verifiedStatePath -State $verifiedState
+    Assert-Throws { Get-VerifiedRepairRunCandidate -StatePath $verifiedStatePath -DataRoot $verifiedData -RunsRoot $verifiedRuns } 'a checkpoint cannot redirect temporary cleanup outside its dedicated parent'
+    [IO.File]::WriteAllText($tempMarker, ('c' * 32))
+    $verifiedState['temporaryRoot'] = $verifiedTemp
+    Write-RepairDeploymentState -Path $verifiedStatePath -State $verifiedState
+    $unrelated = Join-Path $verifiedRuns ('20260101-010101-' + ('e' * 32))
+    New-Item -ItemType Directory -Path $unrelated | Out-Null
+    [IO.File]::WriteAllText((Join-Path $unrelated '.codex-model-experience-repair'), ('f' * 32))
+    $cleanupFixture = Join-Path $fixtureRoot 'cleanup-entrypoint'
+    New-Item -ItemType Directory -Path (Join-Path $cleanupFixture 'lib') | Out-Null
+    Copy-Item -LiteralPath $cleanupPath -Destination $cleanupFixture
+    foreach ($name in @('repair-storage.ps1', 'repair-deployment-state.ps1')) {
+      Copy-Item -LiteralPath (Join-Path $PSScriptRoot "lib\$name") -Destination (Join-Path $cleanupFixture 'lib')
+    }
+    [IO.File]::WriteAllText((Join-Path $cleanupFixture 'install-computer-use-local.ps1'), 'exit 0')
+    $fixturePackage = $verifiedTarget
+    Set-Item function:\Get-AppxPackage -Value ({ param($Name) return $fixturePackage }.GetNewClosure())
+    & (Join-Path $cleanupFixture 'cleanup-model-experience-repair-artifacts.ps1') -DataRoot $verifiedData `
+      -VerifiedStatePath $verifiedStatePath -ExplicitTargetsOnly -Clean -Confirm:$false | Out-Null
+    Assert (-not (Test-Path -LiteralPath $verifiedOutput) -and -not (Test-Path -LiteralPath $verifiedTemp)) 'public exact-run cleanup removes both bound build and temporary fixtures'
+    Assert (Test-Path -LiteralPath $unrelated) 'public exact-run cleanup preserves other marked runs'
+    $afterCleanup = Read-RepairDeploymentState $verifiedStatePath
+    Assert ($afterCleanup.stage -eq 'verified-complete' -and $afterCleanup.cleanupStatus -eq 'removed') 'public exact-run cleanup finalizes its accepted checkpoint only after removal'
+    $verifiedState.stage = 'cleanup-pending'; $verifiedState.cleanupStatus = 'pending'
+    $verifiedState.Remove('temporaryRoot')
+    $verifiedState.Remove('temporarySentinelId')
+    Write-RepairDeploymentState -Path $verifiedStatePath -State $verifiedState
+  } finally {
+    $verifiedTempFull = [IO.Path]::GetFullPath($verifiedTemp)
+    if ((Split-Path -Parent $verifiedTempFull) -ine $layout.TemporaryRoot -or
+        (Split-Path -Leaf $verifiedTempFull) -notmatch '^r-[a-f0-9]{12}$') { throw 'Test temp cleanup boundary changed.' }
+    if (Test-Path -LiteralPath $verifiedTempFull) { Remove-DirectoryTreeRobust -Path $verifiedTempFull }
+  }
+  function Get-AppxPackage { param($Name) return $script:cleanupMockPackage }
   $script:cleanupMockPackage = [pscustomobject]@{ PackageFullName = 'OpenAI.Codex_2.0.0.1_x64__test'; Version = [version]'2.0.0.1'; Status = 'Ok' }
   Assert-Throws {
     Get-VerifiedRepairRunCandidate -StatePath $verifiedStatePath -DataRoot $verifiedData -RunsRoot $verifiedRuns

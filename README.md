@@ -140,17 +140,18 @@ Claude Code 可将目标改为 `$env:USERPROFILE\.claude\skills\codex-windows-fa
 
 ## 更新
 
-每次更新打补丁前，先拉取并审查自己的远端 `main` 与上游 `main`，对比本机技能和已有 PR；远端已覆盖的修复直接复用，只补充有实际证据支持的缺失修复或优化。通过 `git clone` 安装的副本可在审查后快进更新：
+更新修复工具或修改补丁代码前，先核实实际更新来源，对比远端修复与本机修改，优先复用已覆盖的修复。按本页命令直接 `git clone` 安装的副本，`origin` 就是本项目，不需要另建 fork；检查工作区和远端地址后，可在对应跟踪分支上快进更新：
 
 ```powershell
+git -C $SkillRoot status --short
+git -C $SkillRoot remote -v
 git -C $SkillRoot fetch origin
-git -C $SkillRoot fetch upstream
 git -C $SkillRoot pull --ff-only
 ```
 
-先核实 `origin` 是自己的 fork、`upstream` 是原仓库；没有该 remote 时按[远端审查与发布流程](references/remote-review-and-publication.md)配置。非 Git 安装副本也要通过持久源码 checkout 对比，保留本机 overlay，不能跳过远端审查。
+如果已有自己的 fork，再额外对比本项目的 `main`，不要只检查 fork 是否最新。非 Git 安装副本应核实记录的来源和版本、保留本机修改，需要源码比对时再使用持久源码 checkout；普通诊断不要求用户建立仓库。具体见[远端审查与发布流程](references/remote-review-and-publication.md)。
 
-这是更新修复工具，不是更新 Codex 客户端。必要增量验证后必须提交、推送自己的 `main` 并创建或更新上游 PR，在修复记录中写明 commit、base/head 和 PR URL。已有有效提交/PR 则复用，避免空提交和重复 PR；网络或认证阻塞须明确记录。
+这是更新修复工具，不是更新 Codex 客户端。普通安装、更新和本机修复不要求用户维护仓库、推送分支或提交 PR。只有人类明确要求智能体为本项目准备、提交或修改 PR 时，才应用 [PR 贡献规范](AGENTS.md#human-directed-pr-contributions)，并按请求范围验证和发布；没有贡献请求时，只报告本地修复结果与验证边界。
 
 ## 哪些修复会重新安装 Codex
 
@@ -166,6 +167,8 @@ git -C $SkillRoot pull --ff-only
 | 模型目录补全、历史会话可见性、缺失工作目录、备份与听话水配置、配对后的 API 地址 | 通常只改配置或数据，不重装 |
 
 同样是“浏览器不能用”或“模型不显示”，也可能只是缓存或配置问题，以实际检查结果为准。
+
+完整恢复安装器和更新后的完整试运行默认选择**剩余可用空间最多的本地固定磁盘**存放大型构建、恢复包和临时文件，不要求有 D 盘。可通过 `-DataRoot` 或进程环境变量 `CODEX_WINDOWS_REPAIR_DATA_ROOT` 指定数据根；`-CheckRoot` 可单独指定试运行目录。续跑、验收与清理沿用原任务路径，不会重新选盘。成功验收后只清理该任务的构建和临时目录，保留日志；失败时保留排查材料，`-KeepArtifacts` 可主动保留成功任务的产物。
 
 ### 重装期间会发生什么
 

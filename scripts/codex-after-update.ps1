@@ -5,12 +5,17 @@ param(
   [switch]$RepairApp,
   [string[]]$CustomModels,
   [string]$ReportPath,
-  [string]$LogRoot = 'D:\CodexData\codex-windows-fast-patch\model-experience-repair-logs',
-  [string]$CheckRoot = (Join-Path ([IO.Path]::GetTempPath()) 'codex-update-checks')
+  [string]$LogRoot,
+  [string]$CheckRoot,
+  [string]$DataRoot
 )
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib\post-update-readiness.ps1')
+. (Join-Path $PSScriptRoot 'lib\repair-storage.ps1')
+$logRoots = if ($LogRoot) { @($LogRoot) } else {
+  @((Get-RepairKnownDataRoots -DataRoot $DataRoot) | ForEach-Object { Join-Path $_ 'model-experience-repair-logs' })
+}
 $statusScript = Join-Path $PSScriptRoot 'get-model-experience-repair-status.ps1'
 $pluginScript = Join-Path $PSScriptRoot 'install-computer-use-local.ps1'
 $patcherScript = Join-Path $PSScriptRoot 'patch_codex_fast_mode_windows_msix.ps1'
@@ -32,7 +37,10 @@ function Invoke-PluginCheck {
 
 function Invoke-PackageGateCheck {
   param([string]$AppPath, [string[]]$Models, [bool]$HasUltraModels)
-  $parent = [IO.Path]::GetFullPath($CheckRoot)
+  $parent = if ($CheckRoot) { $CheckRoot } else {
+    Join-Path (Get-RepairStorageLayout -DataRoot $DataRoot).DataRoot 'model-experience-checks'
+  }
+  $parent = Assert-RepairLocalDirectory -Path $parent -AllowMissing
   New-Item -ItemType Directory -Force -Path $parent -WhatIf:$false | Out-Null
   $scratch = Join-Path $parent ('check-' + [guid]::NewGuid().ToString('N'))
   New-Item -ItemType Directory -Path $scratch -WhatIf:$false | Out-Null
@@ -107,7 +115,7 @@ $report = [ordered]@{
   models = $null; pluginExitCode = $null; app = $null; action = 'none'
   limits = @('Package/CLI/runtime contracts only; visible menus, native screenshot/input and upstream speed are not verified.')
 }
-$transaction = Get-PostUpdateTransaction -LogRoot $LogRoot -StatusScript $statusScript
+$transaction = Get-PostUpdateTransaction -LogRoot $logRoots -StatusScript $statusScript
 $transactionStatus = if ($transaction) { [string]$transaction.Assessment.Status } else { '' }
 if ($transaction) { $report.transaction = @{ status = $transactionStatus; statePath = $transaction.StatePath } }
 if ($transactionStatus -in @('installer-running', 'installer-status-unknown', 'different-user')) {
@@ -159,14 +167,16 @@ $report.status = Get-PostUpdateDecision -TransactionStatus $transactionStatus -P
 if ($RepairApp -and $report.status -eq 'app-repair-needed') {
   # Repeat the transaction/package checks immediately before dispatch. The
   # launcher also independently checks current installer identity and source.
-  $latest = Get-PostUpdateTransaction -LogRoot $LogRoot -StatusScript $statusScript
+  $latest = Get-PostUpdateTransaction -LogRoot $logRoots -StatusScript $statusScript
   if ($latest -and $latest.Assessment.Status -in @('installer-running', 'installer-status-unknown', 'installed-needs-verification', 'verified-cleanup-needed', 'different-user')) {
     throw 'An existing repair appeared during diagnostics; inspect it before launching.'
   }
   $current = Get-AppxPackage -Name OpenAI.Codex | Sort-Object Version -Descending | Select-Object -First 1
   if ($current.PackageFullName -cne $package.PackageFullName) { throw 'The package changed during diagnostics; rerun against the new version.' }
   if ($PSCmdlet.ShouldProcess($package.PackageFullName, 'Start the recoverable full non-phone repair (UAC and Desktop restart)')) {
-    & $launcherScript -CustomModels $CustomModels
+    $launchParameters = @{ CustomModels = $CustomModels }
+    if ($DataRoot) { $launchParameters.DataRoot = $DataRoot }
+    & $launcherScript @launchParameters
     $report.action = 'installer-dispatched'
     $report.status = 'awaiting-installation-and-acceptance'
   }

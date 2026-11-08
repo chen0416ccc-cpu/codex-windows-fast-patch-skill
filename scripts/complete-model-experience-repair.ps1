@@ -6,6 +6,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib\repair-deployment-state.ps1')
+. (Join-Path $PSScriptRoot 'lib\repair-storage.ps1')
 
 function Test-InstallerExited {
   param([object]$State)
@@ -155,7 +156,7 @@ function Invoke-ExactRunCleanup {
   $cleanupParameters = @{
     Clean = $true
     ExplicitTargetsOnly = $true
-    DataRoot = 'D:\CodexData\codex-windows-fast-patch'
+    DataRoot = Get-RepairDataRootFromStatePath $CheckpointPath
     VerifiedStatePath = $CheckpointPath
     Confirm = $false
   }

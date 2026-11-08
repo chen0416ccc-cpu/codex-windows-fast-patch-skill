@@ -1,7 +1,7 @@
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
   [switch]$Clean,
-  [string]$DataRoot = 'D:\CodexData\codex-windows-fast-patch',
+  [string]$DataRoot,
   [string[]]$LegacyRunPath = @(),
   [string[]]$PurgeLegacyRunPath = @(),
   [string[]]$ObsoleteBuildRootPath = @(),
@@ -12,6 +12,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $stateLibrary = Join-Path $PSScriptRoot 'lib\repair-deployment-state.ps1'
 . $stateLibrary
+. (Join-Path $PSScriptRoot 'lib\repair-storage.ps1')
 $repairRunsName = 'model-experience-repair-runs'
 $repairLogsName = 'model-experience-repair-logs'
 $repairTempName = 'cwp-tmp'
@@ -19,26 +20,7 @@ $verifyScript = Join-Path $PSScriptRoot 'install-computer-use-local.ps1'
 
 function Assert-LocalDirectoryPath {
   param([string]$Path)
-  $fullPath = [IO.Path]::GetFullPath($Path)
-  if (-not $fullPath.StartsWith('D:\', [StringComparison]::OrdinalIgnoreCase)) {
-    throw "Repair data must remain on D:\: $fullPath"
-  }
-  if ([IO.DriveInfo]::new('D:\').DriveType -ne [IO.DriveType]::Fixed) {
-    throw 'D: is not a fixed local drive.'
-  }
-  $current = 'D:\'
-  foreach ($part in $fullPath.Substring(3).Split('\')) {
-    if ([string]::IsNullOrWhiteSpace($part)) { continue }
-    $current = Join-Path $current $part
-    if (-not (Test-Path -LiteralPath $current)) {
-      throw "Repair data path does not exist: $current"
-    }
-    $item = Get-Item -LiteralPath $current -Force
-    if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-      throw "Repair data path is not a normal local directory: $current"
-    }
-  }
-  return $fullPath
+  return Assert-RepairLocalDirectory -Path $Path
 }
 
 function ConvertTo-ExtendedPath {
@@ -273,6 +255,30 @@ function Assert-ObsoleteBuildRoot {
   }
 }
 
+function Get-VerifiedRepairTemporaryCandidate {
+  param([object]$State, [string]$DataRoot)
+  $fields = @($State.PSObject.Properties.Name)
+  if ('temporaryRoot' -notin $fields -and 'temporarySentinelId' -notin $fields) { return $null }
+  $path = Assert-RepairLocalDirectory -Path ([string]$State.temporaryRoot) -AllowMissing
+  $expectedParent = (Get-RepairStorageLayout -DataRoot $DataRoot).TemporaryRoot
+  if ((Split-Path -Parent $path) -ine $expectedParent -or
+      (Split-Path -Leaf $path) -notmatch '^r-[a-f0-9]{12}$' -or
+      $State.temporarySentinelId -notmatch '^[a-f0-9]{32}$') {
+    throw 'Accepted temporary workspace is not bound to the repair drive and ownership marker.'
+  }
+  $missing = -not (Test-Path -LiteralPath $path)
+  $snapshot = $null
+  if (-not $missing) {
+    $marker = Get-Item -LiteralPath (Join-Path $path '.codex-model-experience-temp') -Force -ErrorAction Stop
+    if ($marker.PSIsContainer -or ($marker.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+        [IO.File]::ReadAllText($marker.FullName).Trim() -cne $State.temporarySentinelId) {
+      throw 'Accepted temporary workspace ownership marker changed; artifacts were retained.'
+    }
+    $snapshot = Get-RepairTreeSnapshot -Path $path
+  }
+  return [pscustomobject]@{ Path = $path; Missing = $missing; SentinelId = $State.temporarySentinelId; Snapshot = $snapshot }
+}
+
 function Get-VerifiedRepairRunCandidate {
   param([string]$StatePath, [string]$DataRoot, [string]$RunsRoot)
   $fullStatePath = [IO.Path]::GetFullPath($StatePath)
@@ -307,8 +313,9 @@ function Get-VerifiedRepairRunCandidate {
       (Split-Path -Leaf $outputRoot) -notmatch '^\d{8}-\d{6}-[a-f0-9]{32}$') {
     throw "Accepted output root is outside the exact repair-runs directory: $outputRoot"
   }
+  $temporary = Get-VerifiedRepairTemporaryCandidate -State $state -DataRoot $DataRoot
   if (-not (Test-Path -LiteralPath $outputRoot)) {
-    return [pscustomobject]@{ Path = $outputRoot; StatePath = $fullStatePath; State = $state; Missing = $true; Snapshot = $null; SentinelId = $null }
+    return [pscustomobject]@{ Path = $outputRoot; StatePath = $fullStatePath; State = $state; Missing = $true; Snapshot = $null; SentinelId = $null; Temporary = $temporary }
   }
   $sentinel = Join-Path $outputRoot '.codex-model-experience-repair'
   if (-not (Test-Path -LiteralPath $sentinel -PathType Leaf)) { throw "Accepted output ownership marker is missing: $sentinel" }
@@ -323,6 +330,7 @@ function Get-VerifiedRepairRunCandidate {
     Missing = $false
     Snapshot = (Get-RepairTreeSnapshot -Path $outputRoot)
     SentinelId = $sentinelId
+    Temporary = $temporary
   }
 }
 
@@ -463,7 +471,26 @@ function Test-ActiveRepairProcess {
   return $null
 }
 
-$dataRootFull = Assert-LocalDirectoryPath -Path $DataRoot
+if (-not $DataRoot -and $VerifiedStatePath) {
+  $DataRoot = Get-RepairDataRootFromStatePath $VerifiedStatePath
+}
+if (-not $DataRoot) {
+  $explicitPaths = @($LegacyRunPath) + @($PurgeLegacyRunPath) + @($ObsoleteBuildRootPath)
+  if ($explicitPaths.Count -gt 0) {
+    $DataRoot = Join-Path (Split-Path -Parent ([IO.Path]::GetFullPath($explicitPaths[0]))) 'codex-windows-fast-patch'
+  } else {
+    $knownRoots = @(Get-RepairKnownDataRoots)
+    if ($knownRoots.Count -eq 0) { Write-Output 'No existing repair data roots were found.'; exit 0 }
+    foreach ($root in $knownRoots) {
+      $parameters = @{} + $PSBoundParameters
+      $parameters.DataRoot = $root
+      & $PSCommandPath @parameters
+    }
+    exit 0
+  }
+}
+$storage = Get-RepairStorageLayout -DataRoot $DataRoot
+$dataRootFull = Assert-RepairLocalDirectory -Path $storage.DataRoot -AllowMissing
 $runsRoot = Join-Path $dataRootFull $repairRunsName
 if (-not (Test-Path -LiteralPath $runsRoot -PathType Container)) {
   if ($LegacyRunPath.Count -eq 0 -and $PurgeLegacyRunPath.Count -eq 0 -and
@@ -509,7 +536,7 @@ foreach ($directory in $runDirectories) {
   }
 }
 
-$repairTempRoot = Join-Path (Split-Path -Parent $dataRootFull) $repairTempName
+$repairTempRoot = $storage.TemporaryRoot
 if (-not $ExplicitTargetsOnly -and (Test-Path -LiteralPath $repairTempRoot -PathType Container)) {
   $repairTempRootFull = Assert-LocalDirectoryPath -Path $repairTempRoot
   foreach ($directory in Get-ChildItem -LiteralPath $repairTempRootFull -Directory -Force) {
@@ -633,7 +660,7 @@ $powershellExe = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershe
 if (-not (Test-Path -LiteralPath $verifyScript -PathType Leaf) -or -not (Test-Path -LiteralPath $powershellExe -PathType Leaf)) {
   throw 'Strict verification prerequisites are missing; repair artifacts were retained.'
 }
-$freeBefore = [IO.DriveInfo]::new('D:\').AvailableFreeSpace
+$freeBefore = [IO.DriveInfo]::new($storage.DriveRoot).AvailableFreeSpace
 $verifyArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $verifyScript, '-StrictVerifyOnly', '-VerifyAllBundledPluginsAvailable')
 $verifyOutput = @(& $powershellExe @verifyArguments 2>&1)
 $verifyExitCode = $LASTEXITCODE
@@ -748,7 +775,24 @@ foreach ($candidate in $verifiedCandidates) {
       $current.Snapshot.Bytes -ne $candidate.Snapshot.Bytes -or $current.SentinelId -cne $candidate.SentinelId)) {
     throw "Accepted repair output changed after inventory; artifacts were retained: $($candidate.Path)"
   }
+  if (($null -ne $current.Temporary) -ne ($null -ne $candidate.Temporary)) {
+    throw 'Accepted temporary workspace binding changed after inventory.'
+  }
+  if ($candidate.Temporary) {
+    $before = $candidate.Temporary
+    $after = $current.Temporary
+    if ($before.Path -cne $after.Path -or $before.Missing -ne $after.Missing -or $before.SentinelId -cne $after.SentinelId -or
+        (-not $before.Missing -and ($before.Snapshot.Files -ne $after.Snapshot.Files -or
+          $before.Snapshot.Directories -ne $after.Snapshot.Directories -or $before.Snapshot.Bytes -ne $after.Snapshot.Bytes))) {
+      throw 'Accepted temporary workspace changed after inventory; artifacts were retained.'
+    }
+    $activeProcess = Test-ActiveRepairProcess -Path $before.Path
+    if ($activeProcess) { throw "An active process references the accepted temporary workspace: $($before.Path)" }
+  }
   if ($PSCmdlet.ShouldProcess($candidate.Path, 'Remove the exact accepted Codex repair build and recovery package')) {
+    if ($candidate.Temporary -and -not $candidate.Temporary.Missing) {
+      Remove-DirectoryTreeRobust -Path $candidate.Temporary.Path
+    }
     if (-not $candidate.Missing) { Remove-DirectoryTreeRobust -Path $candidate.Path }
     $state = Read-RepairDeploymentState $candidate.StatePath
     if (-not $state.acceptancePassed -or $state.targetPackageFullName -cne $candidate.State.targetPackageFullName -or
@@ -771,15 +815,16 @@ foreach ($candidate in $legacyCandidates) {
 $purgeLegacyRemaining = @($purgeLegacyCandidates | Where-Object { Test-Path -LiteralPath $_.Path })
 $obsoleteBuildRemaining = @($obsoleteBuildCandidates | Where-Object { Test-Path -LiteralPath $_.Path })
 $verifiedRemaining = @($verifiedCandidates | Where-Object { Test-Path -LiteralPath $_.Path })
+$verifiedTemporaryRemaining = @($verifiedCandidates | Where-Object { $_.Temporary -and (Test-Path -LiteralPath $_.Temporary.Path) })
 if (($remaining.Count + $legacyRemaining.Count + $purgeLegacyRemaining.Count +
-    $obsoleteBuildRemaining.Count + $verifiedRemaining.Count) -gt 0) {
+    $obsoleteBuildRemaining.Count + $verifiedRemaining.Count + $verifiedTemporaryRemaining.Count) -gt 0) {
   $remainingPaths = @($remaining | ForEach-Object { $_.Path }) + $legacyRemaining +
     @($purgeLegacyRemaining | ForEach-Object { $_.Path }) + @($obsoleteBuildRemaining | ForEach-Object { $_.Path }) +
-    @($verifiedRemaining | ForEach-Object { $_.Path })
+    @($verifiedRemaining | ForEach-Object { $_.Path }) + @($verifiedTemporaryRemaining | ForEach-Object { $_.Temporary.Path })
   Write-Output ('Cleanup not applied to: ' + ($remainingPaths -join ', '))
   exit 0
 }
-$freeAfter = [IO.DriveInfo]::new('D:\').AvailableFreeSpace
+$freeAfter = [IO.DriveInfo]::new($storage.DriveRoot).AvailableFreeSpace
 $spaceChange = ($freeAfter - $freeBefore) / 1GB
 Write-Output ('CLEANUP_PASSED verified-runs={0} obsolete-builds={1} failed-runs-purged={2} generated-legacy-artifacts={3} released={4:N2} GiB; non-selected backups and evidence were retained.' -f
   $verifiedCandidates.Count, $obsoleteBuildCandidates.Count, $purgeLegacyCandidates.Count, $legacyCandidates.Count, $spaceChange)

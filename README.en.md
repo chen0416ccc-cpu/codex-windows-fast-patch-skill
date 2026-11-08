@@ -147,17 +147,18 @@ For a provider explicitly configured with `requires_openai_auth=false`, the skil
 
 ## Update
 
-Before every update or patch, fetch and review both your fork's `main` and upstream `main`, then compare the installed skill and existing PRs. Reuse remote fixes and add only missing fixes or optimizations supported by actual evidence. A Git-cloned installation can fast-forward after review:
+Before updating the repair tool or changing patch code, verify the actual update source, compare remote fixes with local changes, and reuse behavior already covered. A direct `git clone` using this page's command has this project as `origin`; no fork is required. After checking the working tree and remote URL, fast-forward the intended tracking branch:
 
 ```powershell
+git -C $SkillRoot status --short
+git -C $SkillRoot remote -v
 git -C $SkillRoot fetch origin
-git -C $SkillRoot fetch upstream
 git -C $SkillRoot pull --ff-only
 ```
 
-Verify that `origin` is your fork and `upstream` is the original repository; configure a missing remote using the [remote review and publication workflow](references/remote-review-and-publication.md). Non-Git installations must also compare through a persistent source checkout while preserving their local overlay.
+If you already use a fork, also compare this project's `main`; checking only the fork does not establish freshness. For non-Git installations, verify the recorded source and version, preserve local changes, and use a persistent source checkout when source comparison is needed. Ordinary diagnosis does not require users to create a repository. See the [remote review and publication workflow](references/remote-review-and-publication.md).
 
-This updates the repair tool, not Codex Desktop. Validate necessary increments, commit them, push your `main`, and create or update an upstream PR. Record the commit, base/head and PR URL. Reuse effective commits/PRs without empty commits or duplicate PRs, and explicitly record network or authentication blocks.
+This updates the repair tool, not Codex Desktop. Ordinary installation, update and local repair do not require users to maintain the repository, push branches or submit PRs. Apply the [PR contribution rules](AGENTS.md#human-directed-pr-contributions) only when a human explicitly asks an agent to prepare, submit or revise a PR to this project, then validate and publish within the requested scope. Without a contribution request, report only the local repair outcome and verification limits.
 
 ## Which repairs reinstall Codex
 
@@ -173,6 +174,8 @@ Reinstallation depends on the cause of the problem, not simply on using this ski
 | Model-catalog entries, history visibility, missing working directories, backups, Tinghuashui configuration, or post-pairing API addresses | Usually change configuration or data without reinstalling |
 
 The same visible symptom, such as an unavailable browser or a missing model, may come from configuration or cache problems. Let the diagnosis determine the repair.
+
+The recoverable full installer and post-update full dry run default to the **fixed local drive with the most available free space** for large builds, recovery packages and temporary files; D: is not required. Override the data root with `-DataRoot` or the process environment variable `CODEX_WINDOWS_REPAIR_DATA_ROOT`, or use `-CheckRoot` for a separate diagnostic workspace. Resume, acceptance and cleanup use the original run paths rather than choosing a drive again. Successful acceptance removes only that run's build and temporary directories while retaining logs; failed runs retain diagnostic artifacts, and `-KeepArtifacts` retains successful outputs when requested.
 
 ### What happens during reinstallation
 

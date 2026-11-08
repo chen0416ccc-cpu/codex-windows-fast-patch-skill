@@ -14,6 +14,8 @@ param(
   [string]$RustToolchain = '1.95.0-x86_64-pc-windows-msvc',
   [string]$BuildTarget = 'x86_64-pc-windows-msvc',
   [string]$BuildProfile = 'dev-small',
+  [string]$WindowsSdkProxy,
+  [switch]$NoWindowsSdkProxy,
   [switch]$SkipClone,
   [switch]$SkipPatch,
   [switch]$SkipBuild
@@ -345,26 +347,34 @@ function Add-NuGetWindowsSdkBuildEnvironment {
 }
 
 function Get-WindowsSdkDownloadProxy {
-  foreach ($name in @('HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy')) {
+  param([uri]$Url = 'https://api.nuget.org/')
+  if ($NoWindowsSdkProxy) {
+    if ($WindowsSdkProxy) { Fail 'WindowsSdkProxy and NoWindowsSdkProxy cannot be combined.' }
+    return [pscustomobject]@{ Uri = $null; Source = 'explicit direct connection'; Direct = $true }
+  }
+  $proxy = $null
+  if (-not [string]::IsNullOrWhiteSpace($WindowsSdkProxy)) {
+    $proxy = [pscustomobject]@{ Uri = $WindowsSdkProxy.Trim(); Source = 'WindowsSdkProxy'; Direct = $false }
+  }
+  foreach ($name in @('HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy')) {
+    if ($proxy) { break }
     $value = [Environment]::GetEnvironmentVariable($name, 'Process')
     if (-not [string]::IsNullOrWhiteSpace($value)) {
-      return [pscustomobject]@{ Uri = $value.Trim(); Source = $name }
+      $proxy = [pscustomobject]@{ Uri = $value.Trim(); Source = $name; Direct = $false }
     }
   }
-
-  $client = New-Object System.Net.Sockets.TcpClient
-  try {
-    $connect = $client.BeginConnect('127.0.0.1', 10808, $null, $null)
-    if ($connect.AsyncWaitHandle.WaitOne(500) -and $client.Connected) {
-      $client.EndConnect($connect)
-      return [pscustomobject]@{ Uri = 'http://127.0.0.1:10808'; Source = 'listening local proxy' }
+  $noProxy = [Environment]::GetEnvironmentVariable('no_proxy', 'Process')
+  if (-not $noProxy) { $noProxy = [Environment]::GetEnvironmentVariable('NO_PROXY', 'Process') }
+  foreach ($entry in @($noProxy -split ',')) {
+    $entry = $entry.Trim()
+    if ($entry -eq '*' -or ($entry -match '^(?<host>[^:]+)(?::(?<port>\d+))?$' -and
+        (-not $Matches['port'] -or [int]$Matches['port'] -eq $Url.Port) -and
+        ($Url.DnsSafeHost -ieq $Matches['host'].TrimStart('.') -or
+          $Url.DnsSafeHost.EndsWith('.' + $Matches['host'].TrimStart('.'), [StringComparison]::OrdinalIgnoreCase)))) {
+      return [pscustomobject]@{ Uri = $null; Source = 'NO_PROXY bypass'; Direct = $true }
     }
-  } catch {
-    # Direct download remains available when the optional local proxy is absent.
-  } finally {
-    $client.Dispose()
   }
-  return $null
+  return $proxy
 }
 
 function Get-SanitizedDownloadErrorText {
@@ -433,12 +443,12 @@ function Save-NuGetPackage {
 
   $lowerId = $PackageId.ToLowerInvariant()
   $url = "https://api.nuget.org/v3-flatcontainer/$lowerId/$Version/$lowerId.$Version.nupkg"
-  $proxy = Get-WindowsSdkDownloadProxy
+  $proxy = Get-WindowsSdkDownloadProxy -Url $url
   $curl = Get-Command 'curl.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
   if ($proxy) {
     Write-Log "using $($proxy.Source) for Windows SDK NuGet download"
   } else {
-    Write-Log 'using direct Windows SDK NuGet download'
+    Write-Log 'using default environment/system Windows SDK NuGet download settings'
   }
 
   for ($attempt = 1; $attempt -le 3; $attempt++) {
@@ -447,8 +457,10 @@ function Save-NuGetPackage {
       Write-Log "downloading $PackageId $Version to $partial (attempt $attempt of 3)"
       if ($curl) {
         $arguments = @('-fsSL', '--retry', '2', '--connect-timeout', '30', '--max-time', '900', '-o', $partial, $url)
-        if ($proxy) {
-          $arguments = @('-fsSL', '--retry', '2', '--proxy', $proxy.Uri, '--connect-timeout', '30', '--max-time', '900', '-o', $partial, $url)
+        if ($proxy -and $proxy.Direct) {
+          $arguments += @('--noproxy', '*')
+        } elseif ($proxy) {
+          $arguments += @('--proxy', $proxy.Uri)
         }
         $result = Invoke-NativeProcess -FilePath $curl.Source -Arguments $arguments -CaptureOutput
         if ($result.ExitCode -ne 0) {
@@ -467,10 +479,23 @@ function Save-NuGetPackage {
             UseBasicParsing = $true
             TimeoutSec = 900
           }
-          if ($proxy) {
-            $request.Proxy = $proxy.Uri
+          if ($proxy -and $proxy.Direct) {
+            $directRequest = [Net.HttpWebRequest]::Create($url)
+            $directRequest.Proxy = $null
+            $directRequest.Timeout = 900000
+            $directRequest.ReadWriteTimeout = 900000
+            $response = $directRequest.GetResponse()
+            try {
+              $stream = $response.GetResponseStream()
+              $file = [IO.File]::Create($partial)
+              try { $stream.CopyTo($file) } finally { $file.Dispose(); $stream.Dispose() }
+            } finally { $response.Dispose() }
+          } else {
+            if ($proxy) {
+              $request.Proxy = $proxy.Uri
+            }
+            Invoke-WebRequest @request
           }
-          Invoke-WebRequest @request
         } finally {
           $ProgressPreference = $oldProgress
         }

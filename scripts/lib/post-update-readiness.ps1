@@ -22,19 +22,30 @@ function Get-RepairModelInventory {
 }
 
 function Get-PostUpdateTransaction {
-  param([string]$LogRoot, [string]$StatusScript)
-  if (-not (Test-Path -LiteralPath $LogRoot -PathType Container)) { return $null }
+  param([string[]]$LogRoot, [string]$StatusScript)
+  $files = @(
+    foreach ($root in @($LogRoot | Select-Object -Unique)) {
+      if (Test-Path -LiteralPath $root -PathType Container) {
+        Get-ChildItem -LiteralPath $root -Filter '*.state.json' -File -ErrorAction Stop
+      }
+    }
+  )
   $current = $null
-  foreach ($file in @(Get-ChildItem -LiteralPath $LogRoot -Filter '*.state.json' -File | Sort-Object LastWriteTimeUtc -Descending)) {
+  $pending = $null
+  foreach ($file in @($files | Sort-Object LastWriteTimeUtc -Descending)) {
     # A malformed checkpoint must never be treated as proof that no installer exists.
     $status = & $StatusScript -StatePath $file.FullName -Json | ConvertFrom-Json -ErrorAction Stop
     if ($status.Status -in @('installer-running', 'installer-status-unknown', 'different-user')) {
       return [pscustomobject]@{ StatePath = $file.FullName; Assessment = $status }
     }
-    if (-not $current -and $status.Status -in @('installed-needs-verification', 'verified-complete', 'verified-cleanup-needed')) {
+    if (-not $pending -and $status.Status -in @('installed-needs-verification', 'verified-cleanup-needed')) {
+      $pending = [pscustomobject]@{ StatePath = $file.FullName; Assessment = $status }
+    }
+    if (-not $current -and $status.Status -eq 'verified-complete') {
       $current = [pscustomobject]@{ StatePath = $file.FullName; Assessment = $status }
     }
   }
+  if ($pending) { return $pending }
   return $current
 }
 

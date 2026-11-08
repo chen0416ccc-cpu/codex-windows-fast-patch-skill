@@ -21,7 +21,6 @@ import webbrowser
 ISSUER = "https://auth.openai.com"
 CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 SCOPE = "openid profile email offline_access api.connectors.read api.connectors.invoke"
-DEFAULT_PROXY = "http://127.0.0.1:10808"
 CLIENTS_ENDPOINT = "https://chatgpt.com/backend-api/wham/remote/control/clients"
 
 
@@ -65,6 +64,8 @@ def token_meta(token: str | None) -> dict:
 
 def make_opener(proxy: str | None) -> urllib.request.OpenerDirector:
     if proxy is None:
+        return urllib.request.build_opener()
+    if proxy == "":
         return urllib.request.build_opener(urllib.request.ProxyHandler({}))
     return urllib.request.build_opener(
         urllib.request.ProxyHandler({"http": proxy, "https": proxy})
@@ -378,10 +379,15 @@ def main() -> int:
         description="Verify or regenerate isolated Codex phone remote-control auth."
     )
     parser.add_argument("--verify-only", action="store_true", help="Only test .codex/remote.json.")
-    parser.add_argument(
+    proxy_options = parser.add_mutually_exclusive_group()
+    proxy_options.add_argument(
         "--proxy",
-        default=DEFAULT_PROXY,
-        help='Proxy for auth/token and verify requests. Use --proxy "" to disable.',
+        default=None,
+        help='Proxy for auth/token and verify requests; defaults to environment/system settings.',
+    )
+    proxy_options.add_argument(
+        "--no-proxy", dest="proxy", action="store_const", const="",
+        help="Connect directly without environment or system proxies.",
     )
     parser.add_argument("--timeout-seconds", type=int, default=600)
     parser.add_argument("--no-open", action="store_true", help="Print the auth URL without opening it.")
@@ -392,7 +398,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    proxy = args.proxy if args.proxy else None
+    proxy = args.proxy
     remote_path = codex_home / "remote.json"
     if args.verify_only:
         result = verify_remote(remote_path, proxy, min(args.timeout_seconds, 120))

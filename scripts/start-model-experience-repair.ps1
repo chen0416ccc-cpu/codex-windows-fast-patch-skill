@@ -3,42 +3,20 @@ param(
   [switch]$ResumePreparedBuild,
   [string]$PreparedOutputRoot,
   [string]$PreparedTranscriptPath,
-  [string[]]$CustomModels
+  [string[]]$CustomModels,
+  [string]$DataRoot,
+  [switch]$KeepArtifacts
 )
 
 $ErrorActionPreference = 'Stop'
 $runner = Join-Path $PSScriptRoot 'repatch-model-experience-recoverable.ps1'
-$dataRoot = 'D:\CodexData\codex-windows-fast-patch'
-$runRoot = Join-Path $dataRoot 'model-experience-repair-runs'
-$logRoot = Join-Path $dataRoot 'model-experience-repair-logs'
+. (Join-Path $PSScriptRoot 'lib\repair-storage.ps1')
 . (Join-Path $PSScriptRoot 'lib\post-update-readiness.ps1')
 . (Join-Path $PSScriptRoot 'lib\appx-launch.ps1')
 
 function Assert-LocalDirectory {
   param([string]$Path, [switch]$Create)
-  $fullPath = [IO.Path]::GetFullPath($Path)
-  if (-not $fullPath.StartsWith('D:\', [StringComparison]::OrdinalIgnoreCase)) {
-    throw "Repair data must stay on D:\: $fullPath"
-  }
-  $drive = [IO.DriveInfo]::new('D:\')
-  if ($drive.DriveType -ne [IO.DriveType]::Fixed) { throw 'D: is not a fixed local drive.' }
-  $relative = $fullPath.Substring(3).Split('\')
-  $current = 'D:\'
-  foreach ($part in $relative) {
-    if ([string]::IsNullOrWhiteSpace($part)) { continue }
-    $current = Join-Path $current $part
-    if (Test-Path -LiteralPath $current) {
-      $item = Get-Item -LiteralPath $current -Force
-      if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-        throw "Repair data path is not a normal local directory: $current"
-      }
-    } elseif ($Create) {
-      New-Item -ItemType Directory -Path $current -ErrorAction Stop | Out-Null
-    } else {
-      throw "Repair data directory does not exist: $current"
-    }
-  }
-  return $fullPath
+  return Assert-RepairLocalDirectory -Path $Path -Create:$Create
 }
 
 if (-not (Test-Path -LiteralPath $runner -PathType Leaf)) { throw "Recoverable runner not found: $runner" }
@@ -53,7 +31,20 @@ $package = Get-AppxPackage -Name OpenAI.Codex -ErrorAction Stop |
   Select-Object -First 1
 if (-not $package) { throw 'The current-user Codex MSIX package is unavailable.' }
 
-$transaction = Get-PostUpdateTransaction -LogRoot $logRoot -StatusScript (Join-Path $PSScriptRoot 'get-model-experience-repair-status.ps1')
+$configuredDataRoot = if ($DataRoot) { $DataRoot } else { $env:CODEX_WINDOWS_REPAIR_DATA_ROOT }
+if ($ResumePreparedBuild -and $PreparedOutputRoot) {
+  $preparedDataRoot = Get-RepairDataRootFromRunPath $PreparedOutputRoot
+  if ($DataRoot -and (Get-RepairStorageLayout $DataRoot).DataRoot -ine $preparedDataRoot) {
+    throw 'Prepared output does not belong to the explicitly configured data root.'
+  }
+  $configuredDataRoot = $preparedDataRoot
+}
+$storage = Get-RepairStorageLayout -DataRoot $configuredDataRoot
+$dataRoot = $storage.DataRoot
+$runRoot = $storage.RunRoot
+$logRoot = $storage.LogRoot
+$knownLogs = @((Get-RepairKnownDataRoots -DataRoot $dataRoot) | ForEach-Object { Join-Path $_ 'model-experience-repair-logs' })
+$transaction = Get-PostUpdateTransaction -LogRoot $knownLogs -StatusScript (Join-Path $PSScriptRoot 'get-model-experience-repair-status.ps1')
 if ($transaction -and $transaction.Assessment.Status -in @('installer-running', 'installer-status-unknown', 'different-user',
     'installed-needs-verification', 'verified-cleanup-needed')) {
   throw "An existing repair requires attention instead of a new installer: $($transaction.Assessment.Status); state=$($transaction.StatePath)"
@@ -67,10 +58,8 @@ if (@($CustomModels).Count -eq 0) { throw 'CustomModels must not be empty.' }
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $sessionId = (Get-Process -Id $PID -ErrorAction Stop).SessionId
 $sid = $identity.User.Value
-$null = Assert-LocalDirectory -Path $dataRoot
+$null = Assert-RepairLocalDirectory -Path $dataRoot -AllowMissing
 $suffix = (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N')
-$null = Assert-LocalDirectory -Path $runRoot -Create
-$null = Assert-LocalDirectory -Path $logRoot -Create
 $outputRoot = Join-Path $runRoot $suffix
 if ($ResumePreparedBuild) {
   if (-not $PreparedOutputRoot -or -not $PreparedTranscriptPath) {
@@ -98,6 +87,8 @@ if (Test-Path -LiteralPath $transcriptPath) { throw "Repair transcript already e
 
 $payload = [ordered]@{
   Runner = $runner
+  DataRoot = $dataRoot
+  KeepArtifacts = [bool]$KeepArtifacts
   OutputRoot = $outputRoot
   TranscriptPath = $transcriptPath
   ExpectedUserSid = $sid
@@ -112,6 +103,8 @@ $bootstrap = @'
 $payloadJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__PAYLOAD__'))
 $payload = $payloadJson | ConvertFrom-Json
 & $payload.Runner `
+  -DataRoot $payload.DataRoot `
+  -KeepArtifacts:([bool]$payload.KeepArtifacts) `
   -OutputRoot $payload.OutputRoot `
   -TranscriptPath $payload.TranscriptPath `
   -ExpectedUserSid $payload.ExpectedUserSid `
@@ -146,6 +139,9 @@ Write-Host "Deployment state (written after installer identity checks): $transcr
 Write-Host 'The external installer will request normal Windows UAC consent. No task-scheduler or policy bypass is used.'
 
 if ($PSCmdlet.ShouldProcess($package.PackageFullName, 'Start independent elevated recoverable Model Experience repair')) {
+  $null = Assert-LocalDirectory -Path $dataRoot -Create
+  $null = Assert-LocalDirectory -Path $runRoot -Create
+  $null = Assert-LocalDirectory -Path $logRoot -Create
   try {
     $process = Start-Process -FilePath $powershellExe -Verb RunAs -ArgumentList $arguments -WindowStyle Hidden -PassThru -ErrorAction Stop
   } catch {
