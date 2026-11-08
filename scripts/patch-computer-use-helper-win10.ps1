@@ -2409,7 +2409,7 @@ $PatchProfiles = @(
         PatchedHex = '00c0170072c01700c0c0170080c01700b2c01700c8c01700'
       }
     )
-  },,
+  },
   [ordered]@{
     Name = '@oai/sky 0.7.17 helper FC0447EF / Windows 10 screenshot backend'
     ValidatedDesktopVersion = $null
