@@ -69,6 +69,10 @@ Do not proceed with a config write if the backup of an existing config fails. Th
 
 ## Workflow Selection
 
+For an explicit recurring follow-up refused because it tracks one chat or job,
+use the [thread automation instruction case](references/restriction-debug-cases.md#explicit-recurring-follow-up-is-refused).
+The repair is opt-in and hash-pinned; ordinary full repairs preserve the shipped instructions.
+
 For `failed to spawn code-mode host` or an older CLI selected after Desktop restart, read [executor runtime repair](references/executor-runtime-repair.md). Use the targeted local repair and verify actual post-restart tool execution before declaring recovery.
 
 For recurring update regressions, prefer the repository's

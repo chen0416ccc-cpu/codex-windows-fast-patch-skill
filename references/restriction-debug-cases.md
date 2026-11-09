@@ -4,6 +4,39 @@ Use this reference only when the main `SKILL.md` workflow does not explain the c
 
 Commands below refer to the skill directory as `$SkillRoot`. Resolve it with the probe in the `Skill Root` section of `SKILL.md` before running any of them.
 
+## Explicit Recurring Follow-Up Is Refused
+
+Desktop `26.1103.4239.0` injects a blanket instruction against automations that
+track a specific job, while its native `automation_update` tool supports
+`kind=heartbeat` with the current chat and minute intervals. This conflicts with
+an explicit request for scheduled follow-ups. The [official scheduled-task guide](https://learn.chatgpt.com/docs/automations?surface=app)
+also describes follow-ups in an existing chat. Distinguish this instruction from
+an actual scheduler, account or workspace error before selecting the repair.
+
+`patch_codex_fast_mode_windows_msix.ps1 -OnlyThreadAutomations -DryRun` checks
+the one pinned instruction asset. After validation, the same mode can prepare
+the signed package for the independent installer workflow. Use
+`-PatchThreadAutomations` to include it in an explicitly requested full patch;
+other targeted modes cannot be combined. Unknown files or partial edits stop
+before writing. Repeated application preserves bytes, and the targeted mode
+leaves model, project, plugin, authentication and scheduler code unchanged.
+
+The replacement routes explicit scheduled requests through a heartbeat in the
+current chat, includes the requested cadence and stop condition, and pauses or
+deletes it when done. Ordinary completion watching stays in the active task;
+standalone cron runs still require an explicit request. The tool lookup,
+notification preferences and archive API guidance remain intact. Applying this
+patch does not itself create a scheduled task.
+
+Run `node scripts/test-thread-automations.cjs <extracted-asar>` and the public
+targeted DryRun. For full-mode composition, also run a full DryRun with
+`-PatchThreadAutomations`, then rerun it on the prepared package. Deploy with
+state backup, a higher-revision recovery package and an independent installer.
+After restart, verify the generated instruction text and test the native
+automation tool with a disposable paused heartbeat, removing it afterwards.
+Report saved-schedule validation separately from actual timed delivery; an old
+turn can still carry the previously injected instructions.
+
 ## Browser AX Reports Decompression Failed
 
 If both Chrome and the in-app browser fail on `tab.ax.get('state')`, reproduce on a blank tab and inspect the service selected by `NODE_REPL_TRUSTED_SERVICES`. The Chrome client can dispatch to the separate **browser** plugin service; validating only Chrome's assets misses that path. Inspect `BROWSER_USE_ACCESSIBILITY_CORE_WASM_PATH` if an override is present.

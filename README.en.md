@@ -128,6 +128,8 @@ The entry point emits a JSON status. `-ReportPath '<new-report-path>.json'` save
 
 For the verified `26.1027.6604`, `26.1029.7803` and `26.1029.9216` file combinations, `-OnlyProjectArchiveState` repairs global-state backup recovery, Windows local-project assignment persistence, and stale errors beside populated archive lists. Start with `scripts/patch_codex_fast_mode_windows_msix.ps1 -OnlyProjectArchiveState -DryRun`. This opt-in mode repackages the client for an in-place update; the pinned `26.1029.7803` / `26.1029.9216` full desktop repair does not apply these project/archive fixes automatically, but preserves them when explicitly applied. Unknown source hashes stop the operation. Recover existing assignments only after comparing the database, global state and backups; a matching working directory alone is insufficient. See [project and archive state repair](references/project-archive-state.md) for deployment and acceptance.
 
+If `26.1103.4239` refuses an explicitly requested scheduled follow-up in one chat, start with `scripts/patch_codex_fast_mode_windows_msix.ps1 -OnlyThreadAutomations -DryRun`. This optional repair replaces only the conflicting automation instruction; use `-PatchThreadAutomations` to include it in a full repatch. It creates no scheduled task. See the [thread follow-up repair](references/restriction-debug-cases.md#explicit-recurring-follow-up-is-refused) for version, deployment and acceptance boundaries.
+
 ### Configure Tinghuashui (听话水)
 
 "听话水" (Tinghuashui) is this project's name for its bundled system prompt. Send this request to your agent:
