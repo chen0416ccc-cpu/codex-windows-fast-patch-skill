@@ -4,6 +4,49 @@ Use this reference only when the main `SKILL.md` workflow does not explain the c
 
 Commands below refer to the skill directory as `$SkillRoot`. Resolve it with the probe in the `Skill Root` section of `SKILL.md` before running any of them.
 
+## Explicit Recurring Follow-Up Is Refused
+
+This is an optional Desktop instruction customization, not a scheduler repair
+or a Windows 10 capture fix. Use it only when the user explicitly requests this
+behavior change. Asking for a scheduled task alone does not authorize patching
+or reinstalling the client. First inspect the actual automation tool and any
+account, workspace or scheduling errors; changing an instruction cannot grant
+missing tool access or prove that a schedule will execute.
+
+The inspected Desktop `26.1103.4239.0` instruction asset prohibits automations
+that track a specific job. This opt-in customization instead permits a native
+heartbeat for explicitly requested scheduled follow-ups in the current chat.
+It is pinned to that asset's complete hash, rather than Windows version or an
+assumed offset. Ordinary full repairs keep the shipped instruction unchanged.
+
+`patch_codex_fast_mode_windows_msix.ps1 -OnlyThreadAutomations -DryRun` checks
+the one pinned instruction asset in a disposable package copy. After validation
+and explicit deployment authorization, the same mode can prepare
+the signed package for the independent installer workflow. Use
+`-PatchThreadAutomations` to include it in an explicitly requested full patch;
+other targeted modes cannot be combined. Unknown files or partial edits stop
+before writing. Repeated application preserves bytes, and the targeted mode
+leaves model, project, plugin, authentication and scheduler code unchanged.
+
+The replacement routes explicit scheduled requests through a heartbeat in the
+current chat, includes the requested cadence and stop condition, and pauses or
+deletes it when done. Ordinary completion watching stays in the active task;
+standalone cron runs still require an explicit request. The tool lookup,
+notification preferences and archive API guidance remain intact. Applying this
+patch does not itself create a scheduled task.
+
+Run `node scripts/test-thread-automations.cjs <extracted-asar>` and the public
+targeted DryRun. For full-mode composition, also run a full DryRun with
+`-PatchThreadAutomations`, then rerun it on the prepared package. Deploy with
+state backup, a higher-revision recovery package and an independent installer.
+After an authorized installation and restart, verify the generated instruction
+text. Only with authorization for a test schedule, check saving a disposable
+heartbeat, actual timed execution and stopping at its requested condition, then
+remove it. A paused heartbeat checks saving only, not timed execution. Report
+instruction/package tests, saved-schedule checks and timed delivery separately;
+the latter remain unverified until measured. An old turn can still carry the
+previously injected instructions. No automation is created by these scripts.
+
 ## Browser AX Reports Decompression Failed
 
 If both Chrome and the in-app browser fail on `tab.ax.get('state')`, reproduce on a blank tab and inspect the service selected by `NODE_REPL_TRUSTED_SERVICES`. The Chrome client can dispatch to the separate **browser** plugin service; validating only Chrome's assets misses that path. Inspect `BROWSER_USE_ACCESSIBILITY_CORE_WASM_PATH` if an override is present.

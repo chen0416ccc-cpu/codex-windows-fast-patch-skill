@@ -69,6 +69,12 @@ Do not proceed with a config write if the backup of an existing config fails. Th
 
 ## Workflow Selection
 
+Only when the user explicitly requests changing Desktop's scheduled-follow-up
+instructions, use the [optional thread automation customization](references/restriction-debug-cases.md#explicit-recurring-follow-up-is-refused).
+It is hash-pinned and not Windows-10-specific. Ordinary full repairs preserve
+the shipped instructions; a scheduling request alone does not authorize client
+repackaging or installation. It does not repair the scheduler or create a task.
+
 For `failed to spawn code-mode host` or an older CLI selected after Desktop restart, read [executor runtime repair](references/executor-runtime-repair.md). Use the targeted local repair and verify actual post-restart tool execution before declaring recovery.
 
 For recurring update regressions, prefer the repository's

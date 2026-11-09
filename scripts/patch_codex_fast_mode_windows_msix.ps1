@@ -19,6 +19,8 @@ param(
   [switch]$OnlyComputerUseSurface,
   [switch]$OnlyNodeReplProxyEnv,
   [switch]$OnlyProjectArchiveState,
+  [switch]$OnlyThreadAutomations,
+  [switch]$PatchThreadAutomations,
   [switch]$OnlyComputerUseSurfaceAndProxyEnv,
   [switch]$PatchWindows10ScreenshotHelper,
   [switch]$PatchWindowsStoreUpdateFallback,
@@ -52,6 +54,16 @@ function Fail {
 }
 
 function Assert-ComputerUseSurfaceOptions {
+  if (($OnlyThreadAutomations -or $PatchThreadAutomations) -and
+      ($OnlyComputerUseSurface -or $OnlyNodeReplProxyEnv -or $OnlyBundledMarketplaceCopy -or $OnlyModelExperience -or
+       $OnlyComputerUseSurfaceAndProxyEnv -or $OnlyProjectArchiveState)) {
+    Fail 'Thread automation repair cannot be combined with other targeted modes'
+  }
+  if ($OnlyThreadAutomations -and
+      ($PatchThreadAutomations -or $AddLocalPluginMarketplace -or $VerifyFastModeRequest -or
+       $PatchWindows10ScreenshotHelper -or $PatchWindowsStoreUpdateFallback)) {
+    Fail '-OnlyThreadAutomations cannot be combined with unrelated repairs; use -PatchThreadAutomations with full mode'
+  }
   if ($OnlyProjectArchiveState -and
       ($OnlyComputerUseSurface -or $OnlyNodeReplProxyEnv -or $OnlyBundledMarketplaceCopy -or $OnlyModelExperience -or
        $OnlyComputerUseSurfaceAndProxyEnv -or $AddLocalPluginMarketplace -or $VerifyFastModeRequest -or
@@ -2737,6 +2749,29 @@ function Invoke-PatchAppAsar {
   Invoke-NpxAsar 'extract' $asarPath $extractDir
   $patchers = Write-PatcherFiles $WorkDir
 
+  $threadAutomationChanged = $false
+  if ($OnlyThreadAutomations -or $PatchThreadAutomations) {
+    $automationResult = Invoke-NodePatcher $nodePath (Join-Path $PSScriptRoot 'patch-thread-automations.cjs') `
+      @($extractDir, (Join-Path $WorkDir 'thread-automation-originals'))
+    Write-Log "Thread automation instructions patch result: $automationResult"
+    $automationReport = $automationResult | ConvertFrom-Json
+    & $nodePath --check (Join-Path $extractDir $automationReport.file)
+    if ($LASTEXITCODE -ne 0) { Fail 'Thread automation asset syntax failed' }
+    $threadAutomationChanged = $automationReport.status -eq 'patched'
+    if ($OnlyThreadAutomations) {
+      if ($DryRun) {
+        Write-Log 'dry run: thread automation instructions validated; installed package unchanged'
+        return $false
+      }
+      if (-not $threadAutomationChanged) { return $false }
+      $automationRepack = Invoke-NodePatcher $nodePath (Join-Path $PSScriptRoot 'repack-project-archive-asar.cjs') `
+        @($asarPath, $extractDir, $newAsarPath, '--all')
+      Write-Log "Thread automation preserved ASAR layout: $automationRepack"
+      Copy-Item -LiteralPath $newAsarPath -Destination $asarPath -Force
+      return $true
+    }
+  }
+
   $proxyResult = $null
   if ($OnlyNodeReplProxyEnv -or $OnlyComputerUseSurfaceAndProxyEnv) {
     $viteBuildDir = Join-Path $extractDir '.vite\build'
@@ -3078,7 +3113,7 @@ function Invoke-PatchAppAsar {
       Write-Log "dry run: complete pinned $($modernReport.version) desktop layout validated"
       return $false
     }
-    if (@($modernReport.files | Where-Object status -eq 'patched').Count -eq 0) {
+    if (@($modernReport.files | Where-Object status -eq 'patched').Count -eq 0 -and -not $threadAutomationChanged) {
       Write-Log 'Pinned desktop patches already present'
       return $false
     }
@@ -3180,7 +3215,7 @@ function Invoke-PatchAppAsar {
       $nodeReplProxyEnv -in @('already-patched', 'not-applicable') -and
       $windowsStoreFallback -in @('already-patched', 'not-requested') -and
       $bundledMarketplaceCopy -eq 'already-patched' -and
-      $computerUseSurface -in @('already-patched', 'not-applicable')) {
+      $computerUseSurface -in @('already-patched', 'not-applicable') -and -not $threadAutomationChanged) {
     Write-Log 'asar patch already present'
     return $false
   }
@@ -3853,11 +3888,11 @@ try {
   Copy-PackageLayout $sourcePackageRoot $workPackageRoot
   Remove-OldPackageArtifacts $workPackageRoot
 
-  $chromeRegistryParsing = if ($OnlyProjectArchiveState) { 'skipped-targeted-project-archive-state' } else { Patch-ChromePluginWindowsRegistryParsing $workApp }
+  $chromeRegistryParsing = if ($OnlyProjectArchiveState) { 'skipped-targeted-project-archive-state' } elseif ($OnlyThreadAutomations) { 'skipped-targeted-thread-automations' } else { Patch-ChromePluginWindowsRegistryParsing $workApp }
   Write-Log "Chrome localized registry parsing patch result: $chromeRegistryParsing"
 
   # Validate the runtime inside the package copy before it can enter an MSIX.
-  if (-not ($OnlyBundledMarketplaceCopy -or $OnlyComputerUseSurface -or $OnlyNodeReplProxyEnv -or $OnlyComputerUseSurfaceAndProxyEnv -or $OnlyModelExperience -or $OnlyProjectArchiveState)) {
+  if (-not ($OnlyBundledMarketplaceCopy -or $OnlyComputerUseSurface -or $OnlyNodeReplProxyEnv -or $OnlyComputerUseSurfaceAndProxyEnv -or $OnlyModelExperience -or $OnlyProjectArchiveState -or $OnlyThreadAutomations)) {
     $stagedNodeModules = Join-Path $workApp 'resources\cua_node\bin\node_modules'
     $entryInstructions = Repair-WindowsCuaEntryInstructions -NodeModulesRoot $stagedNodeModules
     Write-Log "Windows CUA entry instructions patch result: $entryInstructions"
