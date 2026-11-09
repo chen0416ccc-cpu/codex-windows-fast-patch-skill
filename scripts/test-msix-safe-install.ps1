@@ -73,6 +73,89 @@ $script:ancestorPath='C:\Windows\System32\wbem\WmiPrvSE.exe'
 Assert-MsixExternalExecutor $script:current
 Assert $true 'independent external executor accepted'
 function Assert-MsixExternalExecutor { param($ExistingPackage) }
+$script:fakeProcesses = @()
+$script:stopCalls = @()
+$script:installerSession = 7
+function New-FakeProcess {
+  param([int]$Id, [string]$Path, [int]$SessionId = $script:installerSession,
+        [int]$MainWindowHandle = 0, [bool]$CloseSucceeds = $true,
+        [bool]$ExitOnClose = $true, [bool]$ExitOnForce = $true)
+  $process = [pscustomobject]@{
+    Id=$Id; Path=$Path; SessionId=$SessionId; MainWindowHandle=$MainWindowHandle
+    HasExited=$false; StartTime=[DateTime]::new(2026, 11, 9, 0, 0, 0, [DateTimeKind]::Utc)
+    CloseSucceeds=$CloseSucceeds; ExitOnClose=$ExitOnClose; ExitOnForce=$ExitOnForce; CloseCalls=0
+    Handle=[IntPtr]1
+  }
+  $process | Add-Member ScriptMethod Refresh { }
+  $process | Add-Member ScriptMethod CloseMainWindow {
+    $this.CloseCalls++
+    if ($this.CloseSucceeds -and $this.ExitOnClose) { $this.HasExited = $true }
+    return $this.CloseSucceeds
+  }
+  return $process
+}
+function Get-Process {
+  param([int]$Id, [string[]]$Name, [string]$ErrorAction)
+  if ($PSBoundParameters.ContainsKey('Id')) {
+    if ($Id -eq $PID) { return [pscustomobject]@{Id=$PID;SessionId=$script:installerSession} }
+    if ($script:replacement -and $script:replacement.Id -eq $Id) {
+      $script:fakeProcesses = @($script:replacement)
+      return $script:replacement
+    }
+    return @($script:fakeProcesses | Where-Object Id -eq $Id)
+  }
+  return @($script:fakeProcesses)
+}
+function Stop-Process {
+  param($InputObject, [switch]$Force, [string]$ErrorAction)
+  $script:stopCalls += [int]$InputObject.Id
+  if ($InputObject.ExitOnForce) { $InputObject.HasExited = $true }
+}
+$matchingRoot = 'C:\fixture\original\'
+$graceful = New-FakeProcess 10 ($matchingRoot + 'app\ChatGPT.exe') 7 1
+$script:fakeProcesses = @($graceful)
+Stop-MsixPackageProcesses -ExistingPackage $script:current -GracefulTimeoutSeconds 0 -ForceTimeoutSeconds 0
+Assert ($graceful.HasExited -and $script:stopCalls.Count -eq 0) 'graceful package shutdown avoids force termination'
+$script:stopCalls = @()
+$main = New-FakeProcess 11 ($matchingRoot + 'app\ChatGPT.exe') 7 1
+$child = New-FakeProcess 12 ($matchingRoot + 'app\ChatGPT.exe') 7 0 $true $false $true
+$unrelated = New-FakeProcess 13 'C:\other\ChatGPT.exe' 7 1
+$otherSession = New-FakeProcess 14 ($matchingRoot + 'app\ChatGPT.exe') 8 1
+$sibling = New-FakeProcess 16 'C:\fixture\original-other\app\ChatGPT.exe' 7 1
+$unknown = New-FakeProcess 17 '' 7 1
+$script:fakeProcesses = @($main, $child, $unrelated, $otherSession, $sibling, $unknown)
+Stop-MsixPackageProcesses -ExistingPackage $script:current -GracefulTimeoutSeconds 0 -ForceTimeoutSeconds 0
+Assert ($script:stopCalls -contains 12 -and $script:stopCalls.Count -eq 1) 'only residual matching-package child is force stopped'
+foreach ($untouched in @($unrelated, $otherSession, $sibling, $unknown)) {
+  Assert (-not $untouched.HasExited -and $untouched.CloseCalls -eq 0) "unrelated path, session or unknown path remains untouched: $($untouched.Id)"
+}
+$script:stopCalls = @()
+$reused = New-FakeProcess 18 ($matchingRoot + 'app\ChatGPT.exe')
+$script:fakeProcesses = @($reused)
+$script:replacement = New-FakeProcess 18 'C:\other\ChatGPT.exe'
+Stop-MsixPackageProcesses -ExistingPackage $script:current -GracefulTimeoutSeconds 0 -ForceTimeoutSeconds 0
+Assert ($script:stopCalls.Count -eq 0 -and -not $script:replacement.HasExited) 'reused PID with another executable is never killed'
+$script:fakeProcesses = @($reused)
+$script:replacement = New-FakeProcess 18 ($matchingRoot + 'app\ChatGPT.exe')
+$script:replacement.StartTime = $script:replacement.StartTime.AddSeconds(1)
+Expect-Failure { Stop-MsixPackageProcesses -ExistingPackage $script:current -GracefulTimeoutSeconds 0 -ForceTimeoutSeconds 0 } 'did not exit before deployment'
+Assert ($script:stopCalls.Count -eq 0 -and -not $script:replacement.HasExited) 'reused matching-package PID is not killed without matching start time'
+$script:replacement = $null
+$script:stopCalls = @()
+$stuck = New-FakeProcess 15 ($matchingRoot + 'app\ChatGPT.exe') 7 0 $false $false $false
+$script:fakeProcesses = @($stuck)
+Expect-Failure { Stop-MsixPackageProcesses -ExistingPackage $script:current -GracefulTimeoutSeconds 0 -ForceTimeoutSeconds 0 } 'did not exit before deployment'
+Assert ($script:stopCalls -contains 15) 'stuck matching process is force attempted before fail closed'
+Expect-Failure { Stop-MsixPackageProcesses ([pscustomobject]@{InstallLocation='C:\'}) } 'volume root'
+Expect-Failure { Stop-MsixPackageProcesses ([pscustomobject]@{InstallLocation=''}) } 'package directory'
+$script:shutdownCalls = 0
+$script:stopPackageImplementation = ${function:Stop-MsixPackageProcesses}
+function Stop-MsixPackageProcesses {
+  param($ExistingPackage)
+  $script:shutdownCalls++
+  & $script:stopPackageImplementation -ExistingPackage $ExistingPackage -GracefulTimeoutSeconds 0 -ForceTimeoutSeconds 0
+}
+$script:fakeProcesses = @()
 function Add-AppxPackage {
   param($Path,[switch]$ForceApplicationShutdown,$ErrorAction)
   $script:addCalls++
@@ -100,6 +183,11 @@ $script:current.Publisher='CN=fixture'
 $script:current.Architecture='Arm64'
 Expect-Failure { Invoke-TransactionalMsixInstall $target } 'publisher or architecture'
 $script:current.Architecture='X64'
+Assert ($script:shutdownCalls -eq 0) 'all deployment preflights complete before any window closure'
+$script:fakeProcesses = @($stuck)
+Expect-Failure { Invoke-TransactionalMsixInstall $target } 'did not exit before deployment'
+Assert ($script:addCalls -eq 0 -and $script:current.PackageFullName -eq 'original-package') 'shutdown timeout never reaches deployment or changes registration'
+$script:fakeProcesses = @()
 $script:failDeployment=$true
 Expect-Failure { Invoke-TransactionalMsixInstall $target } 'synthetic deployment failure'
 Assert ($script:current.PackageFullName -eq 'original-package') 'failed update keeps original registration'

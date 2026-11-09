@@ -118,6 +118,88 @@ function Test-MsixDeploymentPreflight {
   return [pscustomobject]@{ Target = $target; Existing = $existing }
 }
 
+function Get-MsixPackageProcesses {
+  param([string]$InstallRoot, [int]$SessionId)
+  foreach ($process in @(Get-Process -ErrorAction Stop)) {
+    try {
+      if ($process.SessionId -ne $SessionId -or -not $process.Path -or
+          -not $process.Path.StartsWith($InstallRoot, [StringComparison]::OrdinalIgnoreCase) -or
+          $process.HasExited) { continue }
+      # Capture the start time before waiting so a recycled PID is not a shutdown target.
+      [pscustomobject]@{ Process = $process; StartedAt = $process.StartTime }
+    } catch {
+      # An exited or unreadable process is not an identified package process.
+      continue
+    }
+  }
+}
+
+function Stop-MsixPackageProcesses {
+  param(
+    $ExistingPackage,
+    [ValidateRange(0, 60)][int]$GracefulTimeoutSeconds = 15,
+    [ValidateRange(0, 60)][int]$ForceTimeoutSeconds = 10
+  )
+  if (-not $ExistingPackage) { return }
+  $location = [string]$ExistingPackage.InstallLocation
+  if (-not $location -or -not [IO.Path]::IsPathRooted($location)) {
+    throw 'Cannot establish the installed package directory before shutdown.'
+  }
+  $installRoot = [IO.Path]::GetFullPath($location).TrimEnd('\', '/') + '\'
+  if ($installRoot -eq [IO.Path]::GetPathRoot($installRoot)) {
+    throw 'Refusing a volume root as the package shutdown directory.'
+  }
+  $sessionId = (Get-Process -Id $PID -ErrorAction Stop).SessionId
+  $remaining = @(Get-MsixPackageProcesses -InstallRoot $installRoot -SessionId $sessionId)
+  if ($remaining.Count -eq 0) { return }
+  Write-Log "requesting package window closure: processes=$($remaining.Count) session=$sessionId root=$installRoot"
+  foreach ($candidate in $remaining) {
+    try {
+      $null = $candidate.Process.Handle
+      $candidate.Process.Refresh()
+      if (-not $candidate.Process.HasExited -and $candidate.Process.StartTime -eq $candidate.StartedAt -and
+          $candidate.Process.MainWindowHandle -ne 0) {
+        $null = $candidate.Process.CloseMainWindow()
+      }
+    } catch {
+      Write-Log "package window closure raced or failed: pid=$($candidate.Process.Id)"
+    }
+  }
+  $deadline = (Get-Date).AddSeconds($GracefulTimeoutSeconds)
+  do {
+    $remaining = @(Get-MsixPackageProcesses -InstallRoot $installRoot -SessionId $sessionId)
+    if ($remaining.Count -eq 0 -or (Get-Date) -ge $deadline) { break }
+    Start-Sleep -Milliseconds 250
+  } while ($true)
+  foreach ($candidate in $remaining) {
+    try {
+      $process = Get-Process -Id $candidate.Process.Id -ErrorAction SilentlyContinue
+      if (-not $process) { continue }
+      # Hold the process handle while checking identity and stopping this instance.
+      $null = $process.Handle
+      if ($process.HasExited -or $process.StartTime -ne $candidate.StartedAt -or
+          $process.SessionId -ne $sessionId -or -not $process.Path -or
+          -not $process.Path.StartsWith($installRoot, [StringComparison]::OrdinalIgnoreCase)) { continue }
+      Write-Log "stopping remaining package process: pid=$($process.Id) path=$($process.Path)"
+      Stop-Process -InputObject $process -Force -ErrorAction Stop
+    } catch {
+      Write-Log "package process stop raced or failed: pid=$($candidate.Process.Id)"
+    }
+  }
+  $deadline = (Get-Date).AddSeconds($ForceTimeoutSeconds)
+  do {
+    $remaining = @(Get-MsixPackageProcesses -InstallRoot $installRoot -SessionId $sessionId)
+    if ($remaining.Count -eq 0) {
+      Write-Log 'package process exit verified before deployment'
+      return
+    }
+    if ((Get-Date) -ge $deadline) { break }
+    Start-Sleep -Milliseconds 250
+  } while ($true)
+  $remainingIds = ($remaining | ForEach-Object { $_.Process.Id }) -join ', '
+  throw "Package processes did not exit before deployment: $remainingIds. The existing package has not been replaced."
+}
+
 function Invoke-TransactionalMsixInstall {
   param(
     [Parameter(Mandatory = $true)][string]$MsixPath,
@@ -127,6 +209,7 @@ function Invoke-TransactionalMsixInstall {
   Assert-MsixExternalExecutor $plan.Existing
   Write-Log "transactional MSIX update: $($plan.Target.Version); no explicit package removal"
   try {
+    Stop-MsixPackageProcesses -ExistingPackage $plan.Existing
     Add-AppxPackage -Path $plan.Target.Path -ForceApplicationShutdown -ErrorAction Stop
     $installed = Get-AppxPackage -Name $PackageName -ErrorAction Stop | Sort-Object Version -Descending | Select-Object -First 1
     if (-not $installed -or [version]$installed.Version -ne $plan.Target.Version -or
