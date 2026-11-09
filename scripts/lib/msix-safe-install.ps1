@@ -1,4 +1,5 @@
 # Transactional MSIX updates. Never remove the working package before deployment.
+. (Join-Path $PSScriptRoot 'msix-tray.ps1')
 
 function Get-MsixManifestInfo {
   param([Parameter(Mandatory = $true)][string]$MsixPath)
@@ -152,6 +153,7 @@ function Stop-MsixPackageProcesses {
   $sessionId = (Get-Process -Id $PID -ErrorAction Stop).SessionId
   $remaining = @(Get-MsixPackageProcesses -InstallRoot $installRoot -SessionId $sessionId)
   if ($remaining.Count -eq 0) { return }
+  $trayItems = @(Get-MsixPackageTraySnapshot -Processes $remaining)
   Write-Log "requesting package window closure: processes=$($remaining.Count) session=$sessionId root=$installRoot"
   foreach ($candidate in $remaining) {
     try {
@@ -191,6 +193,7 @@ function Stop-MsixPackageProcesses {
     $remaining = @(Get-MsixPackageProcesses -InstallRoot $installRoot -SessionId $sessionId)
     if ($remaining.Count -eq 0) {
       Write-Log 'package process exit verified before deployment'
+      Remove-MsixStoppedTrayItems -Items $trayItems
       return
     }
     if ((Get-Date) -ge $deadline) { break }

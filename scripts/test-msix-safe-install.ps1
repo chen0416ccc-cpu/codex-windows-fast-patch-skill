@@ -73,6 +73,9 @@ $script:ancestorPath='C:\Windows\System32\wbem\WmiPrvSE.exe'
 Assert-MsixExternalExecutor $script:current
 Assert $true 'independent external executor accepted'
 function Assert-MsixExternalExecutor { param($ExistingPackage) }
+# Tray ownership/cleanup is exercised separately without querying the user's shell.
+function Get-MsixPackageTraySnapshot { param($Processes); return @() }
+function Remove-MsixStoppedTrayItems { param($Items) }
 $script:fakeProcesses = @()
 $script:stopCalls = @()
 $script:installerSession = 7
