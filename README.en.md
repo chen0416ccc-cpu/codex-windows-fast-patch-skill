@@ -27,24 +27,12 @@
 
 This community-maintained **Agent Skill** contains diagnostic workflows and repair scripts. It is not an official client or a universal one-click installer.
 
-The `26.1029.7803` and `26.1029.9216` layouts are supported for models, Fast and Ultra. Project membership and archive fixes use their separate explicit entry point. The skill also offers Windows 10 screenshot profiles for Sky `0.7.13` / `0.7.17`. After installation, verify the actual runtime, plugin state and any requested screenshot acceptance. Repair stale custom MCP paths only after backing up configuration and matching the current packaged runtime.
-
-On this layout, `-OnlyModelExperience` also supports targeted diagnosis and repair of model visibility, Fast and Ultra without opening unrelated locale, browser or Computer Use gates. Existing complete desktop patches are preserved. Chrome registrations using `latest` pass strict verification only when the aliases resolve to the same current physical files and their official identities match; equal-content copies are not accepted as aliases.
-
 The one-click repair preserves the runtime launcher when valid `HTTP_PROXY` and `HTTPS_PROXY` values are already inherited. Otherwise, it includes CUA browser proxy recovery using the explicit Windows HTTP system proxy, with original-byte backups and reapplication after proxy changes. Restart Codex after a write and verify Chrome and the in-app browser separately. Run `scripts/install-computer-use-local.ps1 -OnlyRuntimeProxy` for only this repair; add `-StrictVerifyOnly` for read-only checks. PAC, authenticated and non-HTTP fallback proxies are unsupported.
 
 > [!WARNING]
 > **Windows only. Some repairs include reinstalling Codex.** The app will close and the current conversation may be interrupted. After installation, reopen Codex, return to the original repair conversation, and send "continue" to resume. See the [reinstallation details](#which-repairs-reinstall-codex).
 
-The `26.1103.3517.0` layout passes full-hash checks across 29 files, model-only/full dry runs and behavioral regressions. It covers 7 Fast request copies, 7 Fast UI copies, 11 Ultra copies, locale, Browser/CUA and startup waits. Native CUA readiness and plugin guards remain intact; older project/archive and reopen edits are not applied. Post-install acceptance must still verify the actual registered version.
-
 ## What it repairs
-
-For `26.1029.7803` / `26.1029.9216` startup blocked by Statsig initialization, the full desktop patch bounds the Windows post-login request budget to 5 seconds and SDK network fallback to 2 seconds, preserving cached values and background refresh. Renderer exit reason and code are recorded locally; this diagnostic does not establish that a native renderer crash is fixed. See [startup delays and reload diagnosis](references/windows-startup-stability.md).
-
-When an installer uses low priority and one CPU, its activation child restores Normal priority and the current processor group's available CPUs before starting Desktop. Installer and build-job limits remain in place; Desktop must still launch outside the build job.
-
-For `failed to spawn code-mode host`, run `scripts/install-computer-use-local.ps1 -OnlyExecutorRuntime`; add `-StrictVerifyOnly` for read-only checks. It verifies complete file hashes against the current package, restores missing companions, and backs up and migrates `CODEX_CLI_PATH` pins to retired cache directories. Restart Codex after repair, then verify the actual app-server path and a real tool call.
 
 | Problem | Coverage |
 | --- | --- |
@@ -53,7 +41,7 @@ For `failed to spawn code-mode host`, run `scripts/install-computer-use-local.ps
 | **Unavailable browser access** | In-app browser, Chrome control, and specific authentication-dependency errors with custom providers |
 | **Computer-control failures** | Computer Use / Any App, cross-call window operations, and some Windows 10 screenshot failures |
 | **Broken phone remote control** | Missing entry points, QR codes, pairing, or expired-version errors while retaining third-party API use |
-| **Conversation failures** | New-chat `inputSchema` errors, history hidden after provider changes, missing working directories after recovery, lost project assignments after restart, and stale archive-load errors beside loaded chats |
+| **Conversation failures** | New-chat `inputSchema` errors, history hidden after provider changes, and missing working directories after recovery |
 | **Configuration management** | Configuration, skill, and marketplace backup/restore |
 | **Configure Tinghuashui (听话水)** | Configure the skill's bundled system-prompt file and `model_instructions_file` |
 
@@ -124,10 +112,6 @@ Model visibility overrides default to the active provider's visible `model/list`
 
 The entry point emits a JSON status. `-ReportPath '<new-report-path>.json'` saves it without overwriting existing files. `-WhatIf` permits diagnostics, but does not repair plugins, dispatch an installer or save a report. Full bundle inspection uses temporary disk space and does not modify the installed application. No scheduled task, monitor or automatic restart is registered. Store updates can still replace patched files; this workflow detects and restores supported paths after an update, and rejects unknown layouts before installation. It cannot guarantee compatibility with arbitrary future releases. See [post-update verification](references/post-update-verification.md).
 
-### Project assignments and archive loading
-
-For the verified `26.1027.6604`, `26.1029.7803` and `26.1029.9216` file combinations, `-OnlyProjectArchiveState` repairs global-state backup recovery, Windows local-project assignment persistence, and stale errors beside populated archive lists. Start with `scripts/patch_codex_fast_mode_windows_msix.ps1 -OnlyProjectArchiveState -DryRun`. This opt-in mode repackages the client for an in-place update; the pinned `26.1029.7803` / `26.1029.9216` full desktop repair does not apply these project/archive fixes automatically, but preserves them when explicitly applied. Unknown source hashes stop the operation. Recover existing assignments only after comparing the database, global state and backups; a matching working directory alone is insufficient. See [project and archive state repair](references/project-archive-state.md) for deployment and acceptance.
-
 ### Configure Tinghuashui (听话水)
 
 "听话水" (Tinghuashui) is this project's name for its bundled system prompt. Send this request to your agent:
@@ -169,13 +153,10 @@ Reinstallation depends on the cause of the problem, not simply on using this ski
 | Fast Mode, Power/Ultra, or models hidden by client-side filtering | Patch the client and reinstall |
 | Language resets or broken client-side Goal / plugin / browser / Any App entry points | Patch the client and reinstall |
 | Phone entry, pairing, or version issues; new-chat `inputSchema` errors | Reinstall when the client or native program needs changes |
-| Lost project assignments after restart or load errors beside populated archives | Verify and recover assignment data, then patch supported client files and update in place |
 | Chrome / Computer Use caches, runtime paths, marketplace configuration, or supported Chrome authentication-dependency errors | Usually repair the local environment without reinstalling |
 | Model-catalog entries, history visibility, missing working directories, backups, Tinghuashui configuration, or post-pairing API addresses | Usually change configuration or data without reinstalling |
 
 The same visible symptom, such as an unavailable browser or a missing model, may come from configuration or cache problems. Let the diagnosis determine the repair.
-
-The recoverable full installer and post-update full dry run default to the **fixed local drive with the most available free space** for large builds, recovery packages and temporary files; D: is not required. Override the data root with `-DataRoot` or the process environment variable `CODEX_WINDOWS_REPAIR_DATA_ROOT`, or use `-CheckRoot` for a separate diagnostic workspace. Resume, acceptance and cleanup use the original run paths rather than choosing a drive again. Successful acceptance removes only that run's build and temporary directories while retaining logs; failed runs retain diagnostic artifacts, and `-KeepArtifacts` retains successful outputs when requested.
 
 ### What happens during reinstallation
 
@@ -196,7 +177,6 @@ ASAR extraction and packing first reuse a working CLI already installed in the n
 | Looking for | Documentation |
 | --- | --- |
 | Complete workflows, parameters, and backup commands | [SKILL.md](SKILL.md), the on-demand guide for agents and maintainers |
-| Lost project assignments or stale archive errors after restart | [Project and archive state repair](references/project-archive-state.md) |
 | Model, browser, plugin, or installation troubleshooting | [Troubleshooting cases](references/restriction-debug-cases.md) |
 | Missing dots entry, account and cloud access requirements | [Read-only dots diagnostics](references/dots-diagnostics.md); does not unlock cloud eligibility |
 | Phone authorization, pairing, and API issues | [Phone remote-control troubleshooting](references/remote-control-debug-cases.md) |
