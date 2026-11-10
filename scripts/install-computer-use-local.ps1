@@ -2347,9 +2347,9 @@ function Resolve-ExistingFileProviderPath {
 }
 
 function Get-FinalFileIdentityPath {
-  param([string]$Path)
+  param([string]$Path, [switch]$Directory)
 
-  $providerPath = Resolve-ExistingFileProviderPath $Path
+  $providerPath = if ($Directory) { Resolve-ExistingDirectory $Path } else { Resolve-ExistingFileProviderPath $Path }
   if (-not ('CodexFinalPathResolver' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
@@ -3802,6 +3802,27 @@ print(json.dumps([part for part in value.split(';') if part.strip()]))
   return $configRoots
 }
 
+function Test-NodeReplTrustedRootCoverage {
+  param([string]$RequiredRoot, [string[]]$TrustedRoots)
+
+  $requiredPrefix = (Get-FinalFileIdentityPath $RequiredRoot -Directory).TrimEnd('\') + '\'
+  foreach ($root in @($TrustedRoots)) {
+    # Match the runtime's absolute, existing, canonical directory roots.
+    if ([string]::IsNullOrWhiteSpace($root) -or $root -notmatch '^(?:[A-Za-z]:[\\/]|[\\/]{2})') {
+      continue
+    }
+    try {
+      $trustedPrefix = (Get-FinalFileIdentityPath $root -Directory).TrimEnd('\') + '\'
+    } catch {
+      continue
+    }
+    if ($requiredPrefix.StartsWith($trustedPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+      return $true
+    }
+  }
+  return $false
+}
+
 function Test-NodeReplTrustedPathRepair {
   param(
     [string]$ConfigPath,
@@ -3820,17 +3841,17 @@ function Test-NodeReplTrustedPathRepair {
     Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 
   foreach ($root in $trustedRoots) {
-    if (-not ($configRoots | Where-Object { $_.TrimEnd('\') -ieq $root.TrimEnd('\') })) {
+    if (-not (Test-NodeReplTrustedRootCoverage $root $configRoots)) {
       throw "config.toml Node REPL trusted paths do not include the stable physical root: $root"
     }
-    if (-not ($userRoots | Where-Object { $_.TrimEnd('\') -ieq $root.TrimEnd('\') })) {
+    if (-not (Test-NodeReplTrustedRootCoverage $root $userRoots)) {
       throw "user NODE_REPL_TRUSTED_CODE_PATHS does not include the stable physical root: $root"
     }
   }
 
-  $codexHomePrefix = [System.IO.Path]::GetFullPath($CodexHomeResolved).TrimEnd('\') + '\'
+  $codexHomePrefix = (Get-FinalFileIdentityPath $CodexHomeResolved -Directory).TrimEnd('\') + '\'
   $externalRoots = @($trustedRoots | Where-Object {
-      -not ([System.IO.Path]::GetFullPath($_).TrimEnd('\') + '\').StartsWith(
+      -not ((Get-FinalFileIdentityPath $_ -Directory).TrimEnd('\') + '\').StartsWith(
         $codexHomePrefix,
         [System.StringComparison]::OrdinalIgnoreCase
       )

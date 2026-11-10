@@ -266,6 +266,14 @@ Action:
 - Finish with a real public HTTPS page read through the Desktop browser channel: verify the final URL, observed title and meaningful visible content, then close the temporary tab. Fixed selector assertions require a task-owned fixture; third-party page structure is not a runtime contract.
 - If the official diagnostics fail, repair the concrete extension/native-host problem instead and rerun the same diagnostics before attempting browser-client setup again.
 
+## Core Strict Check Rejects a Trusted Parent Directory
+
+When core strict reports `config.toml Node REPL trusted paths do not include the stable physical root`, inspect the configured directory coverage. The Node REPL runtime canonicalizes trusted roots and accepts their descendants. Desktop can regenerate the config with `CODEX_HOME` as a trusted parent, covering a marketplace located beneath that home. The former exact-string comparison rejected that valid configuration after restart.
+
+The checker now resolves physical directory identities and compares case-insensitive prefixes with directory boundaries. Both the generated configuration and the user environment must cover each required root. Physical roots outside `CODEX_HOME` require the persisted external-trust ASAR marker, including marketplace junctions whose targets escape the home directory.
+
+Run `test-node-repl-trusted-coverage.ps1 -TemporaryRoot <local-test-root>` in Windows PowerShell 5.1 and PowerShell 7, followed by `test-node-repl-trusted-config.ps1` and `test-chrome-native-host-v2-state.ps1`. The coverage suite exercises exact roots, trusted parents, aliases, misleading sibling prefixes, missing/relative roots and external-marker enforcement through production functions. Repeat core strict against the existing configuration to verify the diagnostic repair.
+
 ## Computer Use Settings Says Plugin Unavailable
 
 Symptoms:
