@@ -449,6 +449,14 @@ Run `test-computer-use-helper-win10-patch.ps1 -SkyVersion 0.7.6-F78948E6 -Helper
 
 `ValidatedDesktopVersion` and `EndToEndValidatedDesktopVersion` remain null. This resolves the missing exact-hash profile; real Windows 10 screenshot/input acceptance, installation/rollback and resource testing remain pending. Keep issue #93 open until runtime evidence confirms the reported failures are resolved. Do not count the Windows 11 candidate/unwind checks as Windows 10 capture proof.
 
+### `@oai/sky 0.7.6` helper `58FFF5E2` / issue #94
+
+This exact-hash profile maps original `58FFF5E2359AA09528F48EF37651B9013B204F99E2FD381F0D3D980CF9D2E88D` to candidate `A7EF05E4DABAD5E9ED22709C3A7928A21D40689DB274276206EF25E87456670C`. All thirteen region offsets and replacement bytes match the existing `63C98C4D` profile. Original-byte guards differ only for the PE checksum, certificate directory and certificate bytes replaced by the MTA wrapper; the shared platform, complete-hash, backup and rollback checks are unchanged.
+
+The contributor reports Windows 10 build 19045, Desktop `26.1007.21434` / build 13901 and Sky `0.7.6`: exact candidate reconstruction, isolated install/backup/rollback, unknown-input rejection, repeated Notepad capture and indexed Format-menu interaction, including after a Desktop restart. These are contributor observations, not independent maintainer runtime acceptance. Full Windows reboot, game capture, animated-target inspection and a resource soak remain unverified. The patched helper does not retain the original digital signature. `ValidatedDesktopVersion` and `EndToEndValidatedDesktopVersion` remain null; keep issue #94 open pending adequate runtime evidence.
+
+Run `test-computer-use-helper-win10-patch.ps1 -SkyVersion 0.7.6-58FFF5E2 -HelperPath <exact-original-helper>` for candidate and platform-guard checks, and the guarded lifecycle tests on Windows 10. Without the exact sample, `-SkyVersion 0.7.6-58FFF5E2 -ProfileOnly` validates only catalogue hashes, region structure and correspondence with `63C98C4D`; it does not verify a complete binary hash or execution. The native unwind test accepts the exact patched hash for separate offline validation.
+
 ### `@oai/sky 0.7.6` helper `63C98C4D` / issue #93 follow-up
 
 The follow-up reports Windows 10 Home 22H2 build `19045.6466`, a Codex build label of `26.1002.52244` / `13536`, and the same screenshot timeout, including Notepad. Its exact helper also exists in a Windows 11 user-level CUA runtime: original SHA-256 `63C98C4DD5D707DF3240A04DA1FBF7FE47FF0622CF757EE886EEE96434D4E17A`, size 1,550,288 bytes, and a valid OpenAI OpCo, LLC Authenticode signature. That runtime observation does not independently establish the reported Desktop package version.
