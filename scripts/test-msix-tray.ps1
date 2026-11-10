@@ -106,6 +106,60 @@ $candidate.StartedAt=$candidate.StartedAt.AddSeconds(1)
 Assert (@(Get-MsixPackageTraySnapshot @($candidate)).Count -eq 0) 'recycled PID with a different start time is excluded'
 function Get-MsixTrayItems { throw 'unsupported shell interface' }
 Assert (@(Get-MsixPackageTraySnapshot @($candidate)).Count -eq 0) 'unsupported enumeration makes no deletion target'
+
+# Exercise the outer recovery transaction, not only the inner tray failure.
+function Get-MsixTrayItems { return $script:items }
+$script:process | Add-Member -Force ScriptMethod CloseMainWindow {
+  $this.HasExited=$true
+  $script:owner=0
+  return $true
+}
+function Stop-Process {
+  param($InputObject, [switch]$Force, $ErrorAction)
+  $InputObject.HasExited=$true
+  $script:owner=0
+}
+function Assert-MsixExternalExecutor { param($ExistingPackage) }
+function Test-MsixDeploymentPreflight {
+  param($MsixPath, $PackageName)
+  $version=if ($MsixPath -eq 'recovery.msix') { [version]'26.1103.7773.2' } else { [version]'26.1103.7773.1' }
+  return [pscustomobject]@{
+    Existing=$script:currentPackage
+    Target=[pscustomobject]@{Path=$MsixPath;Version=$version;Publisher='CN=fixture'}
+  }
+}
+function Get-AppxPackage { param($Name, $ErrorAction); return $script:currentPackage }
+function Add-AppxPackage { param($Path, [switch]$ForceApplicationShutdown, $ErrorAction); $script:deployments++ }
+$script:currentPackage=[pscustomobject]@{
+  InstallLocation='C:\fixture';PackageFullName='original-package'
+  Version=[version]'26.1103.7773.0';Publisher='CN=fixture'
+}
+foreach ($failureMode in @('persistent-delete', 'enumeration-after-shutdown')) {
+  Reset-TrayFixture
+  $script:owner=123
+  $script:process.HasExited=$false
+  $script:deleteResult=$false
+  $script:deployments=0
+  $script:activations=0
+  if ($failureMode -eq 'enumeration-after-shutdown') {
+    function Get-MsixTrayItems {
+      if ($script:process.HasExited) { throw 'synthetic shell failure after shutdown' }
+      return $script:items
+    }
+  }
+  $caught=$null
+  try {
+    Invoke-RecoverableMsixInstall 'candidate.msix' 'recovery.msix' -ValidateInstalledPackage {
+      param($Package)
+      $script:activations++
+    } | Out-Null
+  } catch { $caught=$_ }
+  Assert ([bool]$caught) "tray failure is propagated: $failureMode"
+  Assert ($caught.Exception.Data['CodexNoAutomaticRestart'] -eq $true) "tray failure carries the no-restart boundary: $failureMode"
+  Assert ($script:deployments -eq 0) "tray failure never deploys either candidate or recovery: $failureMode"
+  Assert ($script:activations -eq 0) "tray failure never activates the still-registered original: $failureMode"
+  Assert ($script:currentPackage.PackageFullName -eq 'original-package') "tray failure preserves original registration: $failureMode"
+}
 Set-Item Function:\Get-MsixTrayItems $readImplementation
 Set-Item Function:\Get-MsixTrayOwner $ownerImplementation
 Set-Item Function:\Remove-MsixTrayItem $removeImplementation

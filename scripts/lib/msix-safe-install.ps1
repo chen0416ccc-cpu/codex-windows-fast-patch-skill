@@ -193,7 +193,13 @@ function Stop-MsixPackageProcesses {
     $remaining = @(Get-MsixPackageProcesses -InstallRoot $installRoot -SessionId $sessionId)
     if ($remaining.Count -eq 0) {
       Write-Log 'package process exit verified before deployment'
-      Remove-MsixStoppedTrayItems -Items $trayItems
+      try {
+        Remove-MsixStoppedTrayItems -Items $trayItems
+      } catch {
+        # The original registration still exists, but restarting it is unsafe too.
+        $_.Exception.Data['CodexNoAutomaticRestart'] = $true
+        throw
+      }
       return
     }
     if ((Get-Date) -ge $deadline) { break }
@@ -248,6 +254,10 @@ function Invoke-RecoverableMsixInstall {
     & $ValidateInstalledPackage $installed | Out-Null
     return [pscustomobject]@{Success=$true;Recovered=$false;Package=$installed;Error=$null}
   } catch {
+    if ($_.Exception.Data['CodexNoAutomaticRestart']) {
+      Write-Log 'tray cleanup stopped deployment; preserving registration without automatic restart or recovery'
+      throw
+    }
     if ($_.Exception.Data['CodexResourceBoundary']) {
       Write-Log 'resource boundary stopped validation; preserving the registered package without another deployment'
       throw
