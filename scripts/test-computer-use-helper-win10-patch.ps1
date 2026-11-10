@@ -3,8 +3,9 @@ param(
   [string]$HelperPath,
   # Profile labels, not raw @oai/sky versions: one sky version can ship more than one
   # helper binary across Desktop builds, so each label pins its own hash pair.
-  [ValidateSet('0.7.17-7F73CF56', '0.7.17-87ECB164', '0.7.17-1F0DDEE3', '0.7.6-63C98C4D', '0.7.6-F78948E6', '0.7.5-25D792D0', '0.7.5-6EEAF314', '0.7.4-219BFB75', '0.7.4-8010E5ED', '0.7.5-ABDD75DF', '0.4.20-F2B2F56F', '0.5.2-2C4CAC16', '0.6.6', '0.6.11', '0.6.11-7A95D14E', '0.6.16', '0.6.16-BEB498C2', '0.6.17-29D5E113', '0.6.17-DB8F4486', '0.6.17-4250FF66', '0.6.17-4319D3A2', '0.6.17-D967386B', '0.6.23-8423CA8C', '0.6.24-DE3696C0', '0.6.24-4DB7B670', '0.6.24-9BAB6E1B', '0.6.24-3B60A7E0', '0.6.26-7D9EB53D', '0.6.26-52928CCC', '0.6.26-71BAEAFD', '0.6.26-243F203E', '0.6.26-06EBD6D6', '0.6.26-6DDFB6A8', '0.6.26-7A2C7F70', '0.6.26-935D23E1', '0.6.32-BAD605EF', '0.7.1-B49B8682', '0.6.26-4A87D459', '0.6.26-84B38D77', '0.7.1-D09A2F3F', '0.7.1-9493AF2C', '0.7.1-2AA2A7A9', '0.7.12-AA6EB7E9', '0.7.12-A8533C3D', '0.7.12-6FCC7C64', '0.7.13-8A64A6A0', '0.7.17-FC0447EF')]
-  [string]$SkyVersion = '0.6.16'
+  [ValidateSet('0.7.17-7F73CF56', '0.7.17-87ECB164', '0.7.17-1F0DDEE3', '0.7.6-58FFF5E2', '0.7.6-63C98C4D', '0.7.6-F78948E6', '0.7.5-25D792D0', '0.7.5-6EEAF314', '0.7.4-219BFB75', '0.7.4-8010E5ED', '0.7.5-ABDD75DF', '0.4.20-F2B2F56F', '0.5.2-2C4CAC16', '0.6.6', '0.6.11', '0.6.11-7A95D14E', '0.6.16', '0.6.16-BEB498C2', '0.6.17-29D5E113', '0.6.17-DB8F4486', '0.6.17-4250FF66', '0.6.17-4319D3A2', '0.6.17-D967386B', '0.6.23-8423CA8C', '0.6.24-DE3696C0', '0.6.24-4DB7B670', '0.6.24-9BAB6E1B', '0.6.24-3B60A7E0', '0.6.26-7D9EB53D', '0.6.26-52928CCC', '0.6.26-71BAEAFD', '0.6.26-243F203E', '0.6.26-06EBD6D6', '0.6.26-6DDFB6A8', '0.6.26-7A2C7F70', '0.6.26-935D23E1', '0.6.32-BAD605EF', '0.7.1-B49B8682', '0.6.26-4A87D459', '0.6.26-84B38D77', '0.7.1-D09A2F3F', '0.7.1-9493AF2C', '0.7.1-2AA2A7A9', '0.7.12-AA6EB7E9', '0.7.12-A8533C3D', '0.7.12-6FCC7C64', '0.7.13-8A64A6A0', '0.7.17-FC0447EF')]
+  [string]$SkyVersion = '0.6.16',
+  [switch]$ProfileOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -43,6 +44,12 @@ $Profiles = @{
     SkyVersion = '0.7.6'
     OriginalHash = '63C98C4DD5D707DF3240A04DA1FBF7FE47FF0622CF757EE886EEE96434D4E17A'
     PatchedHash = '5BAE07883BA804D9EB23BFBFFBC99FD83247896F6CFE66109A8F6C4C5EE13B94'
+    EndToEndValidatedDesktopVersion = $null
+  }
+  '0.7.6-58FFF5E2' = [ordered]@{
+    SkyVersion = '0.7.6'
+    OriginalHash = '58FFF5E2359AA09528F48EF37651B9013B204F99E2FD381F0D3D980CF9D2E88D'
+    PatchedHash = 'A7EF05E4DABAD5E9ED22709C3A7928A21D40689DB274276206EF25E87456670C'
     EndToEndValidatedDesktopVersion = $null
   }
   '0.7.6-F78948E6' = [ordered]@{
@@ -290,6 +297,52 @@ function Assert-Equal {
   if ([string]$Actual -cne [string]$Expected) {
     throw "$Message / expected=$Expected actual=$Actual"
   }
+}
+
+if ($ProfileOnly) {
+  $tokens = $null
+  $errors = $null
+  $ast = [Management.Automation.Language.Parser]::ParseFile($Patcher, [ref]$tokens, [ref]$errors)
+  Assert-Equal $errors.Count 0 'patcher parse errors'
+  $assignment = $ast.Find({ param($node)
+    $node -is [Management.Automation.Language.AssignmentStatementAst] -and
+    $node.Left.Extent.Text -eq '$PatchProfiles'
+  }, $false)
+  if (-not $assignment) { throw 'patch profile catalogue is missing' }
+  $catalogue = @(Invoke-Expression $assignment.Right.Extent.Text)
+  $selected = @($catalogue | Where-Object { $_.OriginalSha256 -eq $ExpectedOriginalHash })
+  Assert-Equal $selected.Count 1 'original hash profile is not unique'
+  $profile = $selected[0]
+  Assert-Equal $profile.PatchedSha256 $ExpectedPatchedHash 'patched hash contract'
+  Assert-Equal $profile.SkyVersion $ExpectedSkyVersion 'sky version contract'
+  if ($Profiles[$ProfileLabel].Contains('EndToEndValidatedDesktopVersion')) {
+    Assert-Equal $profile.ValidatedDesktopVersion $Profiles[$ProfileLabel].EndToEndValidatedDesktopVersion 'capture acceptance contract'
+  }
+  $end = 0
+  foreach ($region in @($profile.Regions | Sort-Object { [long]$_.Offset })) {
+    if ($region.OriginalHex -notmatch '^(?:[0-9a-fA-F]{2})+$' -or
+        $region.PatchedHex -notmatch '^(?:[0-9a-fA-F]{2})+$' -or $region.Offset -lt $end) {
+      throw "malformed or overlapping patch region: $($region.Name)"
+    }
+    Assert-Equal $region.OriginalHex.Length $region.PatchedHex.Length 'region length contract'
+    $end = $region.Offset + ($region.OriginalHex.Length / 2)
+  }
+  if ($ProfileLabel -eq '0.7.6-58FFF5E2') {
+    $baseline = @($catalogue | Where-Object { $_.OriginalSha256 -eq $Profiles['0.7.6-63C98C4D'].OriginalHash })
+    Assert-Equal $baseline.Count 1 'comparison profile is not unique'
+    Assert-Equal $profile.Regions.Count 13 'expected guarded region count'
+    $adapted = @()
+    foreach ($region in $profile.Regions) {
+      $other = @($baseline[0].Regions | Where-Object { $_.Name -eq $region.Name })
+      Assert-Equal $other.Count 1 'comparison region is not unique'
+      Assert-Equal $region.Offset $other[0].Offset 'comparison region offset'
+      Assert-Equal $region.PatchedHex $other[0].PatchedHex 'comparison replacement bytes'
+      if ($region.OriginalHex -cne $other[0].OriginalHex) { $adapted += $region.Name }
+    }
+    Assert-Equal (($adapted | Sort-Object) -join ',') 'mta-wrapper-and-unwind,pe-certificate-directory,pe-checksum' 'unexpected adapted original guards'
+  }
+  Write-Output "PROFILE_CONTRACT_TESTS_PASSED profile=$ProfileLabel regions=$($profile.Regions.Count); no binary hash or runtime validation"
+  return
 }
 
 function Get-CodexPackageInstallLocations {
