@@ -193,6 +193,29 @@ For Windows 10 screenshot issues investigated from a Windows 11 host, follow `re
 
 ## Default Workflow
 
+Desktop `26.1106.6628.0` uses `desktop-2611066628-profiles.json`: 33 exact-hash
+files cover 8 Fast request, 7 Fast UI and 14 Ultra query copies, the separate
+Ultra host capability, locale, Browser/CUA, trust/proxy inheritance and startup
+budgets. Its five native witnesses preserve Power, Goal, plugin and CUA guards.
+Full mode keeps project/archive and recurring-follow-up repairs opt-in.
+For explicit project repair, preserve the shipped content-owner account
+isolation; this version needs durable-write recovery rather than the old
+renderer-owner rewrite. Run `test-project-state-261106.cjs`, the archive,
+desktop, heartbeat and composition regressions against original assets.
+Its Sky 0.7.18 helper stays unchanged; enumeration does not establish capture
+or input acceptance. `codex-after-update.ps1 -CheckApp` removes only its
+sentinel-checked scratch directory, including dependencies beyond MAX_PATH.
+
+Desktop `26.1103.7773.0` uses `desktop-2611037773-profiles.json` with the
+4239 feature scope below. Full/model, explicit project/archive and thread
+automation modes compose through exact hashes. Run the 1103 desktop, project,
+archive, heartbeat and composition regressions against the 7773 extraction.
+Desktop support does not establish support for its separately signed Sky
+helper; require a recognized full helper hash and separate capture acceptance.
+If immediate post-install runtime verification races extraction, preserve the
+failed checkpoint, wait for the package-matching runtime, then use local runtime
+repair and independent restart acceptance without redeploying the package.
+
 Desktop `26.1103.4239.0` uses `desktop-2611034239-profiles.json` with the same
 29-file feature scope and five native witnesses. The explicit project/archive
 mode supports its three-asset state, membership and archive repair; full mode

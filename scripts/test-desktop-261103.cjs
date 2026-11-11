@@ -8,11 +8,12 @@ const crypto = require('node:crypto');
 const {transform, resolveManifest} = require('./patch-desktop-261029.cjs');
 const root = process.argv[2];
 const manifest = resolveManifest(rel => fs.existsSync(path.join(root, rel)));
-assert(['26.1103.3517.0', '26.1103.4239.0'].includes(manifest.version));
+assert(['26.1103.3517.0', '26.1103.4239.0', '26.1103.7773.0', '26.1106.6628.0'].includes(manifest.version));
+const latest = manifest.version === '26.1106.6628.0';
 let checks = 0;
 const models = ['fixture-model'];
 async function main() {
-  assert.equal(manifest.files.length, 29);
+  assert.equal(manifest.files.length, latest ? 33 : 29);
   assert.throws(()=>resolveManifest(()=>false),/Expected one complete/);
   assert.throws(()=>resolveManifest(rel=>rel!==manifest.files[0].file&&fs.existsSync(path.join(root,rel))),/Expected one complete/);
   checks+=3;
@@ -29,7 +30,7 @@ async function main() {
       // Model-only is an accepted complete state; use an unrelated or startup
       // edit when checking rejection of an incomplete desktop patch.
       const e = profile.edits.find(edit=>edit.kind.startsWith('startup-')) ??
-        profile.edits.find(edit=>!['custom-models','fast-request','fast-ui','ultra'].includes(edit.kind)) ?? profile.edits[0];
+        profile.edits.find(edit=>!['custom-models','fast-request','fast-ui','ultra','ultra-host'].includes(edit.kind)) ?? profile.edits[0];
       const partial = source.replace(e.before, e.after.replace('__MODELS_JSON__', JSON.stringify(models)));
       assert.throws(() => transform(partial, profile, models), /Unsupported/, profile.file); checks++;
     }
@@ -43,6 +44,13 @@ async function main() {
         assert.equal(vm.runInNewContext(edit.after, context), false);
         context[enabled] = false; context[custom] = true;
         assert.equal(vm.runInNewContext(edit.after, context), false); checks += 3;
+      }
+      if (edit.kind === 'ultra-host') {
+        for (const [custom, gate, expected] of [[true,false,true],[false,false,false],[false,true,true]]) {
+          const context = {tw:{cc:()=>custom},z:{ie:()=>gate},g:'fixture-provider',t:{}};
+          const result = vm.runInNewContext('({' + edit.after + '})', context);
+          assert.equal(result.includeUltraReasoningEffort, expected); checks++;
+        }
       }
       if (edit.kind === 'fast-request') {
         const index = source.indexOf(edit.before);
@@ -76,7 +84,9 @@ async function main() {
       if (edit.kind === 'startup-renderer-diagnostics') {
         for (const [reason,quitting,expected] of [['crashed',false,1],['oom',false,1],['killed',false,1],['clean-exit',false,0],['crashed',true,0]]) {
           const records=[];
-          const context={e:{},n:1,i:2,t:'primary',r:{on:(_,cb)=>{context.callback=cb;}},eEc:()=>({warning:(name,entry)=>records.push({name,...entry})})};
+          const emitter = edit.before.match(/^(\w+)\.on\(/)[1];
+          const logger = edit.after.match(/(\w+)\(\)\.warning\(/)[1];
+          const context={e:{},n:1,i:2,r:3,t:'primary',[emitter]:{on:(_,cb)=>{context.callback=cb;}},[logger]:()=>({warning:(name,entry)=>records.push({name,...entry})})};
           vm.runInNewContext('(function(){'+edit.after+';})}).call({isAppQuitting:'+quitting+',appBadgeCounts:{delete(){}}})',context);
           context.callback(null,{reason,exitCode:3});
           assert.equal(records.length,expected);
@@ -94,13 +104,16 @@ async function main() {
   const end=source.indexOf('}(e,k);try{',at)+1;
   assert(begin>=0&&end>at);
   const fn=source.slice(begin,end).replace(deadline.before,deadline.after);
+  const failure = fn.match(/new (\w+)\(c\.CodexPostLoginStatsigBootstrapFailureType/)[1];
+  const request = fn.match(/await (\w+)\.CodexRequest\.postResponse/)[1];
+  const brand = fn.match(/brand_name:(\w+)\.C\.toLowerCase/)[1];
   for(const [platform,expected] of [['Windows',5000],['macOS',62500]]){
     const timers=[];
     const context={AbortController,AbortSignal,setTimeout:(cb,ms)=>{timers.push({cb,ms});return timers.length;},clearTimeout(){},Error,
       c:{CodexPostLoginStatsigBootstrapFailureType:{CODEX_POST_LOGIN_STATSIG_BOOTSTRAP_FAILURE_TYPE_REQUEST_FAILED:1}},
-      t3:class extends Error{constructor(type,cause){super(cause.message);this.cause=cause;this.failureType=type;}},
+      [failure]:class extends Error{constructor(type,cause){super(cause.message);this.cause=cause;this.failureType=type;}},
       E:{_qC:(promise,signal)=>Promise.race([promise,new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}))])},
-      t1:{CodexRequest:{postResponse:()=>new Promise(()=>{})}},tQ:{C:'Codex'}};
+      [request]:{CodexRequest:{postResponse:()=>new Promise(()=>{})}},[brand]:{C:'Codex'}};
     const pending=vm.runInNewContext('('+fn+')',context)({systemName:platform},{current:0});
     assert.equal(timers[0].ms,expected);
     timers[0].cb();
@@ -112,6 +125,11 @@ async function main() {
     for(const witness of profile.witnesses)assert(source.includes(witness));
     checks++;
   }
-  console.log(JSON.stringify({checks,files:manifest.files.length,native:manifest.native.length,fastRequests:7,fastUi:7,ultra:11}));
+  const edits = manifest.files.flatMap(profile=>profile.edits);
+  for (const [kind, expected] of [['fast-request',latest?8:7],['fast-ui',7],['ultra',latest?14:11],['ultra-host',latest?1:0]]) {
+    assert.equal(edits.filter(edit=>edit.kind===kind).length,expected); checks++;
+  }
+  console.log(JSON.stringify({checks,version:manifest.version,files:manifest.files.length,native:manifest.native.length,
+    fastRequests:edits.filter(edit=>edit.kind==='fast-request').length,fastUi:7,ultra:edits.filter(edit=>edit.kind==='ultra').length,ultraHost:latest?1:0}));
 }
 main().catch(error=>{console.error(error.stack?.slice(-1500)??error.message);process.exitCode=1;});

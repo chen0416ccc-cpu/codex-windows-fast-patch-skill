@@ -56,6 +56,9 @@ Write-Fixture 'patch_codex_fast_mode_windows_msix.ps1' @'
 param($AppPath,$OutputRoot,$AsarWorkRoot,[string[]]$CustomModels,[switch]$DryRun)
 if(-not $DryRun){throw 'Fixture refuses deployment'}
 New-Item -ItemType Directory -Path $OutputRoot -Force|Out-Null
+$deep = '\\?\' + $OutputRoot + '\' + (('deep-runtime-dependency' * 6) + '\') * 3
+New-Item -ItemType Directory -Path $deep -Force|Out-Null
+Set-Content -LiteralPath ($deep + 'fixture.txt') -Value 'long path cleanup witness'
 [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'diagnostic-models'),($CustomModels -join ','))
 Get-Content -LiteralPath (Join-Path $PSScriptRoot 'patch-report.txt') | ForEach-Object {Write-Host $_}
 exit 0
@@ -86,7 +89,7 @@ try {
   $result = Read-Result @{CheckApp=$true}
   Require ($result.status -eq 'verified-contracts') 'Healthy dry-run rejected'
   Require ((Get-Content -LiteralPath (Join-Path $root 'diagnostic-models') -Raw) -eq 'fixture-new,future-model') 'Live catalog models were lost'
-  Require (@(Get-ChildItem -LiteralPath $checkRoot -Force).Count -eq 0) 'Diagnostic scratch leaked'
+  Require (@(Get-ChildItem -LiteralPath $checkRoot -Force).Count -eq 0) 'Diagnostic scratch with long runtime paths leaked'
   $result = Read-Result @{RepairApp=$true}
   Require ($result.status -eq 'verified-contracts') 'Already patched application requested deployment'
   Require (-not(Test-Path -LiteralPath (Join-Path $root 'installer-called'))) 'Already patched application was redeployed'

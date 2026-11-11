@@ -67,7 +67,7 @@ for (const root of process.argv.slice(2)) {
     if (membership) assert.throws(() => project.transform(bad, membership), /Unsupported/);
     checks += membership ? 2 : 1;
   }
-  if (layout.version === '26.1103.4239.0') {
+  if (['26.1103.4239.0','26.1103.7773.0','26.1106.6628.0'].includes(layout.version)) {
     // Execute the shipped install selection and reason expressions, not a replacement reconciler.
     const selection = original.match(/p=(t\.marketplacePluginDescriptors\.filter\(e=>!0===e\.installWhenMissing\)[\s\S]+?\.map\(e=>e\.name\)),m=/);
     const reason = original.match(/if\(p=(\(h=\{forceInstall:c,installWhenMissing:S,installedPluginStatus:s\}\)[\s\S]+?),null==p\)/);

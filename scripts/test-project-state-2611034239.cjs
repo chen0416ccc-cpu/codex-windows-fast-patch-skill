@@ -11,12 +11,25 @@ const desktop = require('./patch-desktop-261029.cjs');
 const root = process.argv[2];
 const profiles = selectProfiles(rel => fs.existsSync(path.join(root, rel)));
 assert.equal(profiles.length, 3);
-assert.equal(profiles[0].file, 'early-bootstrap-133-1c544c3280919085.js');
+assert(['early-bootstrap-133-1c544c3280919085.js', 'early-bootstrap-133-7b2e6aa4288cc836.js'].includes(profiles[0].file));
 const sources = profiles.map(p => fs.readFileSync(path.join(root, relativePath(p)), 'utf8'));
 const patched = sources.map((s, i) => transform(s, profiles[i]).source);
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-project-4239-'));
 let checks = 0;
 function storeClass(source) {
+  if (source.includes('RL:class{logger=')) {
+    const start = source.indexOf('RL:class{logger=') + 3;
+    const end = source.indexOf('},RW:', start) + 1;
+    const helperStart = source.indexOf('function ez(e){') >= 0 ? source.indexOf('function ez(e){') : source.indexOf('function ed(e){');
+    const helperEnd = source.indexOf('r.d(t,{},{$6:S', helperStart);
+    assert(start > 3 && end > start && helperStart >= 0 && helperEnd > helperStart);
+    const logger = {warning() {}};
+    const context = {n:fs,s:fs.promises,i:crypto,o:path,a:timers,process,queueMicrotask,DOMException,
+      h:{vB:()=>()=>logger},ee:()=>logger,u:{sg1:cb=>Object.assign(cb,{cancel(){}}),yDt:()=>null,nh0:['local-projects','thread-project-assignments']},
+      ec:{},eu:new Set(),Y:[],g:{ac:'account-state',Iz:e=>e.id,kg:new Set()},k:'atoms',R:'runtime',x:'outbox',y:{o:'archives'}};
+    vm.runInNewContext(source.slice(helperStart,helperEnd)+';globalThis.Store='+source.slice(start,end)+';',context);
+    return context.Store;
+  }
   const start = source.indexOf('class eh{'), end = source.indexOf('},75211(', start);
   assert(start > 0 && end > start);
   const logger = {warning() {}};
@@ -73,7 +86,9 @@ async function membershipCases(source, broken) {
   const anchor=source.match(/T\.setThreadAssignmentsEnabled\(tr\(\)\.localProjectTaskMembership[^)]*\)/)[0];
   vm.runInNewContext(anchor,context);assert.equal(gate.enabled,!broken);checks++;
   const start=source.indexOf('async write(e,t,r,n,i,s,a){'),end=source.indexOf('async syncAssignment(',start);
-  const method=vm.runInNewContext('({'+source.slice(start,end)+'}).write',{ed5:async(_,id,fn)=>fn(),es:{Q2Y:{THREAD_PROJECT_ASSIGNMENTS:'assignments'},RWz:()=>false}});
+  const writer = source.slice(start,end);
+  const serialize = writer.match(/^async write\(e,t,r,n,i,s,a\)\{await (\w+)\(/)[1];
+  const method=vm.runInNewContext('({'+writer+'}).write',{[serialize]:async(_,id,fn)=>fn(),es:{Q2Y:{THREAD_PROJECT_ASSIGNMENTS:'assignments'},RWz:()=>false}});
   const sent=[];let writes=0;
   const receiver={pendingWrites:new Map(),globalState:{get:()=>({})},localProjectId:e=>e?.projectId??null,isEnabled:()=>gate.enabled,activeServerProjectId:()=> 'backend',connection:{sendAppServerRequest:async(...a)=>sent.push(a)}};
   await method.call(receiver,'thread',{projectKind:'local',projectId:'project'},async()=>writes++,async()=>true,{throwIfAborted(){}},undefined,'local');
