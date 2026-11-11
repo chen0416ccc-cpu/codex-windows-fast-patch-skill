@@ -202,6 +202,9 @@ For explicit project repair, preserve the shipped content-owner account
 isolation; this version needs durable-write recovery rather than the old
 renderer-owner rewrite. Run `test-project-state-261106.cjs`, the archive,
 desktop, heartbeat and composition regressions against original assets.
+Validate the public ASAR dispatch with `test-desktop-msix-dispatch.ps1
+-SourceAsarRoot <original-assets> -TemporaryRoot <scratch>` for full, model,
+marketplace and explicit heartbeat modes.
 Its Sky 0.7.18 helper stays unchanged; enumeration does not establish capture
 or input acceptance. `codex-after-update.ps1 -CheckApp` removes only its
 sentinel-checked scratch directory, including dependencies beyond MAX_PATH.
