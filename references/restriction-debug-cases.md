@@ -1029,6 +1029,12 @@ The shared native PowerShell resolver uses `Sysnative` from a 32-bit process on 
 
 Run `scripts/test-appx-launch.ps1 -TemporaryRoot <local-test-root>` under Windows PowerShell 5.1 and PowerShell 7. It checks manifest/AUMID binding, ambiguous and non-full-trust entries, the pinned COM declaration, complete PID and malformed-output handling, matching-process selection, background-only startup, and unreadable-path rejection. A 64-bit test run also launches the fixture through a real 32-bit PowerShell parent without activating an app. These tests cover launch detection and transport, not an actual package deployment. The complete non-phone patcher and recoverable runner both use this helper so future updates do not restore the elevated Explorer path.
 
+## Signing Preparation Misses an Existing Code-Signing Certificate
+
+A fresh PowerShell process can read raw certificates through `X509Store` before the Certificate provider has supplied its `EnhancedKeyUsageList` adapter. Checking only that property can reject an existing usable signing key, create an unnecessary replacement and open another trust prompt. Read the typed `X509EnhancedKeyUsageExtension` and require the explicit code-signing OID; keep the existing subject, private-key and expiration filters. Do not treat missing EKU or TLS-only EKU as code signing.
+
+Run `scripts/test-signing-certificate-eku.ps1` in fresh Windows PowerShell 5.1 and PowerShell 7 processes. It checks real EKU-extension fixtures and the current certificate store read-only without creating keys, changing trust or deploying packages. If an earlier preparation stopped at a trust prompt, inspect that build before retrying and reuse the existing trusted key; do not accept a new certificate merely to get past this lookup failure. Signing success remains separate from package installation and runtime acceptance.
+
 ## MSIX Signature Reports Unknown Format When TEMP Does Not Exist
 
 An external executor that changes `TEMP` and `TMP` must create the selected directory before setting those variables or checking an MSIX signature. On Windows PowerShell 5.1 with Desktop `26.1002.7124.0`, the same signed update and recovery packages returned `Valid` under the normal temporary directory, then `UnknownError` with a trust-provider unsupported-format message when the executor pointed both variables at a missing D-drive directory. Creating that exact directory restored `Valid` for both packages without changing their bytes, signer, publisher, or certificate trust.
