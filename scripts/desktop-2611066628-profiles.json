@@ -1,0 +1,474 @@
+{
+  "version": "26.1106.6628.0",
+  "files": [
+    {
+      "file": ".vite/build/early-bootstrap-620-1eb87a1b3aa240b6.js",
+      "sha256": "5d08d7246c17ad6c295420a592ed2109bd70a318c63efe4890dcb7c32975ec0c",
+      "edits": [
+        {
+          "before": "isAvailable:({features:e})=>e.deepResearch",
+          "after": "isAvailable:()=>!0/*codex_windows_deep_research_bundled_plugin_available*/,installWhenMissing:!1",
+          "legacyAfter": "isAvailable:()=>!0/*codex_windows_deep_research_bundled_plugin_available*/",
+          "kind": "bundled-deep-research"
+        },
+        {
+          "before": "n.on(\"render-process-gone\",(a,o)=>{if(\"clean-exit\"===o.reason||this.isAppQuitting)return;this.appBadgeCounts.delete(e)",
+          "after": "n.on(\"render-process-gone\",(a,o)=>{if(\"clean-exit\"===o.reason||this.isAppQuitting)return;eFp().warning(\"windows_renderer_process_gone\",{safe:{reason:o.reason,exitCode:o.exitCode,windowId:r,webContentsId:i,windowAppearance:t},sensitive:{}});/*CODEX_RENDERER_EXIT_DIAGNOSTICS_V1*/this.appBadgeCounts.delete(e)",
+          "kind": "startup-renderer-diagnostics"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/739301.37a39f26d6.js",
+      "sha256": "acc2174e4ed3d2068af26c1731f08e8978c853864aea9c0a917ae9d246885058",
+      "edits": [
+        {
+          "before": "e?.has(s.model)===!0||\"codex-auto-review\"!==s.model&&(i&&!s.hidden||(o&&!a&&\"amazonBedrock\"!==n?r.has(s.model)||\"apikey\"===n&&t&&!s.hidden&&l?.some(e=>\"standard\"!==e)===!0:!s.hidden))",
+          "after": "/*CODEX_CUSTOM_MODELS_V1*/__MODELS_JSON__.includes(s.model)||e?.has(s.model)===!0||\"codex-auto-review\"!==s.model&&(i&&!s.hidden||(o&&!a&&\"amazonBedrock\"!==n?r.has(s.model)||\"apikey\"===n&&t&&!s.hidden&&l?.some(e=>\"standard\"!==e)===!0:!s.hidden))",
+          "kind": "custom-models"
+        },
+        {
+          "before": "D?.get(\"enable_i18n\",!1)",
+          "after": "(D?.get(\"enable_i18n\",!1),!0)/*CODEX_I18N_LOCAL_V2*/",
+          "kind": "locale"
+        },
+        {
+          "before": "h=function({areRequirementsPending:e,isBrowserAndComputerUseAllowed:t,isExternalBrowserUseFeatureEnabled:n,isExternalBrowserUseFeatureLoading:r,isExternalBrowserUseGateEnabled:i,runCodexInWsl:a,windowType:s}){return e?\"loading\":t?\"chrome-extension\"===s?\"available\":r?\"loading\":n?a?\"wsl-disabled\":i?\"available\":\"statsig-disabled\":\"config-requirement-disabled\":\"config-requirement-disabled\"}({areRequirementsPending:R,isBrowserAndComputerUseAllowed:P,isExternalBrowserUseFeatureEnabled:C.enabled,isExternalBrowserUseFeatureLoading:C.isLoading,isExternalBrowserUseGateEnabled:I,runCodexInWsl:N,windowType:E})",
+          "after": "h=!A?\"disabled\":N?\"wsl-disabled\":(\"electron\"===E||\"chrome-extension\"===E)?\"available\":\"window-type-disabled\"/*CODEX_BROWSER_EXTERNAL_V4*/",
+          "kind": "browser-external"
+        },
+        {
+          "before": "p=function({areRequirementsPending:e,areRequiredFeaturesEnabled:t,enabled:n,isBrowserAndComputerUseAllowed:r,isAnyFeatureLoading:i,isComputerUseGateEnabled:a,isHostCompatiblePlatform:s,isPlatformLoading:o,windowType:l}){return n?\"electron\"!==l?\"window-type-disabled\":e?\"loading\":r?a?o?\"loading\":s?i?\"loading\":t?\"available\":\"config-requirement-disabled\":\"unsupported-platform\":\"statsig-disabled\":\"config-requirement-disabled\":\"disabled\"}({areRequirementsPending:L,areRequiredFeaturesEnabled:M,enabled:T,isBrowserAndComputerUseAllowed:U,isAnyFeatureLoading:D,isComputerUseGateEnabled:b,isHostCompatiblePlatform:\"macOS\"===S||\"windows\"===S,isPlatformLoading:A,windowType:\"electron\"})",
+          "after": "p=!T?\"disabled\":A?\"loading\":(\"windows\"===S||\"macOS\"===S)?\"available\":\"unsupported-platform\"/*CODEX_COMPUTER_USE_AVAILABILITY_V4*/",
+          "kind": "computer-use"
+        },
+        {
+          "before": "\"Ready\"!==n.loadingStatus&&n.initializeAsync().catch(r.Log.error).finally(()=>s(!1))",
+          "after": "\"Ready\"!==n.loadingStatus&&n.initializeAsync(\"Win32\"===globalThis.navigator?.platform?{timeoutMs:2000}:void 0).catch(r.Log.error).finally(()=>s(!1))",
+          "kind": "startup-sdk-budget"
+        },
+        {
+          "before": "m=function({areRequirementsPending:e,isBrowserAgentGateEnabled:t,isBrowserAndComputerUseAllowed:n,isBrowserEnabled:r,isBrowserUseEnabled:i,isLoading:a,runCodexInWsl:s,windowType:o}){return\"chrome-extension\"===o?\"window-type-disabled\":e?\"loading\":n?a?\"loading\":r?t?i?s?\"wsl-disabled\":\"available\":\"config-requirement-disabled\":\"statsig-disabled\":\"browser-pane-disabled\":\"config-requirement-disabled\"}({areRequirementsPending:N,isBrowserAgentGateEnabled:C,isBrowserAndComputerUseAllowed:k,isBrowserEnabled:I,isBrowserUseEnabled:R,isLoading:P,runCodexInWsl:x,windowType:\"electron\"})",
+          "after": "m=E?(!x?\"available\":\"wsl-disabled\"):\"disabled\"/*CODEX_BROWSER_IN_APP_V4*/",
+          "kind": "browser-in-app"
+        },
+        {
+          "before": "Error(\"Reached the post-login Statsig bootstrap deadline\")))},62500)",
+          "after": "Error(\"Reached the post-login Statsig bootstrap deadline\")))},\"Windows\"===e.systemName?5000:62500)/*CODEX_WINDOWS_STATSIG_STARTUP_BUDGET_V2*/",
+          "kind": "startup-bootstrap-budget"
+        },
+        {
+          "before": "includeUltraReasoningEffort:(0,z.ie)(t,\"1186680773\")",
+          "after": "includeUltraReasoningEffort:((0,tw.cc)(g)||(0,z.ie)(t,\"1186680773\"))/*CODEX_CUSTOM_PROVIDER_ULTRA_BOOTSTRAP_V2*/",
+          "kind": "ultra-host"
+        }
+      ]
+    },
+    {
+      "file": ".vite/build/early-bootstrap.js",
+      "sha256": "65061a5b536de78484458d07ddb349d0d40fc4e94b85c616f31935302c9591f5",
+      "edits": [
+        {
+          "before": "[u]:p([t,m],g)",
+          "after": "[u]:p([t,m,process.env[u]??``],g)/*CODEX_NODE_REPL_TRUSTED_PATHS_V1*/",
+          "kind": "trusted-paths"
+        },
+        {
+          "before": "let e=\"CODEX_WINDOWS_REGISTERED_CORE\";_=[...new Set([...n,e])];",
+          "after": "let e=\"CODEX_WINDOWS_REGISTERED_CORE\";_=[...new Set([...n,e,...[\"HTTP_PROXY\",\"HTTPS_PROXY\",\"ALL_PROXY\",\"NO_PROXY\",\"http_proxy\",\"https_proxy\",\"all_proxy\",\"no_proxy\"].filter(e=>process.env[e])])];/*CODEX_NODE_REPL_PROXY_ENV_V1*/",
+          "kind": "proxy-env"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/150595.08945a16f7.js",
+      "sha256": "f3bc7d63bacd3eadc0a1d890e0c0a35457a3f605c4d245bdab2cb2b5a2e37604",
+      "edits": [
+        {
+          "before": "if(\"chatgpt\"!==n&&\"personalAccessToken\"!==n&&\"amazonBedrock\"!==n)return null;",
+          "after": "/*CODEX_SERVICE_TIER_REQUEST_V2*/",
+          "kind": "fast-request"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/151215.ae700dbbcb.js",
+      "sha256": "7990c76b69b673c5706910ffda02a47217364885a731829feb9a1fc1f4c33cd2",
+      "edits": [
+        {
+          "before": "if(\"chatgpt\"!==r&&\"personalAccessToken\"!==r&&\"amazonBedrock\"!==r)return null;",
+          "after": "/*CODEX_SERVICE_TIER_REQUEST_V2*/",
+          "kind": "fast-request"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/228368.464209035b.js",
+      "sha256": "fbd0a13421e8937af0450d2dc4ed801a59e82b45a6c6b170f86c2ff1c711eebc",
+      "edits": [
+        {
+          "before": "if(\"chatgpt\"!==r&&\"personalAccessToken\"!==r&&\"amazonBedrock\"!==r)return null;",
+          "after": "/*CODEX_SERVICE_TIER_REQUEST_V2*/",
+          "kind": "fast-request"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/516636.3f3a73694a.js",
+      "sha256": "4e6bfc54cd8248683818adf15f36bbeb58ded2406f8ab4623003d5017cf0857c",
+      "edits": [
+        {
+          "before": "if(\"chatgpt\"!==n&&\"personalAccessToken\"!==n&&\"amazonBedrock\"!==n)return null;",
+          "after": "/*CODEX_SERVICE_TIER_REQUEST_V2*/",
+          "kind": "fast-request"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/74254.1ff6ce5850.js",
+      "sha256": "b21edd6147ad2a8d8283385daa95a031955ace61be2f40013e2ba1d956dcaaca",
+      "edits": [
+        {
+          "before": "if(\"chatgpt\"!==r&&\"personalAccessToken\"!==r&&\"amazonBedrock\"!==r)return null;",
+          "after": "/*CODEX_SERVICE_TIER_REQUEST_V2*/",
+          "kind": "fast-request"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/783456.56be3fdcab.js",
+      "sha256": "d8ebe435fd6667b1678c752081451d03115303bae497a1a79f9dfb3250612d67",
+      "edits": [
+        {
+          "before": "if(\"chatgpt\"!==t&&\"personalAccessToken\"!==t&&\"amazonBedrock\"!==t)return null;",
+          "after": "/*CODEX_SERVICE_TIER_REQUEST_V2*/",
+          "kind": "fast-request"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/875355.d2e689cf20.js",
+      "sha256": "8f346a67adc399768f0f9045359f95ad5338c17a9ca2509959e4d33237b4933f",
+      "edits": [
+        {
+          "before": "if(\"chatgpt\"!==n&&\"personalAccessToken\"!==n&&\"amazonBedrock\"!==n)return null;",
+          "after": "/*CODEX_SERVICE_TIER_REQUEST_V2*/",
+          "kind": "fast-request"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/954045.dc6493fd54.js",
+      "sha256": "e9ad8c382f1c7990124f447633e11f6a07c2926e85da8df5b6063b4027232663",
+      "edits": [
+        {
+          "before": "if(\"chatgpt\"!==r&&\"personalAccessToken\"!==r&&\"amazonBedrock\"!==r)return null;",
+          "after": "/*CODEX_SERVICE_TIER_REQUEST_V2*/",
+          "kind": "fast-request"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/184348.76f62e0345.js",
+      "sha256": "5dbc042aa20eb925566dfbfd70e7b39312bc5c803c7bf4f1c3a6d68760d03879",
+      "edits": [
+        {
+          "before": "g=p?.authMethod===\"chatgpt\"||p?.authMethod===\"personalAccessToken\"||p?.authMethod===\"amazonBedrock\"",
+          "after": "g=/*CODEX_SERVICE_TIER_ACCESS_UI_V2*/!0",
+          "kind": "fast-ui"
+        },
+        {
+          "before": "I?.get(\"enable_i18n\",!0)",
+          "after": "(I?.get(\"enable_i18n\",!0),!0)/*CODEX_I18N_LOCAL_V2*/",
+          "kind": "locale"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/222624.ceee0263cf.js",
+      "sha256": "30862c9f2a95db39a667aeb9e0f5266639bc0361f8addae86a9baa2fb27897b8",
+      "edits": [
+        {
+          "before": "m=f?.authMethod===\"chatgpt\"||f?.authMethod===\"personalAccessToken\"||f?.authMethod===\"amazonBedrock\"",
+          "after": "m=/*CODEX_SERVICE_TIER_ACCESS_UI_V2*/!0",
+          "kind": "fast-ui"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/244404.f80163303b.js",
+      "sha256": "60371e6a9b999245fb7932771fa7b4dde29bcdedee852961fde97eeac52d05bd",
+      "edits": [
+        {
+          "before": "h=m?.authMethod===\"chatgpt\"||m?.authMethod===\"personalAccessToken\"||m?.authMethod===\"amazonBedrock\"",
+          "after": "h=/*CODEX_SERVICE_TIER_ACCESS_UI_V2*/!0",
+          "kind": "fast-ui"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/29761.fe962986f8.js",
+      "sha256": "80ff8d2b831534bbb0e55537d3a63ea5ee9fb6e08ca529394894156535bbe3d4",
+      "edits": [
+        {
+          "before": "m=d?.authMethod===\"chatgpt\"||d?.authMethod===\"personalAccessToken\"||d?.authMethod===\"amazonBedrock\"",
+          "after": "m=/*CODEX_SERVICE_TIER_ACCESS_UI_V2*/!0",
+          "kind": "fast-ui"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/309546.0078349267.js",
+      "sha256": "62480977bb708ff9644000a688e163006e3a030a0a25033927eec72d58199388",
+      "edits": [
+        {
+          "before": "g=m?.authMethod===\"chatgpt\"||m?.authMethod===\"personalAccessToken\"||m?.authMethod===\"amazonBedrock\"",
+          "after": "g=/*CODEX_SERVICE_TIER_ACCESS_UI_V2*/!0",
+          "kind": "fast-ui"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/363454.74e51067fe.js",
+      "sha256": "baeb96e688ea646495617df61634d41e36dd46046ece703469e00ef3edb76978",
+      "edits": [
+        {
+          "before": "f=m?.authMethod===\"chatgpt\"||m?.authMethod===\"personalAccessToken\"||m?.authMethod===\"amazonBedrock\"",
+          "after": "f=/*CODEX_SERVICE_TIER_ACCESS_UI_V2*/!0",
+          "kind": "fast-ui"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/390941.0e04fe7f23.js",
+      "sha256": "3bc600315bbb0b97740b02b3ba739dcd746c9f325f9a7977db6c46a6bde2692c",
+      "edits": [
+        {
+          "before": "g=m?.authMethod===\"chatgpt\"||m?.authMethod===\"personalAccessToken\"||m?.authMethod===\"amazonBedrock\"",
+          "after": "g=/*CODEX_SERVICE_TIER_ACCESS_UI_V2*/!0",
+          "kind": "fast-ui"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/201528.9e0864d060.js",
+      "sha256": "f6c92e7fa6342ec43b8435bc71ad9dca5fc3be8ce3525a5a3cbd6b6d3ca5942f",
+      "edits": [
+        {
+          "before": "B=o&&x(v.JW,\"1186680773\")",
+          "after": "B=o&&(A||x(v.JW,\"1186680773\"))/*CODEX_CUSTOM_PROVIDER_ULTRA_V2*/",
+          "kind": "ultra"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/256736.6e666e2f29.js",
+      "sha256": "b222c4ff0d01212964d9f1f185ecf870e2df37b7b1590c9d00e9b85cc8099d4c",
+      "edits": [
+        {
+          "before": "F=a&&v(C.JW,\"1186680773\")",
+          "after": "F=a&&(I||v(C.JW,\"1186680773\"))/*CODEX_CUSTOM_PROVIDER_ULTRA_V2*/",
+          "kind": "ultra"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/304386.cc3206c3cc.js",
+      "sha256": "f8895cd109fe2f224a30b134060d946c294ee34879dfe5873370f3196a397278",
+      "edits": [
+        {
+          "before": "B=l&&w(v.JW,\"1186680773\")",
+          "after": "B=l&&(T||w(v.JW,\"1186680773\"))/*CODEX_CUSTOM_PROVIDER_ULTRA_V2*/",
+          "kind": "ultra"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/377014.e00e0a4a4c.js",
+      "sha256": "7f38227aa003ddca7948a6eee2099945b6d6afc1bb6fcb04b6a3322c2b162016",
+      "edits": [
+        {
+          "before": "O=i&&b(y.JW,\"1186680773\")",
+          "after": "O=i&&(A||b(y.JW,\"1186680773\"))/*CODEX_CUSTOM_PROVIDER_ULTRA_V2*/",
+          "kind": "ultra"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/379153.b7e19e9bf3.js",
+      "sha256": "3253f06fb781ab87f68cbe70cd4740b1df83999e19de64039f110f4614bfa06d",
+      "edits": [
+        {
+          "before": "P=a&&C(v.JW,\"1186680773\")",
+          "after": "P=a&&(O||C(v.JW,\"1186680773\"))/*CODEX_CUSTOM_PROVIDER_ULTRA_V2*/",
+          "kind": "ultra"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/415411.8a4683aa90.js",
+      "sha256": "75036b1ed71bae2ebcf386f6feb1f4315e86ec0733ced339fc21d6458784e268",
+      "edits": [
+        {
+          "before": "W=o&&M(h.JW,\"1186680773\")",
+          "after": "W=o&&(U||M(h.JW,\"1186680773\"))/*CODEX_CUSTOM_PROVIDER_ULTRA_V2*/",
+          "kind": "ultra"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/504134.f263373afd.js",
+      "sha256": "43d036ea24ab30ac5e6c6acd52e99a39784492d9ac113f3eb952b0e48b083c44",
+      "edits": [
+        {
+          "before": "L=a&&v(_.JW,\"1186680773\")",
+          "after": "L=a&&(x||v(_.JW,\"1186680773\"))/*CODEX_CUSTOM_PROVIDER_ULTRA_V2*/",
+          "kind": "ultra"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/669972.724f7e9343.js",
+      "sha256": "e4513a12f54e6fdd1114e10521995915da82ce5ba0136ecf5a4e25cbc8da9b17",
+      "edits": [
+        {
+          "before": "q=r&&b(v.JW,\"1186680773\")",
+          "after": "q=r&&(L||b(v.JW,\"1186680773\"))/*CODEX_CUSTOM_PROVIDER_ULTRA_V2*/",
+          "kind": "ultra"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/687108.da0e2f4608.js",
+      "sha256": "6d49b19514652c0b2d5118b685e31f7a3826ee952a626e1c6e5b2c0980e9dc57",
+      "edits": [
+        {
+          "before": "F=r&&y(v.JW,\"1186680773\")",
+          "after": "F=r&&(T||y(v.JW,\"1186680773\"))/*CODEX_CUSTOM_PROVIDER_ULTRA_V2*/",
+          "kind": "ultra"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/750210.c5df3287a6.js",
+      "sha256": "0817adf340fdd6e652b3f667bcf3a6f58eed1968196dce7382e43bf45863ea12",
+      "edits": [
+        {
+          "before": "F=a&&_(v.JW,\"1186680773\")",
+          "after": "F=a&&(M||_(v.JW,\"1186680773\"))/*CODEX_CUSTOM_PROVIDER_ULTRA_V2*/",
+          "kind": "ultra"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/782647.5d3e480aad.js",
+      "sha256": "71aae83f4df144a02b922a2ef0fed5e4a87a9c1599d9189cc84242eebaea1a75",
+      "edits": [
+        {
+          "before": "S=i&&b(v.JW,\"1186680773\")",
+          "after": "S=i&&(D||b(v.JW,\"1186680773\"))/*CODEX_CUSTOM_PROVIDER_ULTRA_V2*/",
+          "kind": "ultra"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/838074.389db3e6af.js",
+      "sha256": "94ca703bf1366f7e74985bb38604237c8ea462adb3f665a6beb7b893e4890e65",
+      "edits": [
+        {
+          "before": "D=l&&v(b.JW,\"1186680773\")",
+          "after": "D=l&&(C||v(b.JW,\"1186680773\"))/*CODEX_CUSTOM_PROVIDER_ULTRA_V2*/",
+          "kind": "ultra"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/872702.c5e9a14392.js",
+      "sha256": "a213fcc4e146adb68e2112ddcbf8f974350b20135d229a5ad583018852c444dd",
+      "edits": [
+        {
+          "before": "D=r&&C(_.JW,\"1186680773\")",
+          "after": "D=r&&(S||C(_.JW,\"1186680773\"))/*CODEX_CUSTOM_PROVIDER_ULTRA_V2*/",
+          "kind": "ultra"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/963873.bf36d0a6bb.js",
+      "sha256": "da3306db82bc4b6eda1d2e6faa42b434a79b8b9e1810c2ade298cbb3f48c1978",
+      "edits": [
+        {
+          "before": "q=o&&y(v.JW,\"1186680773\")",
+          "after": "q=o&&(A||y(v.JW,\"1186680773\"))/*CODEX_CUSTOM_PROVIDER_ULTRA_V2*/",
+          "kind": "ultra"
+        }
+      ]
+    },
+    {
+      "file": "webview/assets/async/92243.7ae2a0b971.js",
+      "sha256": "2090b888705be8a3fac914f21b672f27a2c3ce6f854ca1312449c53fbad244d9",
+      "edits": [
+        {
+          "before": "B=(0,E._U)(eb.G,{name:\"browser.in-app\"}).isCapable",
+          "after": "B=((0,E._U)(eb.G,{name:\"browser.in-app\"}).isCapable,!0)/*CODEX_BROWSER_PANE_LOCAL_V4*/",
+          "kind": "browser-pane"
+        },
+        {
+          "before": "$=(0,eg.Zj)(\"1892382740\")",
+          "after": "$=((0,eg.Zj)(\"1892382740\"),!0)/*CODEX_CUA_RUNTIME_V4*/",
+          "kind": "cua-runtime"
+        },
+        {
+          "before": "eh=(0,eg.Zj)(\"337408568\")",
+          "after": "eh=((0,eg.Zj)(\"337408568\"),!1)/*CODEX_NODE_REPL_MODEL_GATE_V4*/",
+          "kind": "cua-model-gate"
+        }
+      ]
+    }
+  ],
+  "native": [
+    {
+      "file": "webview/assets/async/431137.9f29b808c2.js",
+      "sha256": "dbdfc7cd40b4d99fabbb4f566aae81bcaeb764f0c94f1855da4b3e2bdbfaa7a4",
+      "witnesses": [
+        "composer.modelPicker.power",
+        "PowerSlider",
+        "selectedPowerSelection"
+      ]
+    },
+    {
+      "file": "webview/assets/async/776931.823645b85e.js",
+      "sha256": "989b3f0b0436aacc88e9e2d3cac8c3160788e51ff4bf345b723926376a1bb131",
+      "witnesses": [
+        "id:\"goal\",triggers:",
+        "requiresEmptyComposer:!1"
+      ]
+    },
+    {
+      "file": "webview/assets/async/772864.a2d2904381.js",
+      "sha256": "a9efee35b4abc93de4e0b0d4ee7e64166202b24ed0c1b43a8d53506739ca42aa",
+      "witnesses": [
+        "openPluginInstall"
+      ]
+    },
+    {
+      "file": "webview/assets/async/996150.23ce8ddb7a.js",
+      "sha256": "8ac7adeb9ad5a89722e49c834ca6ae556ab7ca5ba0b0f0394a7a37a928684ccd",
+      "witnesses": [
+        "showComputerUseSetup:",
+        "computerUseToggleDisabled:"
+      ]
+    },
+    {
+      "file": ".vite/build/early-bootstrap-620-1eb87a1b3aa240b6.js",
+      "sha256": "5d08d7246c17ad6c295420a592ed2109bd70a318c63efe4890dcb7c32975ec0c",
+      "witnesses": [
+        "copyDirectoryAllowDecryptedDestinationOnEncryptionFailure",
+        "cuaReplSurfaces",
+        "mcpToolExposure",
+        "a?.plugin.installed===!0&&a.plugin.enabled&&\"AVAILABLE\"===a.plugin.availability",
+        "h=u&&t.computerUse&&c.enabled&&(\"win32\"===o.platform||\"darwin\"===o.platform&&null!=c.paths.serviceAppPath)"
+      ]
+    }
+  ]
+}

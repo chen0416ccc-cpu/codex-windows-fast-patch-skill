@@ -45,6 +45,7 @@ For Desktop 26.1021 native Windows CUA or a Power slider moved into `app-primary
 For browser AX `Decompression failed`, use the AX asset case in that reference. For missing CUA child proxy variables, use its read-only process probe before selecting the opt-in `-OnlyNodeReplProxyEnv` or `-OnlyComputerUseSurfaceAndProxyEnv` repair; missing root-process proxy settings alone do not justify a package patch.
 For Desktop 26.1029 `missing=browser-client path hint`, use the Browser Client trust-contract case there: the legacy diagnostic disappeared, while paired schema-2 native-host registration survives. Update the diagnostic before refreshing local caches; do not modify the trusted browser client or broaden Desktop gates.
 For `no current user-local CUA Node runtime matches` after Desktop has already started, inspect the [package-backed CUA runtime case](references/restriction-debug-cases.md#desktop-selects-a-package-backed-cua-runtime) before running a local repair. Desktop can select `app/resources/cua_node` directly. The legacy extracted-runtime verifier remains unsupported for that layout, and its failure does not establish a broken live CUA transport.
+Re-identify the runtime after every update and repair restart: a later launch can switch between extracted and package-backed CUA. Broad `*Codex*` package inventories can also include independent `OpenAI.CodexPrimaryRuntime.*` packages; their versions and Node processes must not be substituted for the Desktop or CUA identity.
 Desktop `26.1027.3384.0` uses a double-quoted registered-core anchor in `early-bootstrap.js`; the proxy-only matcher supports this webpack layout. Keep the native CUA surface unchanged when enumeration already works, and distinguish a successful DryRun from post-install routing acceptance.
 When the requested repair includes default proxy routing for custom stdio MCP servers, inspect their actual launcher and server processes too. A passing Desktop/backend/CUA check does not establish custom MCP inheritance. Use the custom stdio MCP proxy case in that reference for a config-only `env_vars` repair; the CUA ASAR patch does not add proxy allowlists to unrelated MCP servers.
 For a core strict trusted-root error when the config already contains a parent directory, follow the [trusted parent directory case](references/restriction-debug-cases.md#core-strict-check-rejects-a-trusted-parent-directory) and verify physical directory coverage.
@@ -196,6 +197,32 @@ If the user presses Escape, stops Computer Use, closes the test window, or resum
 For Windows 10 screenshot issues investigated from a Windows 11 host, follow `references/win10-validation-on-win11.md`. `scripts\diagnose-win10-helper-capture.ps1` is read-only by default; `-BuildTargetOnly` compiles a dedicated target without launching it. An explicitly authorized `-RunCapture` uses a Windows 10 guest/test console, isolated helper copies and disposable Codex homes. `-TestInput` separately opts into clicks/text confined to that target. The script rejects Windows 11/Server capture and never installs a patch into the active helper. Compilation, candidate hashes and diagnostic guard tests do not establish Windows 10 capture acceptance.
 
 ## Default Workflow
+
+Desktop `26.1106.6628.0` uses `desktop-2611066628-profiles.json`: 33 exact-hash
+files cover 8 Fast request, 7 Fast UI and 14 Ultra query copies, the separate
+Ultra host capability, locale, Browser/CUA, trust/proxy inheritance and startup
+budgets. Its five native witnesses preserve Power, Goal, plugin and CUA guards.
+Full mode keeps project/archive and recurring-follow-up repairs opt-in.
+For explicit project repair, preserve the shipped content-owner account
+isolation; this version needs durable-write recovery rather than the old
+renderer-owner rewrite. Run `test-project-state-261106.cjs`, the archive,
+desktop, heartbeat and composition regressions against original assets.
+Validate the public ASAR dispatch with `test-desktop-msix-dispatch.ps1
+-SourceAsarRoot <original-assets> -TemporaryRoot <scratch>` for full, model,
+marketplace and explicit heartbeat modes.
+Its Sky 0.7.18 helper stays unchanged; enumeration does not establish capture
+or input acceptance. `codex-after-update.ps1 -CheckApp` removes only its
+sentinel-checked scratch directory, including dependencies beyond MAX_PATH.
+
+Desktop `26.1103.7773.0` uses `desktop-2611037773-profiles.json` with the
+4239 feature scope below. Full/model, explicit project/archive and thread
+automation modes compose through exact hashes. Run the 1103 desktop, project,
+archive, heartbeat and composition regressions against the 7773 extraction.
+Desktop support does not establish support for its separately signed Sky
+helper; require a recognized full helper hash and separate capture acceptance.
+If immediate post-install runtime verification races extraction, preserve the
+failed checkpoint, wait for the package-matching runtime, then use local runtime
+repair and independent restart acceptance without redeploying the package.
 
 Desktop `26.1103.4239.0` uses `desktop-2611034239-profiles.json` with the same
 29-file feature scope and five native witnesses. The explicit project/archive

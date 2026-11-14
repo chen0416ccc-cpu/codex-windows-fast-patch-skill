@@ -7,8 +7,10 @@ const assert = require('node:assert/strict');
 const manifest = require('./desktop-261029-profiles.json');
 const desktop261103 = require('./desktop-261103-profiles.json');
 const desktop2611034239 = require('./desktop-2611034239-profiles.json');
+const desktop2611037773 = require('./desktop-2611037773-profiles.json');
+const desktop2611066628 = require('./desktop-2611066628-profiles.json');
 const { profiles: projectProfiles, relativePath: projectPath } = require('./patch-project-archive-state.cjs');
-const modelExperienceKinds = new Set(['custom-models', 'fast-request', 'fast-ui', 'ultra']);
+const modelExperienceKinds = new Set(['custom-models', 'fast-request', 'fast-ui', 'ultra', 'ultra-host']);
 
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const escape = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -25,7 +27,7 @@ function layouts() {
     ...(manifest.variants ?? []).map(variant => {
       const swap = profile => variant.files[profile.file] ? { ...profile, ...variant.files[profile.file] } : profile;
       return { version: variant.version, files: manifest.files.map(swap), native: manifest.native.map(swap) };
-    }), desktop261103, desktop2611034239];
+    }), desktop261103, desktop2611034239, desktop2611037773, desktop2611066628];
 }
 
 function resolveManifest(hasFile) {
