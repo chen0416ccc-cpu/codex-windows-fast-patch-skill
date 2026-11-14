@@ -72,10 +72,6 @@ Do not proceed with a config write if the backup of an existing config fails. Th
 
 ## Workflow Selection
 
-For a tray icon missing only after automated restart, read the
-[stale tray case](references/restriction-debug-cases.md#tray-icon-missing-after-forced-package-shutdown).
-Require a live tray owner after restart; a responsive window or successful icon-rectangle query can still describe a stale icon.
-
 Only when the user explicitly requests changing Desktop's scheduled-follow-up
 instructions, use the [optional thread automation customization](references/restriction-debug-cases.md#explicit-recurring-follow-up-is-refused).
 It is hash-pinned and not Windows-10-specific. Ordinary full repairs preserve

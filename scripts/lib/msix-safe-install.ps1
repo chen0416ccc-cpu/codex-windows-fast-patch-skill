@@ -1,5 +1,4 @@
 # Transactional MSIX updates. Never remove the working package before deployment.
-. (Join-Path $PSScriptRoot 'msix-tray.ps1')
 
 function Get-MsixManifestInfo {
   param([Parameter(Mandatory = $true)][string]$MsixPath)
@@ -153,7 +152,6 @@ function Stop-MsixPackageProcesses {
   $sessionId = (Get-Process -Id $PID -ErrorAction Stop).SessionId
   $remaining = @(Get-MsixPackageProcesses -InstallRoot $installRoot -SessionId $sessionId)
   if ($remaining.Count -eq 0) { return }
-  $trayItems = @(Get-MsixPackageTraySnapshot -Processes $remaining)
   Write-Log "requesting package window closure: processes=$($remaining.Count) session=$sessionId root=$installRoot"
   foreach ($candidate in $remaining) {
     try {
@@ -193,13 +191,6 @@ function Stop-MsixPackageProcesses {
     $remaining = @(Get-MsixPackageProcesses -InstallRoot $installRoot -SessionId $sessionId)
     if ($remaining.Count -eq 0) {
       Write-Log 'package process exit verified before deployment'
-      try {
-        Remove-MsixStoppedTrayItems -Items $trayItems
-      } catch {
-        # The original registration still exists, but restarting it is unsafe too.
-        $_.Exception.Data['CodexNoAutomaticRestart'] = $true
-        throw
-      }
       return
     }
     if ((Get-Date) -ge $deadline) { break }
@@ -254,10 +245,6 @@ function Invoke-RecoverableMsixInstall {
     & $ValidateInstalledPackage $installed | Out-Null
     return [pscustomobject]@{Success=$true;Recovered=$false;Package=$installed;Error=$null}
   } catch {
-    if ($_.Exception.Data['CodexNoAutomaticRestart']) {
-      Write-Log 'tray cleanup stopped deployment; preserving registration without automatic restart or recovery'
-      throw
-    }
     if ($_.Exception.Data['CodexResourceBoundary']) {
       Write-Log 'resource boundary stopped validation; preserving the registered package without another deployment'
       throw
