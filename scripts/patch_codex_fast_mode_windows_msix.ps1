@@ -3239,6 +3239,15 @@ function Get-ManifestPublisher {
 function Test-CodeSigningCertificate {
   param([object]$Certificate)
   $codeSigningOid = '1.3.6.1.5.5.7.3.3'
+  # X509Store returns raw certificates without the Certificate provider's
+  # EnhancedKeyUsageList adapter in a fresh shell. Read the signed EKU extension.
+  foreach ($extension in @($Certificate.Extensions)) {
+    if ($extension -is [Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension]) {
+      foreach ($usage in $extension.EnhancedKeyUsages) {
+        if ($usage.Value -eq $codeSigningOid) { return $true }
+      }
+    }
+  }
   foreach ($usage in @($Certificate.EnhancedKeyUsageList)) {
     $objectId = [string]$usage.ObjectId
     if ([string]::IsNullOrWhiteSpace($objectId)) {
