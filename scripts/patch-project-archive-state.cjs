@@ -111,7 +111,143 @@ profiles.push({
   edits: [['T.setThreadAssignmentsEnabled(tr().localProjectTaskMembership)', 'T.setThreadAssignmentsEnabled(tr().localProjectTaskMembership||process.platform==="win32"/*codex_windows_local_project_membership_persistence*/)']],
 }, profiles[9]);
 
+// 26.1103.7773 retains the archive repair and renames the state helpers.
+profiles.push({
+  "kind": "global-state",
+  "file": "early-bootstrap-133-7b2e6aa4288cc836.js",
+  "sha256": [
+    "f5a81f0eebc566a43e62ad186674a5cf786724163c295ea9f10df4887882f3f8"
+  ],
+  "edits": [
+    [
+      "if(null==t||null!=r&&t.owner===r)return;",
+      "if(null==t||t.owner===r)return;/*codex_same_renderer_owner_preserves_local_state*/"
+    ],
+    [
+      "this.state=function(e){if(!(0,n.existsSync)(e))return new Map;let t=ed(e);if(null!=t)return t;let r=ed(`${e}.bak`);return null!=r?(ee().warning(\"Loaded global state from backup\",{safe:{},sensitive:{}}),r):new Map}(this.filePath)",
+      "this.state=ez(this.filePath)"
+    ],
+    [
+      "function ed(e){",
+      "function ez(e){let t=ed(e);if(null!=t)return t;let r=ed(`${e}.bak`);if(null!=r)return ee().warning(\"Loaded global state from backup\",{safe:{},sensitive:{}}),r;let i=(0,o.dirname)(e),s=`.${(0,o.basename)(e)}.tmp-`,a=`.${(0,o.basename)(e)}.bak.tmp-`,l=[];try{for(let e of(0,n.readdirSync)(i)){if(!e.startsWith(s)&&!e.startsWith(a))continue;let t=(0,o.join)(i,e);try{let e=(0,n.lstatSync)(t);e.isFile()&&l.push({path:t,mtime:e.mtimeMs})}catch{}}}catch{}for(let e of l.sort((e,t)=>t.mtime-e.mtime)){let t=ed(e.path);if(null!=t)return ee().warning(\"Recovered global state from interrupted write\",{safe:{},sensitive:{}}),t}return new Map}function ed(e){"
+    ],
+    [
+      "(0,n.writeFileSync)(r,t,\"utf8\")",
+      "(0,n.writeFileSync)(r,t,{encoding:\"utf8\",flush:!0})"
+    ],
+    [
+      "(0,s.writeFile)(r,t,\"utf8\")",
+      "(0,s.writeFile)(r,t,{encoding:\"utf8\",flush:!0})"
+    ]
+  ]
+}, {
+  "kind": "project-membership",
+  "file": "early-bootstrap-480-5def667ddfcd786d.js",
+  "sha256": [
+    "be8eba3b9283d6a9784fa069a019b83a89fd02277cc13e4f7d32d57faf0ada65"
+  ],
+  "compatibleEdits": [
+    [
+      "isAvailable:({features:e})=>e.deepResearch",
+      "isAvailable:()=>!0/*codex_windows_deep_research_bundled_plugin_available*/,installWhenMissing:!1"
+    ]
+  ],
+  "edits": [
+    [
+      "T.setThreadAssignmentsEnabled(tr().localProjectTaskMembership)",
+      "T.setThreadAssignmentsEnabled(tr().localProjectTaskMembership||process.platform===\"win32\"/*codex_windows_local_project_membership_persistence*/)"
+    ]
+  ]
+}, profiles[9]);
+
+// 26.1106 preserves its shipped account isolation and repairs durable state writes.
+profiles.push({
+  "kind": "global-state",
+  "file": "early-bootstrap-133-d277c7adebbd24e5.js",
+  "sha256": [
+    "4bcd202e707265eafdb3286b9d2f6034ebcab9b914f1b30a5023d333d548e04f"
+  ],
+  "edits": [
+    [
+      "this.state=function(e){if(!(0,i.existsSync)(e))return new Map;let t=eP(e);if(null!=t)return t;let r=eP(`${e}.bak`);return null!=r?(eg().warning(\"Loaded global state from backup\",{safe:{},sensitive:{}}),r):new Map}(this.filePath)",
+      "this.state=codexRecoverGlobalState(this.filePath)"
+    ],
+    [
+      "function eP(e){",
+      "function codexRecoverGlobalState(e){let t=eP(e);if(null!=t)return t;let r=eP(`${e}.bak`);if(null!=r)return eg().warning(\"Loaded global state from backup\",{safe:{},sensitive:{}}),r;let codexDir=(0,o.dirname)(e),s=`.${(0,o.basename)(e)}.tmp-`,a=`.${(0,o.basename)(e)}.bak.tmp-`,l=[];try{for(let e of(0,i.readdirSync)(codexDir)){if(!e.startsWith(s)&&!e.startsWith(a))continue;let t=(0,o.join)(codexDir,e);try{let e=(0,i.lstatSync)(t);e.isFile()&&l.push({path:t,mtime:e.mtimeMs})}catch{}}}catch{}for(let e of l.sort((e,t)=>t.mtime-e.mtime)){let t=eP(e.path);if(null!=t)return eg().warning(\"Recovered global state from interrupted write\",{safe:{},sensitive:{}}),t}return new Map}function eP(e){"
+    ],
+    [
+      "(0,i.writeFileSync)(r,t,\"utf8\")",
+      "(0,i.writeFileSync)(r,t,{encoding:\"utf8\",flush:!0})"
+    ],
+    [
+      "(0,s.writeFile)(r,t,\"utf8\")",
+      "(0,s.writeFile)(r,t,{encoding:\"utf8\",flush:!0})"
+    ]
+  ]
+}, {
+  "kind": "project-membership",
+  "file": "early-bootstrap-620-1eb87a1b3aa240b6.js",
+  "sha256": [
+    "5d08d7246c17ad6c295420a592ed2109bd70a318c63efe4890dcb7c32975ec0c"
+  ],
+  "compatibleEdits": [
+    [
+      "isAvailable:({features:e})=>e.deepResearch",
+      "isAvailable:()=>!0/*codex_windows_deep_research_bundled_plugin_available*/,installWhenMissing:!1"
+    ]
+  ],
+  "edits": [
+    [
+      "T.setThreadAssignmentsEnabled(tr().localProjectTaskMembership)",
+      "T.setThreadAssignmentsEnabled(tr().localProjectTaskMembership||process.platform===\"win32\"/*codex_windows_local_project_membership_persistence*/)"
+    ]
+  ]
+}, {
+  "kind": "archive-errors",
+  "file": "async/678916.bf6d1d39a0.js",
+  "sha256": [
+    "8b707bb19759fef4c56db57e1769de9c530d4e8017aa251e744d7eb831da0ea7"
+  ],
+  "edits": [
+    [
+      "ea=(0,i.c)(142),{archivedChats:er",
+      "ea=(0,i.c)(143),{archivedChats:er"
+    ],
+    [
+      "isLocalArchiveError:T&&eA,",
+      "isLocalArchiveError:T&&(ek?.length??0)===0&&eA/*codex_archive_local_error_scope_v3*/,"
+    ],
+    [
+      "isDurableArchiveError:T&&null!=K[1]&&(",
+      "isDurableArchiveError:T&&null!=K[1]&&(K[1].data?.length??0)===0&&("
+    ],
+    [
+      "chatGptArchiveError:et&&em?ep:null,",
+      "chatGptArchiveError:et&&em&&(ei?.length??0)===0?ep:null/*codex_archive_cloud_error_scope_v3*/,"
+    ],
+    [
+      "ea[123]!==td?(z=(null!=eS||td||tc)&&!eA?",
+      "ea[123]!==td||ea[142]!==er.length?(z=er.length===0&&(null!=eS||td||tc)&&!eA?"
+    ],
+    [
+      "ea[123]=td,ea[124]=z):z=ea[124]",
+      "ea[123]=td,ea[124]=z,ea[142]=er.length):z=ea[124]"
+    ]
+  ]
+});
+
 function selectProfiles(hasFile) {
+  const latest = profiles.slice(16, 19);
+  if (latest.slice(0, 2).some(profile => hasFile(relativePath(profile)))) {
+    if (!latest.every(profile => hasFile(relativePath(profile)))) throw new Error("Expected one complete project/archive layout");
+    return latest;
+  }
+  const newest = profiles.slice(13, 16);
+  if (newest.slice(0, 2).some(profile => hasFile(relativePath(profile)))) {
+    if (!newest.every(profile => hasFile(relativePath(profile)))) throw new Error("Expected one complete project/archive layout");
+    return newest;
+  }
   const current = profiles.slice(10, 13);
   if (current.slice(0, 2).some(profile => hasFile(relativePath(profile)))) {
     if (!current.every(profile => hasFile(relativePath(profile)))) throw new Error('Expected one complete project/archive layout');
@@ -140,7 +276,7 @@ function transform(source, profile) {
     const manifest = require('./desktop-261029-profiles.json');
     const candidates = [manifest.files, ...(manifest.variants ?? []).map(variant =>
       manifest.files.map(entry => variant.files[entry.file] ? { ...entry, ...variant.files[entry.file] } : entry))].flat();
-    candidates.push(...require('./desktop-2611034239-profiles.json').files);
+    candidates.push(...require('./desktop-2611034239-profiles.json').files, ...require('./desktop-2611037773-profiles.json').files, ...require('./desktop-2611066628-profiles.json').files);
     const desktop = candidates.find(entry => entry.file === relativePath(profile) && profile.sha256.includes(entry.sha256));
     if (desktop) {
       for (const edits of [desktop.edits, desktop.edits.filter(edit => !edit.kind?.startsWith('startup-'))]) {

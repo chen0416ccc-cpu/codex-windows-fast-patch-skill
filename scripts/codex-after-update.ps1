@@ -83,11 +83,13 @@ try {
     $full = [IO.Path]::GetFullPath($scratch)
     if ((Split-Path -Parent $full) -ine $parent.TrimEnd('\') -or
         (Get-Content -LiteralPath $sentinel -Raw) -cne $sentinelValue) { throw 'Diagnostic cleanup sentinel mismatch; scratch retained.' }
-    $items = @(Get-Item -LiteralPath $full -Force) + @(Get-ChildItem -LiteralPath $full -Recurse -Force)
+    # Packaged node_modules can exceed MAX_PATH under the diagnostic scratch root.
+    $ioPath = '\\?\' + $full
+    $items = @(Get-Item -LiteralPath $ioPath -Force) + @(Get-ChildItem -LiteralPath $ioPath -Recurse -Force)
     if (@($items | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }).Count) {
       throw 'Diagnostic scratch contains a reparse point; retained for inspection.'
     }
-    Remove-Item -LiteralPath $full -Recurse -Force -WhatIf:$false
+    Remove-Item -LiteralPath $ioPath -Recurse -Force -WhatIf:$false
   }
 }
 

@@ -14,13 +14,23 @@ The shipped patcher changes application code only. It does not guess or rewrite 
 
 ## Supported patch
 
-Desktop `26.1103.4239.0` has a complete three-asset profile. Its state loader
+Desktop `26.1106.6628.0` uses three separately pinned assets. Recover primary,
+backup and complete interrupted writes, flush both write paths, enable Windows
+membership persistence and scope archive errors to empty lists. Keep its
+shipped content-owner account isolation unchanged. Run
+`test-project-state-261106.cjs` for recovery, sync/async writes, signed-out and
+account switching, reopened state and rejection of stale pending updates.
+Run `test-archive-261103.cjs` and `test-desktop-project-composition.cjs` against
+this layout too; composition remains opt-in and preserves model-only scope.
+
+Desktop `26.1103.4239.0` and `26.1103.7773.0` have separate exact-hash
+three-asset profiles with the same repair behavior. Their state loader
 recovers missing primary files and flushes temporary writes. Re-selecting the
 same null renderer owner preserves local project state; switching to a different
 account still stashes and isolates its state. Windows assignments reach the
 backend while retaining its support check. The archive asset is shared with
 3517. Run `test-project-state-2611034239.cjs` (34 checks), the archive regression,
-and `test-desktop-project-composition.cjs` (1068 checks) against this layout.
+and `test-desktop-project-composition.cjs` (1068 checks) against each layout.
 Recovery must also remove only verified restored IDs from `projectless-thread-ids`
 and preserve the new `threadAssignmentsReadMigrated` checkpoint semantics.
 

@@ -2833,7 +2833,7 @@ function Invoke-PatchAppAsar {
     return $true
   }
 
-  $modernModelAsset = @('24191.589dcc9878.js', '24191.dc3ed2d869.js', '182735.e33af7cdca.js', '182735.bb2cb0d2af.js') |
+  $modernModelAsset = @('24191.589dcc9878.js', '24191.dc3ed2d869.js', '182735.e33af7cdca.js', '182735.bb2cb0d2af.js', '182735.7f13786b92.js', '739301.37a39f26d6.js') |
     ForEach-Object { Join-Path $extractDir "webview\assets\async\$_" } |
     Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
   if (($OnlyModelExperience -or $OnlyBundledMarketplaceCopy) -and $modernModelAsset) {
@@ -3078,7 +3078,7 @@ function Invoke-PatchAppAsar {
     return $true
   }
 
-  $modernAsset = @('24191.589dcc9878.js', '24191.dc3ed2d869.js', '182735.e33af7cdca.js', '182735.bb2cb0d2af.js') |
+  $modernAsset = @('24191.589dcc9878.js', '24191.dc3ed2d869.js', '182735.e33af7cdca.js', '182735.bb2cb0d2af.js', '182735.7f13786b92.js', '739301.37a39f26d6.js') |
     ForEach-Object { Join-Path $extractDir "webview\assets\async\$_" } |
     Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
   if ($modernAsset) {
@@ -3090,7 +3090,7 @@ function Invoke-PatchAppAsar {
     $modernReport = $modernResult | ConvertFrom-Json
     $modernFeatures = [ordered]@{
       'fast-mode' = @('fast-request'); 'fast-mode UI' = @('fast-ui'); 'custom models' = @('custom-models')
-      'Ultra slider local-fallback' = @('ultra'); 'locale i18n' = @('locale')
+      'Ultra slider local-fallback' = @('ultra', 'ultra-host'); 'locale i18n' = @('locale')
       'browser-use gate' = @('browser-in-app', 'browser-external', 'browser-pane')
       'computer-use gate' = @('computer-use', 'cua-runtime', 'cua-model-gate')
       'Node REPL trusted-paths' = @('trusted-paths'); 'Node REPL proxy environment' = @('proxy-env')
