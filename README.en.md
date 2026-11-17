@@ -74,8 +74,6 @@ configuration and conversations, run background verification, and clean up tempo
 
 Verification defaults to background read-only checks. It does not automatically open Calculator or another test app, change native-window focus, or inject mouse/keyboard input. Runtime, plugin, and window-enumeration results are reported separately. Live native screenshot/input tests run only when explicitly requested or authorized, and untested operations are identified as such.
 
-On Windows 10, successful enumeration followed by `FrameArrived timed out` or `window capture timed out` uses the [targeted screenshot-helper repair](references/win10-computer-use-screenshot-backend.md). The exact Sky `0.7.21` / `A1EB13F3` helper is now supported. General patch or enumeration checks do not establish capture recovery; inspect the actual target-window image after installation.
-
 External-browser extension verification accepts Chrome or Edge. For an Edge-only installation, the official diagnostic checks Edge's own profile root; installing the extension in Chrome or mapping one browser's user directory to another is unnecessary. Actual page access still requires separate verification.
 
 **Request phone remote control separately:**

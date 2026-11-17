@@ -80,8 +80,6 @@ Claude Code 可将目标改为 `$env:USERPROFILE\.claude\skills\codex-windows-fa
 
 默认采用后台只读验收，不自动打开计算器等测试应用，不切换原生窗口焦点或发送鼠标键盘输入。运行时、插件、窗口枚举等检查会分别报告；真实截图和原生输入测试仅在你明确要求或同意后执行，未执行时会如实注明。
 
-Windows 10 能枚举窗口但报 `FrameArrived timed out` 或 `window capture timed out` 时，使用[截图 helper 专项修复](references/win10-computer-use-screenshot-backend.md)。已增加 Sky `0.7.21` 的 `A1EB13F3` 精确哈希适配；通用补丁和枚举检查不代表截图修复成功，安装后仍需核验目标窗口的真实图像。
-
 ### 更新后统一检查与恢复
 
 项目现在包含统一入口，不需要从某次聊天复制临时脚本：
