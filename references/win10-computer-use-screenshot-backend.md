@@ -4,6 +4,31 @@
 
 Commands below refer to the skill directory as `$SkillRoot`. Resolve it with the probe in the `Skill Root` section of `SKILL.md` before running any of them.
 
+## Optional HWND capture overlay
+
+For ordinary overlapping windows, Windows 10 build 19045 supports true WGC window capture without an OS upgrade. The tested Sky 0.7.21 helper instead calls `CreateForMonitor`, caches by HMONITOR, and crops the desktop image to window coordinates. The opt-in `-WindowCapture` overlay changes the cache key to HWND, calls `IGraphicsCaptureItemInterop::CreateForWindow`, and uses a window-local crop origin. Existing input validation, callback/MTA compatibility, encoding, and session cleanup paths remain in place.
+
+This overlay accepts only compatibility-patched SHA-256 `0D89485AE06573C5F65DB35C6E3999C338F2F1B08BEABEA9F9EB429C448E41CD` and produces `BAF8C5542B41B167EA04BA46C864C445F1365BBC096F1C9646748FCFF3E106E3`. The vendor input for that compatibility profile is `804E124859CA964DE65DCE5DBAACCC984CBE04EEB4A211CF142E3083A5886692`. Apply the ordinary compatibility patch first if starting from that vendor file. Unknown hashes are rejected.
+
+```powershell
+$patcher = "$SkillRoot\scripts\patch-computer-use-helper-win10.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File $patcher -WindowCapture
+powershell -NoProfile -ExecutionPolicy Bypass -File $patcher -WindowCapture -Install
+# Remove only the window overlay, preserving the Win10 compatibility baseline:
+powershell -NoProfile -ExecutionPolicy Bypass -File $patcher -WindowCapture -Rollback
+```
+
+Ordinary status and `-Install` recognize and preserve an installed window overlay. Installation creates a hash-verified baseline backup. The lifecycle regression is `scripts/test-win10-window-capture-patch.ps1 -HelperPath <compatibility-patched-fixture>`; runtime content validation is separate.
+
+| File offset | Change |
+| --- | --- |
+| `0x3CD4F` | Store HWND in the capture cache key / interop argument slot. |
+| `0x3CDEC` | Set window-local crop x/y to zero. |
+| `0x3D21E` | Select interop vtable slot `+0x18` (window), replacing `+0x20` (monitor). |
+| `0x1387EF` | Update the error label without changing its length. |
+
+The four guarded regions change 18 bytes; file size, PE headers, and the prior MTA/unwind patch are unchanged. Live CUA tests on Desktop 26.1111.9664.1 / Windows 10 19045.7417 verified a blue target under a red occluder, changing frames while covered, independent content from two windows, static frames, maximize/restore, movement, coordinate input, close/recreate, and a fresh helper's first occluded capture. A 1203.8-second observation collected 241 samples from the same main helper; private memory settled near 53.8 MiB and handles at 773-782 in the final two minutes. This does not establish indefinite cache stability. Minimized windows are explicitly rejected and must be restored. Mixed DPI, multiple displays, protected content, and Desktop restart are separate acceptance cases; the profile's end-to-end Desktop validation field remains unset.
+
 ## When to use this profile
 
 Use this profile only when all of the following are true:
@@ -169,7 +194,7 @@ Desktop `26.721.4979.0` introduced `@oai/sky 0.5.2` with original helper SHA-256
 | Window enumeration | Explorer and Task Manager were returned by `list_windows`; the test-created Task Manager window was closed afterward. |
 | Session cleanup | Both the main helper and cursor-manager child exited when the Computer Use validation session ended; no helper process remained. |
 
-The helper captures a monitor-backed window region on this Windows 10 route. Activate the target before deterministic content validation; if another foreground window overlaps it, the returned region can contain that occluder even though transport itself remains healthy.
+The compatibility-only profiles capture a monitor-backed window region. Activate their target before deterministic content validation; overlapping windows can appear in that region. The separately guarded HWND overlay above addresses this behavior for its exact Sky 0.7.21 helper.
 
 ### `@oai/sky 0.6.6` / Desktop 26.803 validation
 
