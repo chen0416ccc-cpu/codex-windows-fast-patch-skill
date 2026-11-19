@@ -61,6 +61,14 @@ Reset the Node REPL kernel after repair because failed WASM initialization is ca
 
 Regression command: `node scripts/test-browser-accessibility-assets.cjs`. Optional arguments `<healthy-wasm.br> <corrupt-wasm.br>` replay an asset pair without adding vendor binaries. The suite covers source recovery, version/service mismatch, preflight, backups, idempotence and Chinese-path success/failure in PowerShell 5.1/7. The wrapper restores the caller's encoding; a missing package or plugin descriptor fails rather than reporting zero assets as verified. A known layout without either AX loader reports not applicable.
 
+## In-app browser missing after Desktop resumes a chat
+
+After a Windows package update, Desktop can resume an active thread while its visible window opens on the new-chat page. On Desktop `26.1111.9664.1`, the official browser client returned an empty inventory in the resumed thread. Desktop logged an IAB backend ready for a `client-new-thread:…` session. A successful native window enumeration in that thread established the Sky transport only.
+
+Open the original chat in the Desktop window. Check whether the browser-session log reports a ready IAB backend for that chat's session ID. Reuse the browser client in the same chat and list its browsers again. On the observed build, this action made IAB appear and a temporary tab then returned the expected HTTPS URL, page title and accessible heading. Close the temporary tab after the check.
+
+If discovery still fails on the correct chat route, continue with the plugin's browser diagnostics and record the remaining failure. Test external Chrome separately. Record proxy inheritance from live process environments and connections.
+
 ## Browser Smoke Target Changes or Fails Independently
 
 A single public test page can change its DOM or fail on one network route while browser control remains healthy. On Desktop `26.1013.3656.1`, Chrome read `https://example.com/` with title `Example Domain` and multilingual body text, but a real DOM query found zero `h1` elements. The historical one-heading assertion would therefore reject a working page read. The in-app browser independently reported `ERR_CONNECTION_CLOSED` for that origin, and an explicit-proxy curl probe failed its TLS handshake; both the proxy probe and the in-app browser successfully reached the official configuration reference, whose AX tree exposed the expected page title and heading.
