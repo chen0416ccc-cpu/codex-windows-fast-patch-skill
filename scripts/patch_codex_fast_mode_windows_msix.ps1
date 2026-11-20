@@ -2800,8 +2800,13 @@ function Invoke-PatchAppAsar {
     }
     if (-not $OnlyComputerUseSurfaceAndProxyEnv) {
       if ($proxyResult -eq 'already-patched') { return $false }
-      Write-Log 'repacking app.asar'
-      Invoke-NpxAsar 'pack' $extractDir $newAsarPath
+      $expectedEntry = '.vite/build/' + $proxyTargets[0].Name
+      $layout = Invoke-NodePatcher $nodePath (Join-Path $PSScriptRoot 'repack-project-archive-asar.cjs') `
+        @($asarPath, $extractDir, $newAsarPath, '--all') | ConvertFrom-Json
+      if (@($layout.changed).Count -ne 1 -or $layout.changed[0] -cne $expectedEntry) {
+        Fail "proxy-only ASAR must change exactly $expectedEntry"
+      }
+      Write-Log "proxy-only ASAR preserved layout: changed=$expectedEntry unpacked=$($layout.unpacked)"
       Copy-Item -LiteralPath $newAsarPath -Destination $asarPath -Force
       return $true
     }

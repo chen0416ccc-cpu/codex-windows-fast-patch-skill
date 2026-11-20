@@ -1125,6 +1125,13 @@ Use `python scripts/probe-node-repl-proxy-env.py --pid <root-pid> --pid <current
 
 When the root has the required proxy but its native CUA child loses it, run `scripts/patch_codex_fast_mode_windows_msix.ps1 -OnlyNodeReplProxyEnv -DryRun`. If both the native CUA surface and proxy inheritance are broken, use `-OnlyComputerUseSurfaceAndProxyEnv -DryRun`. These opt-in modes patch only their selected ASAR targets and reject unrelated repair switches. Use the existing signed MSIX and independent installer workflow if deployment is actually needed; a missing proxy in the root requires launch-environment diagnosis instead.
 
+For a proxy-only build, preserve the original ASAR layout. Desktop `26.1117.3838.0`
+has eight unpacked native entries. Repacking an extracted tree with plain
+`asar pack` can move them inside the archive even when their extracted bytes
+compare equal. The proxy-only packer now checks that exactly the selected
+JavaScript entry changed. Before deployment, compare its resulting ASAR with
+the Store source, including unpacked flags, link targets and integrity records.
+
 Run `node scripts/test-node-repl-proxy-env.cjs`, `powershell -NoProfile -File scripts/test-node-repl-proxy-targeted-mode.ps1` and `python -B scripts/test-probe-node-repl-proxy-env.py`. They verify behavior, scope/idempotence/no-write failure paths and synthetic plus task-owned process reads. They do not establish a newly installed Desktop's proxy routing. After a real deployment, verify the CUA child environment and a controlled browser tab. Restarting only its JavaScript kernel does not restart the MCP process.
 
 ## Desktop 26.1027 webpack proxy anchor

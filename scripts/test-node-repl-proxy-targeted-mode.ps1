@@ -56,12 +56,25 @@ function Invoke-NodePatcher($Node, $Patcher, $Files) {
         $script:surfaceCalls++
         return $script:surfaceResult
     }
+    if ((Split-Path -Leaf $Patcher) -eq 'repack-project-archive-asar.cjs') {
+        if (-not $OnlyNodeReplProxyEnv -or $Files.Count -ne 4 -or $Files[3] -ne '--all' -or
+            [IO.File]::ReadAllText($Files[0]) -ne 'original fixture' -or
+            -not (Test-Path -LiteralPath (Join-Path $Files[1] '.vite\build\proxy-0.js'))) {
+            throw 'Unexpected preserving repack arguments'
+        }
+        $script:packCalls++
+        [IO.File]::WriteAllText($Files[2], 'packed fixture')
+        $changed = @('.vite/build/proxy-0.js')
+        if ($script:extraChange) { $changed += '.vite/build/unrelated.js' }
+        return (@{changed=$changed;unpacked=1} | ConvertTo-Json -Compress)
+    }
     $output = & $Node $Patcher @Files
     if ($LASTEXITCODE) { throw 'proxy patcher failed' }
     return $output
 }
 function Invoke-NpxAsar($Mode, $Source, $Destination) {
     if ($Mode -eq 'pack') {
+        if ($OnlyNodeReplProxyEnv) { throw 'Proxy-only mode lost native ASAR layout' }
         $script:packCalls++
         [IO.File]::WriteAllText($Destination, 'packed fixture')
         return
@@ -82,6 +95,7 @@ $cases = @(
     @{ name='proxy-change'; combined=$false; already=$false; surface='already-patched'; dry=$false; count=1; packs=1 },
     @{ name='proxy-idempotent'; combined=$false; already=$true; surface='already-patched'; dry=$false; count=1; packs=0 },
     @{ name='proxy-dry-run'; combined=$false; already=$false; surface='patched'; dry=$true; count=1; packs=0 },
+    @{ name='proxy-extra-change'; combined=$false; already=$false; surface='already-patched'; dry=$false; count=1; packs=1; error='must change exactly' },
     @{ name='combined-both-change'; combined=$true; already=$false; surface='patched'; dry=$false; count=1; packs=1 },
     @{ name='combined-proxy-only-change'; combined=$true; already=$false; surface='already-patched'; dry=$false; count=1; packs=1 },
     @{ name='combined-surface-only-change'; combined=$true; already=$true; surface='patched'; dry=$false; count=1; packs=1 },
@@ -103,6 +117,7 @@ try {
         $script:surfaceResult = $case.surface
         $script:proxyCount = $case.count
         $script:rejectSurface = $case.name -eq 'missing-surface'
+        $script:extraChange = $case.name -eq 'proxy-extra-change'
         $script:packCalls = 0
         $script:surfaceCalls = 0
         $dir = Join-Path $testRoot (([int][char]$quote).ToString() + '-' + $case.name)
@@ -120,7 +135,7 @@ try {
             if ($script:surfaceCalls -ne [int]$case.combined) { throw "Wrong surface scope: $($case.name)" }
         }
         if ($script:packCalls -ne $case.packs) { throw "Wrong repack count: $($case.name)" }
-        $expected = if ($case.packs) { 'packed fixture' } else { 'original fixture' }
+        $expected = if ($case.packs -and -not $case.error) { 'packed fixture' } else { 'original fixture' }
         if ([IO.File]::ReadAllText($asar) -ne $expected) { throw "Unexpected ASAR write: $($case.name)" }
     }
     Write-Output "PROXY_ORCHESTRATION_PASSED cases=$($cases.Count)"
