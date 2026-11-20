@@ -69,6 +69,27 @@ Open the original chat in the Desktop window. Check whether the browser-session 
 
 If discovery still fails on the correct chat route, continue with the plugin's browser diagnostics and record the remaining failure. Test external Chrome separately. Record proxy inheritance from live process environments and connections.
 
+## Windows Chrome host launched through the package alias
+
+On Desktop `26.1117.3838` with app-package core active, the Chrome native
+messaging manifest pointed to the package family's `codex-chrome-native-host.exe`
+execution alias. The AppX manifest declared that alias. Desktop's
+`windows_core_runtime_component_resolved` event named the packaged
+`chrome-extension-host`, and Chrome launched the matching `extension-host.exe`.
+Check those paths, the current extension origin, and the plugin's native-host
+diagnostic before acting on older `chrome-native-hosts-v2.json` records.
+Both legacy files on this machine still listed earlier versions when Chrome
+successfully returned a public HTTPS page through the extension.
+
+If the extension is installed and enabled but missing from the chat's browser
+list, check the browser's own network route. In one dedicated-proxy setup,
+reconnecting the native host alone did not restore discovery. Anonymous direct
+requests to the extension's session and configuration endpoints timed out. After an
+authorized graceful Chrome restart with those destinations proxied, the chat
+discovered Chrome and read both a direct HTTPS site and a proxied HTTPS page.
+A cold restart and a route change were tested together. Preserve the user's
+profile and normal proxy settings when testing a per-launch route.
+
 ## Browser Smoke Target Changes or Fails Independently
 
 A single public test page can change its DOM or fail on one network route while browser control remains healthy. On Desktop `26.1013.3656.1`, Chrome read `https://example.com/` with title `Example Domain` and multilingual body text, but a real DOM query found zero `h1` elements. The historical one-heading assertion would therefore reject a working page read. The in-app browser independently reported `ERR_CONNECTION_CLOSED` for that origin, and an explicit-proxy curl probe failed its TLS handshake; both the proxy probe and the in-app browser successfully reached the official configuration reference, whose AX tree exposed the expected page title and heading.
